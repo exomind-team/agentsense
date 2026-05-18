@@ -5,6 +5,7 @@
 
 mod config;
 mod engine;
+mod epub;
 mod error;
 mod types;
 
@@ -14,6 +15,7 @@ use std::path::Path;
 
 pub use config::AppConfig;
 pub use engine::PdfEngine;
+pub use epub::EpubDocument;
 pub use error::AgentSenseError;
 pub use types::{DocumentInfo, ImageInfo};
 
