@@ -223,6 +223,100 @@ fn test_read_metadata_returns_title_and_author() {
     assert_eq!(info.page_count(), 1);
 }
 
+// ── Test 6: expanded metadata (creator, producer, page size) ──────
+
+#[test]
+fn test_read_expanded_metadata() {
+    use lopdf::dictionary;
+    use lopdf::{Document, Object};
+
+    let mut doc = Document::with_version("1.7");
+    let info_id = doc.new_object_id();
+    let pages_id = doc.new_object_id();
+    let catalog_id = doc.new_object_id();
+    let page_id = doc.new_object_id();
+
+    let info = dictionary! {
+        "Title" => Object::string_literal("Rich Metadata PDF"),
+        "Author" => Object::string_literal("Test Author"),
+        "Creator" => Object::string_literal("AgentSense Test Suite"),
+        "Producer" => Object::string_literal("lopdf 0.40"),
+        "Subject" => Object::string_literal("Testing metadata extraction"),
+        "Keywords" => Object::string_literal("rust, pdf, test"),
+    };
+    doc.objects.insert(info_id, Object::Dictionary(info));
+
+    let page = dictionary! {
+        "Type" => "Page",
+        "Parent" => pages_id,
+        "MediaBox" => vec![Object::Integer(0), Object::Integer(0),
+                           Object::Integer(595), Object::Integer(842)],
+    };
+    doc.objects.insert(page_id, Object::Dictionary(page));
+
+    let pages = dictionary! {
+        "Type" => "Pages",
+        "Kids" => vec![Object::Reference(page_id)],
+        "Count" => Object::Integer(1),
+    };
+    doc.objects.insert(pages_id, Object::Dictionary(pages));
+
+    let catalog = dictionary! {
+        "Type" => "Catalog",
+        "Pages" => Object::Reference(pages_id),
+    };
+    doc.objects.insert(catalog_id, Object::Dictionary(catalog));
+
+    doc.trailer.set("Root", catalog_id);
+    doc.trailer.set("Info", info_id);
+
+    let mut buf = Vec::new();
+    doc.save_to(&mut buf).unwrap();
+    let path = write_temp_pdf("rich_metadata.pdf", &buf);
+
+    let doc = agentsense::PdfDocument::open(&path).expect("should open");
+    let info = doc.info();
+
+    assert_eq!(info.title(), Some("Rich Metadata PDF"));
+    assert_eq!(info.author(), Some("Test Author"));
+    assert_eq!(info.creator(), Some("AgentSense Test Suite"));
+    assert_eq!(info.producer(), Some("lopdf 0.40"));
+    assert_eq!(info.subject(), Some("Testing metadata extraction"));
+    assert_eq!(info.keywords(), Some("rust, pdf, test"));
+    assert_eq!(info.page_count(), 1);
+    // A4 page: 595pt × 842pt
+    assert!((info.page_width_pt() - 595.0).abs() < 1.0);
+    assert!((info.page_height_pt() - 842.0).abs() < 1.0);
+}
+
+// ── Test 7: engine abstraction — explicit engine selection ─────────
+
+#[test]
+fn test_engine_selection_lopdf_works() {
+    use agentsense::PdfEngine;
+
+    let pdf_bytes = generate_test_pdf(2);
+    let path = write_temp_pdf("engine_test.pdf", &pdf_bytes);
+
+    let doc = agentsense::PdfDocument::with_engine(&path, PdfEngine::Lopdf)
+        .expect("should open with Lopdf engine");
+
+    assert_eq!(doc.page_count(), 2);
+}
+
+#[test]
+fn test_engine_selection_pdfsink_works() {
+    use agentsense::PdfEngine;
+
+    let pdf_bytes = generate_test_pdf(1);
+    let path = write_temp_pdf("pdfsink_test.pdf", &pdf_bytes);
+
+    let doc = agentsense::PdfDocument::with_engine(&path, PdfEngine::PdfsinkRs)
+        .expect("should open with PdfsinkRs engine");
+
+    assert_eq!(doc.page_count(), 1);
+}
+
 // ── Test 3: extract text from PDF ─────────────────────────────────
 
 #[test]

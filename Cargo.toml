@@ -2,18 +2,36 @@
 name = "agentsense"
 version = "0.1.0"
 edition = "2021"
-description = "AgentSense — ExoMind 感知基础设施的核心库，提供统一的文档解析、搜索聚合、视觉理解能力"
+description = "AgentSense — ExoMind 感知基础设施的核心库，提供统一的文档解析、搜索聚合、视觉理解、额度感知能力"
 license = "MIT"
 repository = "https://github.com/exomind-team/agentsense"
 authors = ["HailayLin", "ExoMind Team"]
 
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "agentsense"
+path = "src/main.rs"
+
 [dependencies]
-lopdf = "0.34"
-pdf-extract = "0.7"
+lopdf = "0.40"
+pdf-extract = "0.10"
+pdfsink-rs = "0.2"
 thiserror = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tracing = "0.1"
+
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.12", features = ["json"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+clap = { version = "4", features = ["derive"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+toml = "0.8"
+chrono = { version = "0.4", features = ["serde"] }
+comfy-table = "7"
+dirs = "5"
 
 [dev-dependencies]
 tempfile = "3"

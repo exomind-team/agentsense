@@ -1,20 +1,15 @@
-//! Error types for AgentSense.
-
 use std::fmt;
 
-/// Errors that can occur when working with documents.
 #[derive(Debug)]
 pub enum AgentSenseError {
-    /// File not found at the given path.
     FileNotFound(String),
-    /// The file is not a valid PDF (or is corrupted).
     InvalidPdf(String),
-    /// The PDF is encrypted and requires a password.
     Encrypted(String),
-    /// An I/O error occurred.
     Io(std::io::Error),
-    /// A lopdf parsing error occurred.
     Parse(String),
+    Http(String),
+    Config(String),
+    Database(String),
 }
 
 impl fmt::Display for AgentSenseError {
@@ -25,6 +20,9 @@ impl fmt::Display for AgentSenseError {
             Self::Encrypted(msg) => write!(f, "encrypted PDF: {msg}"),
             Self::Io(e) => write!(f, "I/O error: {e}"),
             Self::Parse(msg) => write!(f, "parse error: {msg}"),
+            Self::Http(msg) => write!(f, "HTTP error: {msg}"),
+            Self::Config(msg) => write!(f, "config error: {msg}"),
+            Self::Database(msg) => write!(f, "database error: {msg}"),
         }
     }
 }
@@ -41,5 +39,23 @@ impl std::error::Error for AgentSenseError {
 impl From<std::io::Error> for AgentSenseError {
     fn from(e: std::io::Error) -> Self {
         Self::Io(e)
+    }
+}
+
+impl From<rusqlite::Error> for AgentSenseError {
+    fn from(e: rusqlite::Error) -> Self {
+        Self::Database(e.to_string())
+    }
+}
+
+impl From<reqwest::Error> for AgentSenseError {
+    fn from(e: reqwest::Error) -> Self {
+        Self::Http(e.to_string())
+    }
+}
+
+impl From<toml::de::Error> for AgentSenseError {
+    fn from(e: toml::de::Error) -> Self {
+        Self::Config(e.to_string())
     }
 }
