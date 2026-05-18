@@ -28,7 +28,10 @@ struct BalanceInfo {
     topped_up_balance: Option<String>,
 }
 
-pub async fn fetch(client: &reqwest::Client, api_key: &str) -> Result<DeepSeekSnapshot, AgentSenseError> {
+pub async fn fetch(
+    client: &reqwest::Client,
+    api_key: &str,
+) -> Result<DeepSeekSnapshot, AgentSenseError> {
     let resp = client
         .get("https://api.deepseek.com/user/balance")
         .header("Authorization", format!("Bearer {api_key}"))
@@ -37,7 +40,10 @@ pub async fn fetch(client: &reqwest::Client, api_key: &str) -> Result<DeepSeekSn
         .await?;
 
     if !resp.status().is_success() {
-        return Err(AgentSenseError::Http(format!("DeepSeek HTTP {}", resp.status())));
+        return Err(AgentSenseError::Http(format!(
+            "DeepSeek HTTP {}",
+            resp.status()
+        )));
     }
 
     let data: ApiResponse = resp.json().await?;
@@ -60,8 +66,16 @@ pub async fn fetch(client: &reqwest::Client, api_key: &str) -> Result<DeepSeekSn
         match b.currency.as_str() {
             "CNY" => {
                 cny = b.total_balance.parse().unwrap_or(0.0);
-                granted = b.granted_balance.as_ref().and_then(|v| v.parse().ok()).unwrap_or(0.0);
-                topped_up = b.topped_up_balance.as_ref().and_then(|v| v.parse().ok()).unwrap_or(0.0);
+                granted = b
+                    .granted_balance
+                    .as_ref()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(0.0);
+                topped_up = b
+                    .topped_up_balance
+                    .as_ref()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(0.0);
             }
             "USD" => {
                 usd = b.total_balance.parse().unwrap_or(0.0);

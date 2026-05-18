@@ -24,8 +24,7 @@ pub struct FetchResult {
 
 impl QuotaOrchestrator {
     pub fn new(config: &QuotaConfig) -> Result<Self, AgentSenseError> {
-        let mut builder = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(30));
+        let mut builder = reqwest::Client::builder().timeout(std::time::Duration::from_secs(30));
 
         if let Some(ref proxy) = config.proxy {
             let proxy = reqwest::Proxy::all(proxy)
@@ -50,11 +49,11 @@ impl QuotaOrchestrator {
             let key = self.minimax_key.as_ref().unwrap().clone();
             let client = self.client.clone();
             Some(
-                tokio::spawn(async move {
-                    minimax::fetch(&client, &key).await
-                })
-                .await
-                .unwrap_or_else(|e| Err(AgentSenseError::Http(format!("MiniMax task panicked: {e}"))))
+                tokio::spawn(async move { minimax::fetch(&client, &key).await })
+                    .await
+                    .unwrap_or_else(|e| {
+                        Err(AgentSenseError::Http(format!("MiniMax task panicked: {e}")))
+                    }),
             )
         } else {
             None
@@ -64,11 +63,13 @@ impl QuotaOrchestrator {
             let key = self.deepseek_key.as_ref().unwrap().clone();
             let client = self.client.clone();
             Some(
-                tokio::spawn(async move {
-                    deepseek::fetch(&client, &key).await
-                })
-                .await
-                .unwrap_or_else(|e| Err(AgentSenseError::Http(format!("DeepSeek task panicked: {e}"))))
+                tokio::spawn(async move { deepseek::fetch(&client, &key).await })
+                    .await
+                    .unwrap_or_else(|e| {
+                        Err(AgentSenseError::Http(format!(
+                            "DeepSeek task panicked: {e}"
+                        )))
+                    }),
             )
         } else {
             None
@@ -78,11 +79,11 @@ impl QuotaOrchestrator {
             let token = self.zai_token.as_ref().unwrap().clone();
             let client = self.client.clone();
             Some(
-                tokio::spawn(async move {
-                    zai::fetch(&client, &token).await
-                })
-                .await
-                .unwrap_or_else(|e| Err(AgentSenseError::Http(format!("Z.AI task panicked: {e}"))))
+                tokio::spawn(async move { zai::fetch(&client, &token).await })
+                    .await
+                    .unwrap_or_else(|e| {
+                        Err(AgentSenseError::Http(format!("Z.AI task panicked: {e}")))
+                    }),
             )
         } else {
             None

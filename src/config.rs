@@ -52,24 +52,32 @@ impl AppConfig {
 
 impl QuotaConfig {
     pub fn db_path(&self) -> PathBuf {
-        self.db_path.clone().unwrap_or_else(|| PathBuf::from("quota.db"))
+        self.db_path
+            .clone()
+            .unwrap_or_else(|| PathBuf::from("quota.db"))
     }
 
     pub fn minimax_key(&self) -> Option<String> {
-        self.minimax.as_ref().and_then(|c| resolve_key(&c.api_key, &c.api_key_env))
+        self.minimax
+            .as_ref()
+            .and_then(|c| resolve_key(&c.api_key, &c.api_key_env))
     }
 
     pub fn deepseek_key(&self) -> Option<String> {
-        self.deepseek.as_ref().and_then(|c| resolve_key(&c.api_key, &c.api_key_env))
+        self.deepseek
+            .as_ref()
+            .and_then(|c| resolve_key(&c.api_key, &c.api_key_env))
     }
 
     pub fn zai_token(&self) -> Option<String> {
-        self.zai.as_ref().and_then(|c| resolve_key(&c.auth_token, &c.auth_token_env))
+        self.zai
+            .as_ref()
+            .and_then(|c| resolve_key(&c.auth_token, &c.auth_token_env))
     }
 }
 
 fn resolve_key(direct: &Option<String>, env_var: &Option<String>) -> Option<String> {
-    direct.clone().or_else(|| {
-        env_var.as_ref().and_then(|var| std::env::var(var).ok())
-    })
+    direct
+        .clone()
+        .or_else(|| env_var.as_ref().and_then(|var| std::env::var(var).ok()))
 }

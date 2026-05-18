@@ -1,11 +1,15 @@
 use agentsense::quota::QuotaOrchestrator;
 use agentsense::AppConfig;
 use clap::{Parser, Subcommand};
-use comfy_table::{presets::UTF8_FULL, Cell, ContentArrangement, Table, Attribute};
+use comfy_table::{presets::UTF8_FULL, Attribute, Cell, ContentArrangement, Table};
 use std::time::Duration;
 
 #[derive(Parser)]
-#[command(name = "agentsense", version, about = "AgentSense — ExoMind 感知基础设施")]
+#[command(
+    name = "agentsense",
+    version,
+    about = "AgentSense — ExoMind 感知基础设施"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,

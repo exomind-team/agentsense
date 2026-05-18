@@ -52,19 +52,16 @@ pub(crate) fn extract_text_with_engine(
     engine_data: &EngineData,
 ) -> Result<String, AgentSenseError> {
     match engine_data {
-        EngineData::Lopdf => {
-            pdf_extract::extract_text(path)
-                .map_err(|e| AgentSenseError::Parse(format!("text extraction failed: {e}")))
-        }
+        EngineData::Lopdf => pdf_extract::extract_text(path)
+            .map_err(|e| AgentSenseError::Parse(format!("text extraction failed: {e}"))),
         EngineData::PdfsinkRs { page_texts } => {
             // Use cached page texts if available
             if let Some(ref texts) = *page_texts.lock().unwrap() {
                 return Ok(texts.join("\n"));
             }
             // Fallback: re-open and extract
-            let pdf = pdfsink_rs::PdfDocument::open(path).map_err(|e| {
-                AgentSenseError::InvalidPdf(format!("pdfsink-rs failed: {e}"))
-            })?;
+            let pdf = pdfsink_rs::PdfDocument::open(path)
+                .map_err(|e| AgentSenseError::InvalidPdf(format!("pdfsink-rs failed: {e}")))?;
             let mut texts = Vec::with_capacity(pdf.len());
             for i in 1..=pdf.len() {
                 if let Ok(page) = pdf.page(i) {
@@ -77,9 +74,8 @@ pub(crate) fn extract_text_with_engine(
 }
 
 fn open_lopdf(path: &Path) -> Result<OpenResult, AgentSenseError> {
-    let doc = lopdf::Document::load(path).map_err(|e| {
-        AgentSenseError::InvalidPdf(format!("failed to parse PDF: {e}"))
-    })?;
+    let doc = lopdf::Document::load(path)
+        .map_err(|e| AgentSenseError::InvalidPdf(format!("failed to parse PDF: {e}")))?;
 
     let pages = doc.get_pages();
     let page_count = pages.len();
@@ -103,9 +99,8 @@ fn open_lopdf(path: &Path) -> Result<OpenResult, AgentSenseError> {
 }
 
 fn open_pdfsink(path: &Path) -> Result<OpenResult, AgentSenseError> {
-    let pdf = pdfsink_rs::PdfDocument::open(path).map_err(|e| {
-        AgentSenseError::InvalidPdf(format!("pdfsink-rs failed: {e}"))
-    })?;
+    let pdf = pdfsink_rs::PdfDocument::open(path)
+        .map_err(|e| AgentSenseError::InvalidPdf(format!("pdfsink-rs failed: {e}")))?;
 
     let page_count = pdf.len();
 
@@ -113,11 +108,11 @@ fn open_pdfsink(path: &Path) -> Result<OpenResult, AgentSenseError> {
     let (page_width_pt, page_height_pt) = pdf
         .page(1)
         .ok()
-        .map(|p| (p.width as f64, p.height as f64))
+        .map(|p| (p.width, p.height))
         .unwrap_or((612.0, 792.0));
 
     let info = DocumentInfo {
-        title: None,   // pdfsink-rs doesn't expose metadata directly in 0.2
+        title: None, // pdfsink-rs doesn't expose metadata directly in 0.2
         author: None,
         creator: None,
         producer: None,

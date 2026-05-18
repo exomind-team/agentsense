@@ -56,7 +56,9 @@ fn generate_test_pdf(page_count: usize) -> Vec<u8> {
 
 /// Write PDF bytes to a temp file and return the path.
 fn write_temp_pdf(name: &str, bytes: &[u8]) -> PathBuf {
-    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests").join("fixtures");
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures");
     std::fs::create_dir_all(&dir).ok();
     let path = dir.join(name);
     std::fs::write(&path, bytes).expect("failed to write test PDF");
@@ -146,17 +148,15 @@ fn generate_pdf_with_text(text: &str, page_count: usize) -> Vec<u8> {
         let content_id = doc.new_object_id();
         let res_id = doc.new_object_id();
 
-        let content_data = format!(
-            "BT /F1 12 Tf 72 700 Td ({}) Tj ET",
-            text
-        );
+        let content_data = format!("BT /F1 12 Tf 72 700 Td ({}) Tj ET", text);
         let content_stream = Stream {
             dict: dictionary! { "Length" => Object::Integer(content_data.len() as i64) },
             content: content_data.into_bytes(),
             allows_compression: true,
             start_position: None,
         };
-        doc.objects.insert(content_id, Object::Stream(content_stream));
+        doc.objects
+            .insert(content_id, Object::Stream(content_stream));
 
         let resources = dictionary! {
             "Font" => dictionary! { "F1" => Object::Reference(font_id) },
@@ -327,8 +327,10 @@ fn test_extract_text_returns_content() {
     let doc = agentsense::PdfDocument::open(&path).expect("should open text PDF");
 
     let text = doc.text().expect("should extract text");
-    assert!(text.contains("Hello World"),
-        "Expected text to contain 'Hello World', got: {text}");
+    assert!(
+        text.contains("Hello World"),
+        "Expected text to contain 'Hello World', got: {text}"
+    );
 }
 
 // ── Test 4: error handling ────────────────────────────────────────
@@ -339,8 +341,10 @@ fn test_open_nonexistent_file_returns_error() {
     let result = agentsense::PdfDocument::open(&path);
     assert!(result.is_err(), "expected error for missing file");
     let err = result.unwrap_err().to_string();
-    assert!(err.contains("not found") || err.contains("No such file"),
-        "error message should mention missing file, got: {err}");
+    assert!(
+        err.contains("not found") || err.contains("No such file"),
+        "error message should mention missing file, got: {err}"
+    );
 }
 
 #[test]

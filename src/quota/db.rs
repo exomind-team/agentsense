@@ -1,8 +1,8 @@
 use rusqlite::{params, Connection};
 use std::path::Path;
 
-use super::minimax::MinimaxSnapshot;
 use super::deepseek::DeepSeekSnapshot;
+use super::minimax::MinimaxSnapshot;
 use super::zai::ZaiSnapshot;
 use crate::error::AgentSenseError;
 

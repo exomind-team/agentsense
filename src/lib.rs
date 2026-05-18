@@ -36,9 +36,7 @@ impl PdfDocument {
     /// Open a PDF file with an explicit engine choice.
     pub fn with_engine(path: &Path, engine: PdfEngine) -> Result<Self, AgentSenseError> {
         if !path.exists() {
-            return Err(AgentSenseError::FileNotFound(
-                path.display().to_string(),
-            ));
+            return Err(AgentSenseError::FileNotFound(path.display().to_string()));
         }
         let result = engine::open_with_engine(path, engine)?;
         Ok(Self {

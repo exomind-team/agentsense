@@ -34,7 +34,10 @@ struct LimitItem {
     usage: Option<i64>,
 }
 
-pub async fn fetch(client: &reqwest::Client, auth_token: &str) -> Result<ZaiSnapshot, AgentSenseError> {
+pub async fn fetch(
+    client: &reqwest::Client,
+    auth_token: &str,
+) -> Result<ZaiSnapshot, AgentSenseError> {
     let resp = client
         .get("https://api.z.ai/api/monitor/usage/quota/limit")
         .header("Authorization", format!("Bearer {auth_token}"))
@@ -43,7 +46,10 @@ pub async fn fetch(client: &reqwest::Client, auth_token: &str) -> Result<ZaiSnap
         .await?;
 
     if !resp.status().is_success() {
-        return Err(AgentSenseError::Http(format!("Z.AI HTTP {}", resp.status())));
+        return Err(AgentSenseError::Http(format!(
+            "Z.AI HTTP {}",
+            resp.status()
+        )));
     }
 
     let data: ApiResponse = resp.json().await?;

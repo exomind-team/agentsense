@@ -40,7 +40,10 @@ struct ModelRemain {
     current_weekly_total_count: i64,
 }
 
-pub async fn fetch(client: &reqwest::Client, api_key: &str) -> Result<MinimaxSnapshot, AgentSenseError> {
+pub async fn fetch(
+    client: &reqwest::Client,
+    api_key: &str,
+) -> Result<MinimaxSnapshot, AgentSenseError> {
     let resp = client
         .get("https://api.minimax.io/v1/token_plan/remains")
         .header("Authorization", format!("Bearer {api_key}"))
@@ -49,7 +52,10 @@ pub async fn fetch(client: &reqwest::Client, api_key: &str) -> Result<MinimaxSna
         .await?;
 
     if !resp.status().is_success() {
-        return Err(AgentSenseError::Http(format!("MiniMax HTTP {}", resp.status())));
+        return Err(AgentSenseError::Http(format!(
+            "MiniMax HTTP {}",
+            resp.status()
+        )));
     }
 
     let data: ApiResponse = resp.json().await?;
@@ -64,7 +70,9 @@ pub async fn fetch(client: &reqwest::Client, api_key: &str) -> Result<MinimaxSna
 
     let remains = data.model_remains.unwrap_or_default();
     if remains.is_empty() {
-        return Err(AgentSenseError::Http("MiniMax: no models in response".into()));
+        return Err(AgentSenseError::Http(
+            "MiniMax: no models in response".into(),
+        ));
     }
 
     let timestamp = chrono::Utc::now().timestamp_millis();
