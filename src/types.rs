@@ -60,3 +60,18 @@ impl DocumentInfo {
         self.page_height_pt
     }
 }
+
+/// Metadata for an image embedded in a PDF page.
+#[derive(Debug, Clone)]
+pub struct ImageInfo {
+    /// 1-indexed page number.
+    pub page: usize,
+    /// Zero-based index within the page.
+    pub index: usize,
+    /// PDF object name (e.g., "Im0").
+    pub name: String,
+    /// Image width in pixels.
+    pub width: u32,
+    /// Image height in pixels.
+    pub height: u32,
+}

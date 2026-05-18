@@ -15,7 +15,7 @@ use std::path::Path;
 pub use config::AppConfig;
 pub use engine::PdfEngine;
 pub use error::AgentSenseError;
-pub use types::DocumentInfo;
+pub use types::{DocumentInfo, ImageInfo};
 
 use engine::EngineData;
 
@@ -76,6 +76,120 @@ impl PdfDocument {
             .page(page_number)
             .map_err(|e| AgentSenseError::InvalidPdf(format!("page {page_number}: {e}")))?;
         Ok(page.extract_text())
+    }
+
+    /// List all images in the document with their metadata.
+    pub fn list_images(&self) -> Result<Vec<ImageInfo>, AgentSenseError> {
+        let pdf = pdfsink_rs::PdfDocument::open(&self.path).map_err(|e| {
+            AgentSenseError::InvalidPdf(format!("pdfsink-rs image scan failed: {e}"))
+        })?;
+        let mut images = Vec::new();
+        for page_num in 1..=pdf.len() {
+            if let Ok(page) = pdf.page(page_num) {
+                for (idx, img) in page.images.iter().enumerate() {
+                    images.push(ImageInfo {
+                        page: page_num,
+                        index: idx,
+                        name: img.name.clone(),
+                        width: img.srcsize.0,
+                        height: img.srcsize.1,
+                    });
+                }
+            }
+        }
+        Ok(images)
+    }
+
+    /// Extract raw image bytes by page number (1-indexed) and image index.
+    pub fn extract_image(
+        &self,
+        page_number: usize,
+        image_index: usize,
+    ) -> Result<Vec<u8>, AgentSenseError> {
+        if page_number == 0 || page_number > self.info.page_count {
+            return Err(AgentSenseError::InvalidPdf(format!(
+                "page {page_number} out of range"
+            )));
+        }
+        let doc = lopdf::Document::load(&self.path)
+            .map_err(|e| AgentSenseError::InvalidPdf(format!("lopdf image extract failed: {e}")))?;
+        let pages = doc.get_pages();
+        let page_id = pages
+            .values()
+            .nth(page_number - 1)
+            .ok_or_else(|| AgentSenseError::InvalidPdf(format!("page {page_number} not found")))?;
+        let page_obj = doc
+            .get_object(*page_id)
+            .map_err(|e| AgentSenseError::InvalidPdf(format!("page object error: {e}")))?;
+        let page_dict = match page_obj {
+            lopdf::Object::Dictionary(d) => d,
+            _ => {
+                return Err(AgentSenseError::InvalidPdf(
+                    "page is not a dictionary".into(),
+                ))
+            }
+        };
+        let resources = page_dict
+            .get(b"Resources")
+            .ok()
+            .ok_or_else(|| AgentSenseError::InvalidPdf("no Resources dict on page".into()))?;
+        let res_dict = match resources {
+            lopdf::Object::Dictionary(d) => d,
+            lopdf::Object::Reference(id) => match doc.get_object(*id).ok() {
+                Some(lopdf::Object::Dictionary(d)) => d,
+                _ => {
+                    return Err(AgentSenseError::InvalidPdf(
+                        "Resources ref unresolved".into(),
+                    ))
+                }
+            },
+            _ => return Err(AgentSenseError::InvalidPdf("bad Resources type".into())),
+        };
+        let xobject = res_dict
+            .get(b"XObject")
+            .ok()
+            .ok_or_else(|| AgentSenseError::InvalidPdf("no XObject dict in resources".into()))?;
+        let xobj_dict = match xobject {
+            lopdf::Object::Dictionary(d) => d,
+            lopdf::Object::Reference(id) => match doc.get_object(*id).ok() {
+                Some(lopdf::Object::Dictionary(d)) => d,
+                _ => return Err(AgentSenseError::InvalidPdf("XObject ref unresolved".into())),
+            },
+            _ => return Err(AgentSenseError::InvalidPdf("bad XObject type".into())),
+        };
+        // Iterate XObjects to find the nth image
+        let mut found = 0usize;
+        for (_name, obj) in xobj_dict.iter() {
+            let img_id = match obj {
+                lopdf::Object::Reference(id) => id,
+                _ => continue,
+            };
+            let img_obj = match doc.get_object(*img_id).ok() {
+                Some(o) => o,
+                None => continue,
+            };
+            let img_stream = match img_obj {
+                lopdf::Object::Stream(s) => s,
+                _ => continue,
+            };
+            let is_image = img_stream
+                .dict
+                .get(b"Subtype")
+                .ok()
+                .map(|o| matches!(o, lopdf::Object::Name(n) if n == b"Image"))
+                .unwrap_or(false);
+            if !is_image {
+                continue;
+            }
+            if found == image_index {
+                // Return the raw stream bytes (for JPEG/DCTDecode, this is the JPEG data)
+                return Ok(img_stream.content.clone());
+            }
+            found += 1;
+        }
+        Err(AgentSenseError::InvalidPdf(format!(
+            "image index {image_index} not found on page {page_number} (found {found} images)"
+        )))
     }
 }
 
