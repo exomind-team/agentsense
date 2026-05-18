@@ -7,7 +7,7 @@ pub struct AppConfig {
     pub quota: QuotaConfig,
 }
 
-#[derive(Debug, Deserialize, Serialize, Default)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct QuotaConfig {
     #[serde(default = "default_poll_interval")]
     pub poll_interval_secs: u64,
@@ -17,6 +17,19 @@ pub struct QuotaConfig {
     pub deepseek: Option<KeyConfig>,
     #[serde(rename = "zai")]
     pub zai: Option<ZaiKeyConfig>,
+}
+
+impl Default for QuotaConfig {
+    fn default() -> Self {
+        Self {
+            poll_interval_secs: default_poll_interval(),
+            proxy: None,
+            db_path: None,
+            minimax: None,
+            deepseek: None,
+            zai: None,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize)]

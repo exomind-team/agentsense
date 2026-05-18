@@ -141,13 +141,19 @@ pub async fn do_poll(state: Arc<AppState>) {
 
     let db = state.db.lock().await;
     if let Some(Ok(ref snap)) = mmx {
-        let _ = db.insert_minimax(snap);
+        if let Err(e) = db.insert_minimax(snap) {
+            eprintln!("[WARN] DB insert minimax: {e}");
+        }
     }
     if let Some(Ok(ref snap)) = ds {
-        let _ = db.insert_deepseek(snap);
+        if let Err(e) = db.insert_deepseek(snap) {
+            eprintln!("[WARN] DB insert deepseek: {e}");
+        }
     }
     if let Some(Ok(ref snap)) = zai {
-        let _ = db.insert_zai(snap);
+        if let Err(e) = db.insert_zai(snap) {
+            eprintln!("[WARN] DB insert zai: {e}");
+        }
     }
     drop(db);
 

@@ -254,8 +254,8 @@ pub async fn api_config_put(
         },
     };
 
-    let json_str = serde_json::to_string_pretty(&config).unwrap_or_default();
-    let _ = std::fs::write(&state.config_path, json_str);
+    let toml_str = toml::to_string_pretty(&config).unwrap_or_default();
+    let _ = std::fs::write(&state.config_path, toml_str);
 
     axum::Json(serde_json::json!({"ok": true}))
 }
