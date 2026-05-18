@@ -317,6 +317,95 @@ fn test_engine_selection_pdfsink_works() {
     assert_eq!(doc.page_count(), 1);
 }
 
+// ── Test 9: page-level text extraction ────────────────────────────
+
+#[test]
+fn test_read_page_returns_page_text() {
+    // Create a 2-page PDF with different text on each page
+    use lopdf::dictionary;
+    use lopdf::{Document, Object, ObjectId, Stream};
+
+    let mut doc = Document::with_version("1.4");
+    let font_id = doc.new_object_id();
+    let pages_id = doc.new_object_id();
+    let catalog_id = doc.new_object_id();
+
+    let font = dictionary! {
+        "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica",
+    };
+    doc.objects.insert(font_id, Object::Dictionary(font));
+
+    let page_texts = ["Page One Content", "Page Two Different"];
+    let mut page_ids: Vec<ObjectId> = Vec::new();
+
+    for text in &page_texts {
+        let page_id = doc.new_object_id();
+        let content_id = doc.new_object_id();
+        let res_id = doc.new_object_id();
+
+        let content_data = format!("BT /F1 12 Tf 72 700 Td ({text}) Tj ET");
+        let content_stream = Stream {
+            dict: dictionary! { "Length" => Object::Integer(content_data.len() as i64) },
+            content: content_data.into_bytes(),
+            allows_compression: true,
+            start_position: None,
+        };
+        doc.objects
+            .insert(content_id, Object::Stream(content_stream));
+
+        let resources = dictionary! {
+            "Font" => dictionary! { "F1" => Object::Reference(font_id) },
+        };
+        doc.objects.insert(res_id, Object::Dictionary(resources));
+
+        let page = dictionary! {
+            "Type" => "Page", "Parent" => pages_id,
+            "MediaBox" => vec![Object::Integer(0), Object::Integer(0),
+                               Object::Integer(612), Object::Integer(792)],
+            "Contents" => Object::Reference(content_id),
+            "Resources" => Object::Reference(res_id),
+        };
+        doc.objects.insert(page_id, Object::Dictionary(page));
+        page_ids.push(page_id);
+    }
+
+    let kids: Vec<Object> = page_ids.iter().map(|id| Object::Reference(*id)).collect();
+    let pages = dictionary! {
+        "Type" => "Pages", "Kids" => kids, "Count" => Object::Integer(2),
+    };
+    doc.objects.insert(pages_id, Object::Dictionary(pages));
+
+    let catalog = dictionary! { "Type" => "Catalog", "Pages" => Object::Reference(pages_id) };
+    doc.objects.insert(catalog_id, Object::Dictionary(catalog));
+    doc.trailer.set("Root", catalog_id);
+
+    let mut buf = Vec::new();
+    doc.save_to(&mut buf).unwrap();
+    let path = write_temp_pdf("two_page.pdf", &buf);
+
+    let doc = agentsense::PdfDocument::open(&path).expect("should open 2-page PDF");
+    assert_eq!(doc.page_count(), 2);
+
+    let page1 = doc.read_page(1).expect("should read page 1");
+    let page2 = doc.read_page(2).expect("should read page 2");
+    assert!(page1.contains("Page One"), "page1: {page1}");
+    assert!(page2.contains("Page Two"), "page2: {page2}");
+    assert!(
+        !page1.contains("Page Two"),
+        "page1 should not have page2 text"
+    );
+}
+
+#[test]
+fn test_read_page_out_of_range_returns_error() {
+    let pdf_bytes = generate_test_pdf(2);
+    let path = write_temp_pdf("range_test.pdf", &pdf_bytes);
+
+    let doc = agentsense::PdfDocument::open(&path).expect("should open");
+    assert!(doc.read_page(0).is_err(), "page 0 should error");
+    assert!(doc.read_page(3).is_err(), "page 3 should error");
+}
+
 // ── Test 3: extract text from PDF ─────────────────────────────────
 
 #[test]

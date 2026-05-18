@@ -60,6 +60,23 @@ impl PdfDocument {
     pub fn text(&self) -> Result<String, AgentSenseError> {
         engine::extract_text_with_engine(&self.path, &self.engine_data)
     }
+
+    /// Extract text from a specific page (1-indexed).
+    pub fn read_page(&self, page_number: usize) -> Result<String, AgentSenseError> {
+        if page_number == 0 || page_number > self.info.page_count {
+            return Err(AgentSenseError::InvalidPdf(format!(
+                "page {page_number} out of range (1-{})",
+                self.info.page_count
+            )));
+        }
+        let pdf = pdfsink_rs::PdfDocument::open(&self.path).map_err(|e| {
+            AgentSenseError::InvalidPdf(format!("pdfsink-rs page read failed: {e}"))
+        })?;
+        let page = pdf
+            .page(page_number)
+            .map_err(|e| AgentSenseError::InvalidPdf(format!("page {page_number}: {e}")))?;
+        Ok(page.extract_text())
+    }
 }
 
 // ── Shared helpers (used by engine::open_lopdf) ────────────────────
