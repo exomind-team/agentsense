@@ -16,6 +16,11 @@ pub enum PdfEngine {
     Lopdf,
     /// Pure Rust — pdfsink-rs. Faster text/table/layout extraction.
     PdfsinkRs,
+    /// poppler-glib via FFI. Best text extraction quality, requires C library.
+    /// Enable with: `cargo build --features poppler`
+    /// Windows: `choco install poppler`
+    #[cfg(feature = "poppler")]
+    Poppler,
 }
 
 /// Internal result of opening a PDF with a specific engine.
@@ -33,6 +38,8 @@ pub(crate) enum EngineData {
         /// Cached page texts, None = not yet extracted
         page_texts: std::sync::Mutex<Option<Vec<String>>>,
     },
+    #[cfg(feature = "poppler")]
+    Poppler,
 }
 
 /// Open a PDF with the given engine and extract metadata.
@@ -43,6 +50,8 @@ pub(crate) fn open_with_engine(
     match engine {
         PdfEngine::Lopdf => open_lopdf(path),
         PdfEngine::PdfsinkRs => open_pdfsink(path),
+        #[cfg(feature = "poppler")]
+        PdfEngine::Poppler => open_poppler(path),
     }
 }
 
@@ -70,6 +79,10 @@ pub(crate) fn extract_text_with_engine(
             }
             Ok(texts.join("\n"))
         }
+        #[cfg(feature = "poppler")]
+        EngineData::Poppler => Err(AgentSenseError::Config(
+            "poppler engine text extraction not yet implemented".into(),
+        )),
     }
 }
 
@@ -104,20 +117,22 @@ fn open_pdfsink(path: &Path) -> Result<OpenResult, AgentSenseError> {
 
     let page_count = pdf.len();
 
-    // Try to get first page size
     let (page_width_pt, page_height_pt) = pdf
         .page(1)
         .ok()
         .map(|p| (p.width, p.height))
         .unwrap_or((612.0, 792.0));
 
+    // Best-effort metadata from lopdf (doesn't affect open success)
+    let meta = try_read_metadata_lopdf(path);
+
     let info = DocumentInfo {
-        title: None, // pdfsink-rs doesn't expose metadata directly in 0.2
-        author: None,
-        creator: None,
-        producer: None,
-        subject: None,
-        keywords: None,
+        title: meta.title,
+        author: meta.author,
+        creator: meta.creator,
+        producer: meta.producer,
+        subject: meta.subject,
+        keywords: meta.keywords,
         page_count,
         page_width_pt,
         page_height_pt,
@@ -130,4 +145,42 @@ fn open_pdfsink(path: &Path) -> Result<OpenResult, AgentSenseError> {
             page_texts: std::sync::Mutex::new(None),
         },
     })
+}
+
+#[cfg(feature = "poppler")]
+fn open_poppler(_path: &Path) -> Result<OpenResult, AgentSenseError> {
+    // TODO: Integrate poppler-rs for best-in-class text extraction.
+    // Requires poppler-glib C library installed on the system.
+    // On Windows: choco install poppler
+    // On Linux: apt install libpoppler-glib-dev
+    // On macOS: brew install poppler
+    Err(AgentSenseError::Config(
+        "poppler engine not yet implemented — install poppler C library and rebuild".into(),
+    ))
+}
+
+/// Best-effort metadata read via lopdf. Silently returns None on failure.
+fn try_read_metadata_lopdf(path: &Path) -> PdfMetadata {
+    let doc = match lopdf::Document::load(path) {
+        Ok(d) => d,
+        Err(_) => return PdfMetadata::default(),
+    };
+    PdfMetadata {
+        title: super::read_info_field(&doc, b"Title"),
+        author: super::read_info_field(&doc, b"Author"),
+        creator: super::read_info_field(&doc, b"Creator"),
+        producer: super::read_info_field(&doc, b"Producer"),
+        subject: super::read_info_field(&doc, b"Subject"),
+        keywords: super::read_info_field(&doc, b"Keywords"),
+    }
+}
+
+#[derive(Default)]
+struct PdfMetadata {
+    title: Option<String>,
+    author: Option<String>,
+    creator: Option<String>,
+    producer: Option<String>,
+    subject: Option<String>,
+    keywords: Option<String>,
 }

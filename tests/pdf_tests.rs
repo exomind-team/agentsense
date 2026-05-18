@@ -442,3 +442,156 @@ fn test_open_invalid_file_returns_error() {
     let result = agentsense::PdfDocument::open(&path);
     assert!(result.is_err(), "expected error for invalid PDF");
 }
+
+// ── Test 11: text() with PdfsinkRs engine ──────────────────────────
+
+#[test]
+fn test_text_with_pdfsink_engine() {
+    use agentsense::PdfEngine;
+    let pdf_bytes = generate_pdf_with_text("PdfsinkRs Text Test", 1);
+    let path = write_temp_pdf("pdfsink_text.pdf", &pdf_bytes);
+
+    let doc = agentsense::PdfDocument::with_engine(&path, PdfEngine::PdfsinkRs)
+        .expect("should open with PdfsinkRs");
+    let text = doc.text().expect("should extract text");
+    assert!(text.contains("PdfsinkRs Text Test"));
+}
+
+// ── Test 12: read_page with PdfsinkRs engine ───────────────────────
+
+#[test]
+fn test_read_page_with_pdfsink_engine() {
+    use agentsense::PdfEngine;
+    let pdf_bytes = generate_pdf_with_text("PDFsink Page One", 1);
+    let path = write_temp_pdf("pdfsink_page.pdf", &pdf_bytes);
+
+    let doc =
+        agentsense::PdfDocument::with_engine(&path, PdfEngine::PdfsinkRs).expect("should open");
+    let text = doc.read_page(1).expect("should read page 1");
+    assert!(text.contains("PDFsink Page One"));
+}
+
+// ── Test 13: PdfsinkRs metadata via lopdf fallback ─────────────────
+
+#[test]
+fn test_pdfsink_metadata_fallback_works() {
+    use agentsense::PdfEngine;
+    let pdf_bytes = generate_pdf_with_metadata("Pdfsink Metadata Test", "Meta Author", 1);
+    let path = write_temp_pdf("pdfsink_meta.pdf", &pdf_bytes);
+
+    let doc = agentsense::PdfDocument::with_engine(&path, PdfEngine::PdfsinkRs)
+        .expect("should open with PdfsinkRs");
+    let info = doc.info();
+    assert_eq!(info.title(), Some("Pdfsink Metadata Test"));
+    assert_eq!(info.author(), Some("Meta Author"));
+}
+
+// ── Test 14: page_size A4 vs US Letter ─────────────────────────────
+
+#[test]
+fn test_page_size_detection() {
+    let pdf_bytes = generate_test_pdf(1); // US Letter: 612×792
+    let path = write_temp_pdf("letter.pdf", &pdf_bytes);
+    let doc = agentsense::PdfDocument::open(&path).expect("should open");
+    let info = doc.info();
+    assert!(
+        (info.page_width_pt() - 612.0).abs() < 1.0,
+        "US Letter width"
+    );
+    assert!(
+        (info.page_height_pt() - 792.0).abs() < 1.0,
+        "US Letter height"
+    );
+}
+
+// ── Test 15: PdfEngine Debug/Clone/Copy/Eq traits ──────────────────
+
+#[test]
+fn test_pdf_engine_traits() {
+    let a = agentsense::PdfEngine::Lopdf;
+    let b = agentsense::PdfEngine::PdfsinkRs;
+    // Copy
+    let a2 = a;
+    assert_eq!(a2, agentsense::PdfEngine::Lopdf);
+    // Clone
+    let b2 = b;
+    assert_ne!(b2, a);
+    // Debug
+    assert!(format!("{a:?}").contains("Lopdf"));
+    assert!(format!("{b:?}").contains("PdfsinkRs"));
+}
+
+// ── Test 16: empty PDF (no info dict) ──────────────────────────────
+
+#[test]
+fn test_open_pdf_without_info_dict() {
+    // generate_test_pdf creates a PDF with no Info dictionary
+    let pdf_bytes = generate_test_pdf(1);
+    let path = write_temp_pdf("no_info.pdf", &pdf_bytes);
+    let doc = agentsense::PdfDocument::open(&path).expect("should open");
+    let info = doc.info();
+    assert_eq!(info.title(), None);
+    assert_eq!(info.author(), None);
+    assert_eq!(info.creator(), None);
+    assert_eq!(info.page_count(), 1);
+    assert!(doc.text().is_ok());
+}
+
+// ── Test 17: multi-page text extraction consistency ────────────────
+
+#[test]
+fn test_full_text_vs_page_text_consistency() {
+    let pdf_bytes = generate_pdf_with_text("Consistency", 2);
+    let path = write_temp_pdf("consistency.pdf", &pdf_bytes);
+    let doc = agentsense::PdfDocument::open(&path).expect("should open");
+
+    let full = doc.text().expect("full text");
+    let p1 = doc.read_page(1).expect("page 1");
+    let p2 = doc.read_page(2).expect("page 2");
+
+    // Each page should contain the word
+    assert!(p1.contains("Consistency"));
+    assert!(p2.contains("Consistency"));
+    // Full text should be longer than either individual page
+    assert!(full.len() > p1.len());
+    assert!(full.len() > p2.len());
+}
+
+// ── Test 18: DocumentInfo display/debug ────────────────────────────
+
+#[test]
+fn test_document_info_debug_format() {
+    let pdf_bytes = generate_pdf_with_metadata("Debug Test", "Debug Author", 1);
+    let path = write_temp_pdf("debug_info.pdf", &pdf_bytes);
+    let doc = agentsense::PdfDocument::open(&path).expect("should open");
+    let info = doc.info();
+    let debug_str = format!("{info:?}");
+    assert!(debug_str.contains("Debug Test"));
+    assert!(debug_str.contains("Debug Author"));
+}
+
+// ── Test 19: AgentSenseError Display ───────────────────────────────
+
+#[test]
+fn test_error_display_messages() {
+    let e = agentsense::AgentSenseError::FileNotFound("test.pdf".into());
+    assert!(e.to_string().contains("file not found"));
+    assert!(e.to_string().contains("test.pdf"));
+
+    let e = agentsense::AgentSenseError::InvalidPdf("bad header".into());
+    assert!(e.to_string().contains("invalid PDF"));
+    assert!(e.to_string().contains("bad header"));
+}
+
+// ── Test 20: PdfDocument Debug format ──────────────────────────────
+
+#[test]
+fn test_pdf_document_debug_format() {
+    let pdf_bytes = generate_test_pdf(1);
+    let path = write_temp_pdf("debug_doc.pdf", &pdf_bytes);
+    let doc = agentsense::PdfDocument::open(&path).expect("should open");
+    let debug_str = format!("{doc:?}");
+    // Should contain the struct name and path
+    assert!(debug_str.contains("PdfDocument"));
+    assert!(debug_str.contains("debug_doc"));
+}
