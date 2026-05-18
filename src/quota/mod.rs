@@ -45,8 +45,8 @@ impl QuotaOrchestrator {
     }
 
     pub async fn fetch_all(&self) -> FetchResult {
-        let mmx = if self.minimax_key.is_some() {
-            let key = self.minimax_key.as_ref().unwrap().clone();
+        let mmx = if let Some(ref key) = self.minimax_key {
+            let key = key.clone();
             let client = self.client.clone();
             Some(
                 tokio::spawn(async move { minimax::fetch(&client, &key).await })
@@ -59,8 +59,8 @@ impl QuotaOrchestrator {
             None
         };
 
-        let ds = if self.deepseek_key.is_some() {
-            let key = self.deepseek_key.as_ref().unwrap().clone();
+        let ds = if let Some(ref key) = self.deepseek_key {
+            let key = key.clone();
             let client = self.client.clone();
             Some(
                 tokio::spawn(async move { deepseek::fetch(&client, &key).await })
@@ -75,8 +75,8 @@ impl QuotaOrchestrator {
             None
         };
 
-        let zai = if self.zai_token.is_some() {
-            let token = self.zai_token.as_ref().unwrap().clone();
+        let zai = if let Some(ref token) = self.zai_token {
+            let token = token.clone();
             let client = self.client.clone();
             Some(
                 tokio::spawn(async move { zai::fetch(&client, &token).await })
