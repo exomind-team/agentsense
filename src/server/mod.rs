@@ -8,6 +8,7 @@ use crate::config::QuotaConfig;
 use crate::error::AgentSenseError;
 use crate::quota::db::QuotaDb;
 
+#[derive(Clone)]
 pub struct AppState {
     pub db: Arc<tokio::sync::Mutex<QuotaDb>>,
     pub client: reqwest::Client,
@@ -24,6 +25,7 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
 
     axum::Router::new()
         .route("/", get(handlers::serve_index))
+        .route("/mcp", axum::routing::post(handlers::mcp_handler))
         .route("/api/all", get(handlers::api_all))
         .route("/api/quota", get(handlers::api_quota))
         .route("/api/history", get(handlers::api_history))
@@ -79,9 +81,11 @@ pub async fn serve(
         .await
         .map_err(AgentSenseError::Io)?;
 
-    println!("AI Quota Monitor running on http://localhost:{port}");
+    println!("AgentSense MCP Server");
+    println!("  Dashboard: http://localhost:{port}");
+    println!("  MCP:       http://localhost:{port}/mcp");
     println!(
-        "Config: {} (MMX: {}, DS: {}, ZAI: {})",
+        "  Config:    {} (MMX: {}, DS: {}, ZAI: {})",
         state.config_path.display(),
         state.minimax_key.read().await.is_some(),
         state.deepseek_key.read().await.is_some(),
@@ -118,9 +122,9 @@ pub async fn do_poll(state: Arc<AppState>) {
         Some(
             tokio::spawn(async move { crate::quota::deepseek::fetch(&client, &key).await })
                 .await
-                .unwrap_or_else(|e| Err(AgentSenseError::Http(format!(
-                    "DeepSeek task panicked: {e}"
-                )))),
+                .unwrap_or_else(|e| {
+                    Err(AgentSenseError::Http(format!("DeepSeek task panicked: {e}")))
+                }),
         )
     } else {
         None
@@ -141,19 +145,13 @@ pub async fn do_poll(state: Arc<AppState>) {
 
     let db = state.db.lock().await;
     if let Some(Ok(ref snap)) = mmx {
-        if let Err(e) = db.insert_minimax(snap) {
-            eprintln!("[WARN] DB insert minimax: {e}");
-        }
+        let _ = db.insert_minimax(snap);
     }
     if let Some(Ok(ref snap)) = ds {
-        if let Err(e) = db.insert_deepseek(snap) {
-            eprintln!("[WARN] DB insert deepseek: {e}");
-        }
+        let _ = db.insert_deepseek(snap);
     }
     if let Some(Ok(ref snap)) = zai {
-        if let Err(e) = db.insert_zai(snap) {
-            eprintln!("[WARN] DB insert zai: {e}");
-        }
+        let _ = db.insert_zai(snap);
     }
     drop(db);
 
