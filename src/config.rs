@@ -1,13 +1,13 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize, Serialize, Default)]
 pub struct AppConfig {
     #[serde(default)]
     pub quota: QuotaConfig,
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize, Serialize, Default)]
 pub struct QuotaConfig {
     #[serde(default = "default_poll_interval")]
     pub poll_interval_secs: u64,
@@ -19,13 +19,13 @@ pub struct QuotaConfig {
     pub zai: Option<ZaiKeyConfig>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct KeyConfig {
     pub api_key: Option<String>,
     pub api_key_env: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct ZaiKeyConfig {
     pub auth_token: Option<String>,
     pub auth_token_env: Option<String>,

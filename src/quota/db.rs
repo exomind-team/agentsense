@@ -136,4 +136,227 @@ impl QuotaDb {
             Err(e) => Err(AgentSenseError::Database(e.to_string())),
         }
     }
+
+    pub fn latest_minimax(&self) -> Result<Vec<super::minimax::ModelQuota>, AgentSenseError> {
+        let (_, models) = self.latest_minimax_with_ts()?;
+        Ok(models)
+    }
+
+    pub fn latest_minimax_with_ts(
+        &self,
+    ) -> Result<(i64, Vec<super::minimax::ModelQuota>), AgentSenseError> {
+        let max_ts: Option<i64> = self
+            .conn
+            .query_row("SELECT MAX(ts) FROM minimax_quota_log", [], |row| row.get(0))?;
+        match max_ts {
+            None => Ok((0, vec![])),
+            Some(ts) => {
+                let mut stmt = self.conn.prepare(
+                    "SELECT model_name, interval_usage, interval_total, weekly_usage, weekly_total
+                     FROM minimax_quota_log WHERE ts = ?1",
+                )?;
+                let models = stmt
+                    .query_map(params![ts], |row| {
+                        Ok(super::minimax::ModelQuota {
+                            name: row.get(0)?,
+                            interval_usage: row.get(1)?,
+                            interval_total: row.get(2)?,
+                            weekly_usage: row.get(3)?,
+                            weekly_total: row.get(4)?,
+                        })
+                    })?
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok((ts, models))
+            }
+        }
+    }
+
+    pub fn minimax_history_24h(
+        &self,
+        model_name: &str,
+    ) -> Result<Vec<serde_json::Value>, AgentSenseError> {
+        let now = chrono::Utc::now().timestamp_millis();
+        let cutoff = now - 24 * 60 * 60 * 1000;
+        let mut stmt = self.conn.prepare(
+            "WITH buckets AS (
+                SELECT ts, interval_usage, interval_total, (ts / 300000) * 300000 AS bucket
+                FROM minimax_quota_log
+                WHERE ts >= ?1 AND model_name = ?2
+            )
+            SELECT MAX(ts) as ts, interval_usage, interval_total
+            FROM buckets
+            GROUP BY bucket
+            ORDER BY bucket",
+        )?;
+        let rows = stmt
+            .query_map(params![cutoff, model_name], |row| {
+                let ts: i64 = row.get(0)?;
+                let interval_usage: i64 = row.get(1)?;
+                let interval_total: i64 = row.get(2)?;
+                Ok(serde_json::json!({
+                    "ts": ts,
+                    "interval_usage": interval_usage,
+                    "interval_total": interval_total,
+                    "remaining": interval_total - interval_usage,
+                }))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    pub fn deepseek_history(
+        &self,
+        hours: u64,
+    ) -> Result<Vec<DeepSeekSnapshot>, AgentSenseError> {
+        let now = chrono::Utc::now().timestamp_millis();
+        let cutoff = now - (hours as i64) * 60 * 60 * 1000;
+        let mut stmt = self.conn.prepare(
+            "SELECT ts, total_balance_cny, total_balance_usd, granted_cny, topped_up_cny
+             FROM deepseek_balance_log
+             WHERE ts >= ?1
+             ORDER BY ts",
+        )?;
+        let rows = stmt
+            .query_map(params![cutoff], |row| {
+                Ok(DeepSeekSnapshot {
+                    timestamp: row.get(0)?,
+                    total_balance_cny: row.get(1)?,
+                    total_balance_usd: row.get(2)?,
+                    granted_cny: row.get(3)?,
+                    topped_up_cny: row.get(4)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    pub fn zai_history(&self, hours: u64) -> Result<Vec<ZaiSnapshot>, AgentSenseError> {
+        let now = chrono::Utc::now().timestamp_millis();
+        let cutoff = now - (hours as i64) * 60 * 60 * 1000;
+        let mut stmt = self.conn.prepare(
+            "SELECT ts, token_5h_pct, token_week_pct, mcp_month_pct, mcp_used, mcp_total
+             FROM zai_quota_log
+             WHERE ts >= ?1
+             ORDER BY ts",
+        )?;
+        let rows = stmt
+            .query_map(params![cutoff], |row| {
+                Ok(ZaiSnapshot {
+                    timestamp: row.get(0)?,
+                    token_5h_pct: row.get(1)?,
+                    token_week_pct: row.get(2)?,
+                    mcp_month_pct: row.get(3)?,
+                    mcp_used: row.get(4)?,
+                    mcp_total: row.get(5)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    fn local_date_str(ts_ms: i64) -> String {
+        let secs = ts_ms / 1000;
+        let naive = chrono::DateTime::from_timestamp(secs, 0)
+            .map(|dt| dt.naive_utc())
+            .unwrap_or_default();
+        let local: chrono::DateTime<chrono::Local> = chrono::TimeZone::from_local_datetime(
+            &chrono::Local, &naive
+        ).single().unwrap_or_default();
+        local.format("%Y-%m-%d").to_string()
+    }
+
+    pub fn compute_daily_consumption(&self, model_name: &str, date_str: &str) -> Option<i64> {
+        let first: Option<i64> = self.conn.query_row(
+            "SELECT weekly_usage FROM minimax_quota_log
+             WHERE date(ts/1000, 'unixepoch', 'localtime') = ?1 AND model_name = ?2
+             ORDER BY ts ASC LIMIT 1",
+            params![date_str, model_name],
+            |row| row.get(0),
+        ).ok()?;
+
+        let last: i64 = self.conn.query_row(
+            "SELECT weekly_usage FROM minimax_quota_log
+             WHERE date(ts/1000, 'unixepoch', 'localtime') = ?1 AND model_name = ?2
+             ORDER BY ts DESC LIMIT 1",
+            params![date_str, model_name],
+            |row| row.get(0),
+        ).ok()?;
+
+        let delta = last - first.unwrap_or(0);
+        Some(if delta < 0 { last } else { delta })
+    }
+
+    pub fn consumption_summary(&self) -> serde_json::Value {
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        let today_str = Self::local_date_str(now_ms);
+
+        let (_, models) = self.latest_minimax_with_ts().unwrap_or((0, vec![]));
+
+        let mut day = serde_json::Map::new();
+        let mut week = serde_json::Map::new();
+        for m in &models {
+            let consumed = self.compute_daily_consumption(&m.name, &today_str);
+            day.insert(m.name.clone(), serde_json::Value::from(consumed));
+            week.insert(m.name.clone(), serde_json::Value::from(m.weekly_usage));
+        }
+
+        let mut weekly_bar = Vec::new();
+        for i in 0..7i64 {
+            let day_ts = now_ms - i * 86400_000;
+            let day_str = Self::local_date_str(day_ts);
+            let consumption = self.compute_daily_consumption("MiniMax-M*", &day_str);
+            weekly_bar.push(serde_json::json!({
+                "date": day_str,
+                "label": &day_str[5..],
+                "consumption": consumption,
+            }));
+        }
+
+        let weekly_refresh = self.weekly_refresh_info(now_ms);
+
+        serde_json::json!({
+            "day": day,
+            "week": week,
+            "weeklyBar": weekly_bar,
+            "weeklyRefresh": weekly_refresh,
+        })
+    }
+
+    fn weekly_refresh_info(&self, now_ms: i64) -> Option<serde_json::Value> {
+        let since = now_ms - 8 * 86400_000;
+        let min_row: (i64, i64) = self.conn.query_row(
+            "SELECT ts, weekly_usage FROM minimax_quota_log
+             WHERE ts >= ?1 AND model_name = 'coding-plan-search'
+             ORDER BY weekly_usage ASC LIMIT 1",
+            params![since],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+        ).ok()?;
+
+        let (current_reset_ts, _) = min_row;
+        let next_reset_ts = current_reset_ts + 7 * 86400_000;
+        let remaining_ms: i64 = (next_reset_ts - now_ms).max(0);
+
+        Some(serde_json::json!({
+            "currentResetTs": current_reset_ts,
+            "nextResetTs": next_reset_ts,
+            "remainingSeconds": remaining_ms / 1000,
+            "remainingDays": (remaining_ms as f64 / 86400000.0 * 10.0).round() / 10.0,
+        }))
+    }
+
+    pub fn weekly_history(&self, model_name: &str) -> Vec<serde_json::Value> {
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        let mut result = Vec::new();
+        for i in 0..7i64 {
+            let day_ts = now_ms - i * 86400_000;
+            let day_str = Self::local_date_str(day_ts);
+            let consumption = self.compute_daily_consumption(model_name, &day_str);
+            result.push(serde_json::json!({
+                "date": day_str,
+                "label": &day_str[5..],
+                "consumption": consumption,
+            }));
+        }
+        result
+    }
 }

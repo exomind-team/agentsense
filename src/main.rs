@@ -26,6 +26,12 @@ enum Commands {
         #[arg(long)]
         watch: bool,
     },
+    /// Start the web dashboard server
+    Serve {
+        /// Port to listen on
+        #[arg(long, default_value_t = 7892)]
+        port: u16,
+    },
 }
 
 fn format_ts(ts: i64) -> String {
@@ -187,6 +193,14 @@ async fn main() {
                 println!("AI Quota Monitor \u{2014} agentsense");
                 let result = orch.fetch_all().await;
                 display_results(&result);
+            }
+        }
+        Commands::Serve { port } => {
+            if let Err(e) =
+                agentsense::server::serve(&config.quota, config_path.to_path_buf(), port).await
+            {
+                eprintln!("Server error: {e}");
+                std::process::exit(1);
             }
         }
     }

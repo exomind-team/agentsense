@@ -1,0 +1,1537 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Quota Monitor</title>
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+  <style>
+    :root, [data-theme="dark"] {
+      --bg: #0d1117;
+      --bg2: #161b22;
+      --bg3: #21262d;
+      --border: #30363d;
+      --text: #e6edf3;
+      --muted: #8b949e;
+      --accent: #58a6ff;
+      --green: #3fb950;
+      --yellow: #d29922;
+      --red: #f85149;
+      --gauge-blue: #388bfd;
+      --scrollbar: #30363d;
+      --selection-bg: #264f78;
+      --mmx-color: #388bfd;
+      --ds-color: #4f8ff7;
+      --zai-color: #22d3ee;
+    }
+
+    [data-theme="light"] {
+      --bg: #ffffff;
+      --bg2: #f6f8fa;
+      --bg3: #eaeef2;
+      --border: #d0d7de;
+      --text: #1f2328;
+      --muted: #656d76;
+      --accent: #0969da;
+      --green: #1a7f37;
+      --yellow: #9a6700;
+      --red: #cf222e;
+      --gauge-blue: #0969da;
+      --scrollbar: #d0d7de;
+      --selection-bg: #b6d6f0;
+      --mmx-color: #0969da;
+      --ds-color: #1d4ed8;
+      --zai-color: #0891b2;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+      font-size: 13px;
+      line-height: 1.5;
+      padding: 16px;
+      max-width: 900px;
+      margin: 0 auto;
+    }
+
+    ::selection { background: var(--selection-bg); }
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: var(--bg); }
+    ::-webkit-scrollbar-thumb { background: var(--scrollbar); border-radius: 3px; }
+
+    /* ── Header ── */
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 14px;
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      margin-bottom: 14px;
+    }
+
+    header .title {
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--accent);
+      letter-spacing: 0.5px;
+    }
+
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .countdown {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .countdown span {
+      color: var(--yellow);
+      font-weight: 600;
+    }
+
+    button#refreshBtn, button#theme-btn, button#settings-btn, button.modal-close, button#config-save {
+      background: var(--bg3);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      padding: 4px 12px;
+      font-family: inherit;
+      font-size: 12px;
+      cursor: pointer;
+      transition: border-color 0.2s, color 0.2s;
+    }
+
+    button#refreshBtn:hover, button#theme-btn:hover, button#settings-btn:hover { border-color: var(--accent); color: var(--accent); }
+    button#refreshBtn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    /* ── Overview Cards (3 columns) ── */
+    .overview-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+
+    .overview-card {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px;
+      position: relative;
+    }
+
+    .overview-card .ov-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+
+    .ov-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .ov-dot.mmx { background: var(--mmx-color); }
+    .ov-dot.ds  { background: var(--ds-color); }
+    .ov-dot.zai { background: var(--zai-color); }
+
+    .ov-label {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    .ov-status {
+      font-size: 10px;
+      color: var(--muted);
+      margin-left: auto;
+    }
+
+    .ov-status.ok { color: var(--green); }
+    .ov-status.error { color: var(--red); }
+    .ov-status.no_key { color: var(--yellow); }
+
+    .ov-value {
+      font-size: 28px;
+      font-weight: 700;
+      color: var(--text);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .ov-sub {
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 2px;
+    }
+
+    .ov-bar-wrap {
+      height: 6px;
+      background: var(--bg);
+      border-radius: 3px;
+      overflow: hidden;
+      margin-top: 8px;
+    }
+
+    .ov-bar {
+      height: 100%;
+      border-radius: 3px;
+      transition: width 0.6s ease;
+    }
+
+    /* ── Service Tabs ── */
+    .service-tabs {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 14px;
+    }
+
+    .service-tab {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      padding: 6px 16px;
+      font-family: inherit;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--muted);
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .service-tab.active {
+      border-color: var(--accent);
+      color: var(--accent);
+      background: var(--bg3);
+    }
+
+    .service-tab:hover { border-color: var(--accent); color: var(--accent); }
+
+    .service-section { display: none; }
+    .service-section.active { display: block; }
+
+    /* ── Filter tabs (MiniMax) ── */
+    .filter-bar {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 14px;
+      flex-wrap: wrap;
+    }
+
+    .filter-tab {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      padding: 3px 10px;
+      font-family: inherit;
+      font-size: 12px;
+      color: var(--muted);
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .filter-tab.active, .filter-tab:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    button:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+
+    /* ── Model cards ── */
+    #model-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+
+    .model-card {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px 14px;
+    }
+
+    .model-name {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text);
+      margin-bottom: 8px;
+    }
+
+    .shared-quota-hint {
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 8px;
+    }
+
+    .quota-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 6px;
+    }
+
+    .quota-label {
+      color: var(--muted);
+      width: 60px;
+      flex-shrink: 0;
+      font-size: 12px;
+    }
+
+    .progress-wrap {
+      flex: 1;
+      height: 14px;
+      background: var(--bg);
+      border-radius: 3px;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .progress-bar {
+      height: 100%;
+      border-radius: 3px;
+      transition: width 0.6s ease;
+    }
+
+    .progress-bar.very-low { background: var(--red); }
+    .progress-bar.low     { background: var(--yellow); }
+    .progress-bar.ok      { background: var(--green); }
+
+    .quota-info {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      flex-shrink: 0;
+      width: 160px;
+    }
+
+    .quota-pct {
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .quota-reset {
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    .quota-count {
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    /* ── Z.AI quota bars ── */
+    .zai-quotas {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .zai-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .zai-label {
+      color: var(--muted);
+      width: 60px;
+      flex-shrink: 0;
+      font-size: 12px;
+    }
+
+    .zai-bar-wrap {
+      flex: 1;
+      height: 18px;
+      background: var(--bg);
+      border-radius: 4px;
+      overflow: hidden;
+    }
+
+    .zai-bar {
+      height: 100%;
+      border-radius: 4px;
+      transition: width 0.6s ease;
+    }
+
+    .zai-pct {
+      font-size: 13px;
+      font-weight: 600;
+      width: 50px;
+      text-align: right;
+      flex-shrink: 0;
+    }
+
+    .zai-extra {
+      font-size: 11px;
+      color: var(--muted);
+      width: 80px;
+      text-align: right;
+      flex-shrink: 0;
+    }
+
+    /* ── ECharts container ── */
+    .chart-container {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px;
+      margin-bottom: 14px;
+    }
+
+    .chart-title {
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 8px;
+    }
+
+    .chart-container .chart {
+      width: 100%;
+      height: 220px;
+    }
+
+    /* ── Consumption summary ── */
+    .consumption-summary {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+
+    .consumption-card {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px 14px;
+    }
+
+    .consumption-card .card-label {
+      font-size: 11px;
+      color: var(--muted);
+      margin-bottom: 4px;
+    }
+
+    .consumption-card .card-value {
+      font-size: 24px;
+      font-weight: 700;
+      color: var(--text);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .consumption-card .card-sub {
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 2px;
+    }
+
+    /* ── All models table ── */
+    .table-section {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    .table-section .section-title {
+      font-size: 12px;
+      color: var(--muted);
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    th {
+      text-align: left;
+      font-size: 11px;
+      color: var(--muted);
+      padding: 6px 12px;
+      border-bottom: 1px solid var(--border);
+      font-weight: 500;
+    }
+
+    td {
+      padding: 5px 12px;
+      font-size: 12px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    tr:last-child td { border-bottom: none; }
+
+    .pct-badge {
+      display: inline-block;
+      padding: 1px 6px;
+      border-radius: 10px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+
+    .pct-badge.ok      { background: #1a4d2e; color: var(--green); }
+    .pct-badge.low     { background: #4d3a1a; color: var(--yellow); }
+    .pct-badge.very-low{ background: #4d1a1a; color: var(--red); }
+
+    /* ── Settings Modal ── */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.5);
+      z-index: 100;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .modal-overlay.active { display: flex; }
+
+    .modal {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 24px;
+      width: 400px;
+      max-width: 90vw;
+      position: relative;
+    }
+
+    .modal h2 {
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--accent);
+      margin-bottom: 16px;
+    }
+
+    .form-group {
+      margin-bottom: 14px;
+    }
+
+    .form-group label {
+      display: block;
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 4px;
+    }
+
+    .form-group input {
+      width: 100%;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      padding: 8px 10px;
+      color: var(--text);
+      font-family: inherit;
+      font-size: 12px;
+    }
+
+    .form-group input:focus {
+      outline: none;
+      border-color: var(--accent);
+    }
+
+    .form-hint {
+      font-size: 10px;
+      color: var(--muted);
+      margin-top: 2px;
+    }
+
+    .modal-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+      margin-top: 16px;
+    }
+
+    button.modal-close {
+      padding: 6px 16px;
+    }
+
+    button#config-save {
+      background: var(--accent);
+      color: #fff;
+      border-color: var(--accent);
+    }
+
+    button#config-save:hover { opacity: 0.85; }
+
+    /* ── Footer ── */
+    footer {
+      text-align: center;
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 10px;
+    }
+
+    .loading {
+      opacity: 0.5;
+      pointer-events: none;
+    }
+
+    .badge-refreshing {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      background: var(--yellow);
+      border-radius: 50%;
+      margin-right: 4px;
+      animation: pulse 1s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+
+    /* ── No-key placeholder ── */
+    .no-key-msg {
+      text-align: center;
+      padding: 24px;
+      color: var(--muted);
+    }
+
+    .no-key-msg a {
+      color: var(--accent);
+      cursor: pointer;
+      text-decoration: underline;
+    }
+
+    @media (max-width: 700px) {
+      .overview-grid { grid-template-columns: 1fr; }
+      body { padding: 8px; }
+      .quota-info { width: 100px; }
+      .quota-label { width: 50px; font-size: 11px; }
+      .filter-tab { padding: 2px 6px; font-size: 11px; }
+      .consumption-summary { grid-template-columns: 1fr; }
+      .card-value { font-size: 20px; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <span class="title">⬡ AI Quota Monitor</span>
+  <div class="header-right">
+    <div class="countdown" id="countdown">
+      <span class="badge-refreshing" id="badge"></span>
+      下次刷新: <span id="countdown-val">--</span>
+    </div>
+    <button id="settings-btn" title="设置" aria-label="设置">⚙</button>
+    <button id="theme-btn" title="切换主题" aria-label="切换主题">☀</button>
+    <button id="refreshBtn" aria-label="刷新配额数据">↻ 刷新</button>
+  </div>
+</header>
+
+<!-- Three-column overview -->
+<div class="overview-grid" id="overview">
+  <div class="overview-card" id="ov-minimax">
+    <div class="ov-header">
+      <span class="ov-dot mmx"></span>
+      <span class="ov-label">MiniMax</span>
+      <span class="ov-status" id="ov-minimax-status">--</span>
+    </div>
+    <div class="ov-value" id="ov-minimax-value">--</div>
+    <div class="ov-sub" id="ov-minimax-sub">MiniMax-M*</div>
+    <div class="ov-bar-wrap"><div class="ov-bar" id="ov-minimax-bar" style="width:0;background:var(--mmx-color)"></div></div>
+  </div>
+  <div class="overview-card" id="ov-deepseek">
+    <div class="ov-header">
+      <span class="ov-dot ds"></span>
+      <span class="ov-label">DeepSeek</span>
+      <span class="ov-status" id="ov-deepseek-status">--</span>
+    </div>
+    <div class="ov-value" id="ov-deepseek-value">--</div>
+    <div class="ov-sub" id="ov-deepseek-sub">余额</div>
+  </div>
+  <div class="overview-card" id="ov-zai">
+    <div class="ov-header">
+      <span class="ov-dot zai"></span>
+      <span class="ov-label">Z.AI (GLM)</span>
+      <span class="ov-status" id="ov-zai-status">--</span>
+    </div>
+    <div class="ov-value" id="ov-zai-value">--</div>
+    <div class="ov-sub" id="ov-zai-sub">5h 窗口</div>
+    <div class="ov-bar-wrap"><div class="ov-bar" id="ov-zai-bar" style="width:0;background:var(--zai-color)"></div></div>
+  </div>
+</div>
+
+<!-- Service tabs -->
+<div class="service-tabs">
+  <button class="service-tab active" data-service="minimax">MiniMax</button>
+  <button class="service-tab" data-service="deepseek">DeepSeek</button>
+  <button class="service-tab" data-service="zai">Z.AI</button>
+</div>
+
+<!-- ═══════ MiniMax Section ═══════ -->
+<div class="service-section active" id="sec-minimax">
+  <div class="filter-bar" id="filterBar"></div>
+  <div id="model-list"></div>
+
+  <div class="chart-container">
+    <div class="chart-title">5h 窗口消耗历史</div>
+    <div id="trend-chart" class="chart" role="img" aria-label="5h窗口消耗历史趋势图"></div>
+  </div>
+
+  <div class="consumption-summary" id="consumption-summary">
+    <div class="consumption-card">
+      <div class="card-label">今日消耗 (5h 窗口)</div>
+      <div class="card-value" id="day-consumption">--</div>
+      <div class="card-sub" id="day-sub">MiniMax-M*</div>
+    </div>
+    <div class="consumption-card">
+      <div class="card-label">本周消耗 (周配额)</div>
+      <div class="card-value" id="week-consumption">--</div>
+      <div class="card-sub" id="week-sub">MiniMax-M*</div>
+    </div>
+  </div>
+
+  <div class="chart-container">
+    <div class="chart-title">周日消耗柱状图（近 7 天）</div>
+    <div id="weekly-bar-chart" class="chart" role="img" aria-label="周日消耗柱状图"></div>
+  </div>
+
+  <div class="table-section">
+    <div class="section-title">所有模型配额一览</div>
+    <table>
+      <thead>
+        <tr>
+          <th>模型</th>
+          <th>Interval 使用</th>
+          <th>Interval 剩余</th>
+          <th>Interval 重置</th>
+          <th>Weekly 使用</th>
+          <th>Weekly 剩余</th>
+          <th>周重置</th>
+        </tr>
+      </thead>
+      <tbody id="table-body"></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ═══════ DeepSeek Section ═══════ -->
+<div class="service-section" id="sec-deepseek">
+  <div id="deepseek-content">
+    <div class="consumption-summary">
+      <div class="consumption-card">
+        <div class="card-label">CNY 余额</div>
+        <div class="card-value" id="ds-balance-cny">--</div>
+        <div class="card-sub" id="ds-balance-cny-sub">总额</div>
+      </div>
+      <div class="consumption-card">
+        <div class="card-label">USD 余额</div>
+        <div class="card-value" id="ds-balance-usd">--</div>
+        <div class="card-sub" id="ds-balance-usd-sub">总额</div>
+      </div>
+    </div>
+
+    <div class="chart-container">
+      <div class="chart-title">余额变化趋势（24h）</div>
+      <div id="ds-history-chart" class="chart" role="img" aria-label="DeepSeek余额变化趋势"></div>
+    </div>
+  </div>
+  <div class="no-key-msg" id="ds-no-key" style="display:none">
+    DeepSeek API Key 未配置。<a onclick="document.getElementById('settings-btn').click()">前往设置</a>
+  </div>
+</div>
+
+<!-- ═══════ Z.AI Section ═══════ -->
+<div class="service-section" id="sec-zai">
+  <div id="zai-content">
+    <div class="chart-container">
+      <div class="chart-title">Z.AI (GLM) 配额</div>
+      <div class="zai-quotas" id="zai-quotas">
+        <div class="zai-row">
+          <span class="zai-label">5h 窗口</span>
+          <div class="zai-bar-wrap"><div class="zai-bar" id="zai-bar-5h" style="width:0;background:var(--zai-color)"></div></div>
+          <span class="zai-pct" id="zai-pct-5h">--%</span>
+        </div>
+        <div class="zai-row">
+          <span class="zai-label">周配额</span>
+          <div class="zai-bar-wrap"><div class="zai-bar" id="zai-bar-week" style="width:0;background:var(--zai-color)"></div></div>
+          <span class="zai-pct" id="zai-pct-week">--%</span>
+        </div>
+        <div class="zai-row">
+          <span class="zai-label">MCP (月)</span>
+          <div class="zai-bar-wrap"><div class="zai-bar" id="zai-bar-mcp" style="width:0;background:var(--zai-color)"></div></div>
+          <span class="zai-pct" id="zai-pct-mcp">--%</span>
+          <span class="zai-extra" id="zai-extra-mcp"></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="chart-container">
+      <div class="chart-title">配额变化趋势（24h）</div>
+      <div id="zai-history-chart" class="chart" role="img" aria-label="Z.AI配额变化趋势"></div>
+    </div>
+  </div>
+  <div class="no-key-msg" id="zai-no-key" style="display:none">
+    Z.AI Auth Token 未配置。<a onclick="document.getElementById('settings-btn').click()">前往设置</a>
+  </div>
+</div>
+
+<!-- Settings Modal -->
+<div class="modal-overlay" id="settings-modal">
+  <div class="modal">
+    <h2>设置</h2>
+    <div class="form-group">
+      <label for="cfg-mmx-key">MiniMax API Key</label>
+      <input type="password" id="cfg-mmx-key" placeholder="sk-cp-..." autocomplete="off" />
+      <div class="form-hint">从 api.minimax.io 获取。留空则回退到 mmx CLI</div>
+    </div>
+    <div class="form-group">
+      <label for="cfg-ds-key">DeepSeek API Key</label>
+      <input type="password" id="cfg-ds-key" placeholder="sk-..." autocomplete="off" />
+      <div class="form-hint">从 platform.deepseek.com 获取</div>
+    </div>
+    <div class="form-group">
+      <label for="cfg-zai-token">Z.AI Auth Token</label>
+      <input type="password" id="cfg-zai-token" placeholder="Bearer token..." autocomplete="off" />
+      <div class="form-hint">Z.AI 开发者面板获取</div>
+    </div>
+    <div class="modal-actions">
+      <button class="modal-close" id="modal-cancel">取消</button>
+      <button id="config-save">保存</button>
+    </div>
+  </div>
+</div>
+
+<footer id="footer"></footer>
+
+<script>
+// ── Config ──────────────────────────────────────────────────────────────────
+
+const DISPLAY_NAMES = {
+  'MiniMax-M*':                     'MiniMax-M*',
+  'coding-plan-vlm':                'Coding Plan VLM',
+  'coding-plan-search':             'Coding Plan Search',
+  'speech-hd':                      'Speech-HD',
+  'MiniMax-Hailuo-2.3-Fast-6s-768p':'Hailuo 2.3 Fast',
+  'MiniMax-Hailuo-2.3-6s-768p':     'Hailuo 2.3',
+  'music-2.5':                      'Music 2.5',
+  'music-2.6':                      'Music 2.6',
+  'music-cover':                    'Music Cover',
+  'lyrics_generation':              'Lyrics',
+  'image-01':                       'Image-01',
+};
+
+const FILTER_CATEGORIES = [
+  { label: '全部', models: null },
+  { label: 'M*',   models: ['MiniMax-M*', 'coding-plan-vlm', 'coding-plan-search'] },
+  { label: 'Video',models: ['MiniMax-Hailuo-2.3-Fast-6s-768p', 'MiniMax-Hailuo-2.3-6s-768p'] },
+  { label: 'Speech',models: ['speech-hd'] },
+  { label: 'Music',models: ['music-2.5', 'music-2.6', 'music-cover', 'lyrics_generation'] },
+  { label: 'Image',models: ['image-01'] },
+];
+
+const LS_HISTORY_KEY = 'quota_local_history';
+const MAX_LOCAL_PTS = 60;
+const API_BASE = '';
+
+// ── State ───────────────────────────────────────────────────────────────────
+
+let rawData = [];
+let activeFilter = null;
+let activeService = 'minimax';
+let chart = null;
+let weeklyBarChart = null;
+let dsHistoryChart = null;
+let zaiHistoryChart = null;
+let countdownSec = 60;
+
+// ── Init ─────────────────────────────────────────────────────────────────────
+
+function init() {
+  chart = echarts.init(document.getElementById('trend-chart'), null, { renderer: 'canvas' });
+  weeklyBarChart = echarts.init(document.getElementById('weekly-bar-chart'), null, { renderer: 'canvas' });
+  dsHistoryChart = echarts.init(document.getElementById('ds-history-chart'), null, { renderer: 'canvas' });
+  zaiHistoryChart = echarts.init(document.getElementById('zai-history-chart'), null, { renderer: 'canvas' });
+
+  initTheme();
+  buildFilterTabs();
+  bindServiceTabs();
+  bindSettings();
+
+  document.getElementById('refreshBtn').addEventListener('click', manualRefresh);
+  document.getElementById('theme-btn').addEventListener('click', toggleTheme);
+  window.addEventListener('resize', () => {
+    chart?.resize();
+    weeklyBarChart?.resize();
+    dsHistoryChart?.resize();
+    zaiHistoryChart?.resize();
+  });
+
+  fetchAll();
+  startCountdown();
+  setInterval(fetchAll, 60_000);
+}
+
+// ── Theme ───────────────────────────────────────────────────────────────────
+
+function initTheme() {
+  const saved = localStorage.getItem('quota_theme') || 'dark';
+  applyTheme(saved);
+}
+
+function applyTheme(theme) {
+  document.documentElement.setAttribute('data-theme', theme);
+  localStorage.setItem('quota_theme', theme);
+  updateThemeIcon(theme);
+}
+
+function toggleTheme() {
+  const current = document.documentElement.getAttribute('data-theme') || 'dark';
+  applyTheme(current === 'dark' ? 'light' : 'dark');
+  fetchAll();
+}
+
+function updateThemeIcon(theme) {
+  const btn = document.getElementById('theme-btn');
+  if (!btn) return;
+  btn.textContent = theme === 'dark' ? '☀' : '☽';
+  btn.title = theme === 'dark' ? '切换亮色模式' : '切换暗色模式';
+}
+
+// ── Service Tabs ─────────────────────────────────────────────────────────────
+
+function bindServiceTabs() {
+  document.querySelectorAll('.service-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      activeService = tab.dataset.service;
+      document.querySelectorAll('.service-tab').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      document.querySelectorAll('.service-section').forEach(s => s.classList.remove('active'));
+      document.getElementById('sec-' + activeService).classList.add('active');
+      // Resize charts when switching tabs
+      setTimeout(() => {
+        chart?.resize();
+        weeklyBarChart?.resize();
+        dsHistoryChart?.resize();
+        zaiHistoryChart?.resize();
+      }, 50);
+    });
+  });
+}
+
+// ── Settings Modal ───────────────────────────────────────────────────────────
+
+function bindSettings() {
+  const modal = document.getElementById('settings-modal');
+  document.getElementById('settings-btn').addEventListener('click', () => {
+    modal.classList.add('active');
+    loadConfigToForm();
+  });
+  document.getElementById('modal-cancel').addEventListener('click', () => modal.classList.remove('active'));
+  modal.addEventListener('click', (e) => { if (e.target === modal) modal.classList.remove('active'); });
+  document.getElementById('config-save').addEventListener('click', saveConfigFromForm);
+}
+
+async function loadConfigToForm() {
+  try {
+    const res = await fetch(`${API_BASE}/api/config`);
+    const cfg = await res.json();
+    document.getElementById('cfg-mmx-key').value = cfg.minimax_api_key || '';
+    document.getElementById('cfg-ds-key').value = cfg.deepseek_api_key || '';
+    document.getElementById('cfg-zai-token').value = cfg.zai_auth_token || '';
+  } catch {}
+}
+
+async function saveConfigFromForm() {
+  const mmxKey = document.getElementById('cfg-mmx-key').value.trim();
+  const dsKey = document.getElementById('cfg-ds-key').value.trim();
+  const zaiToken = document.getElementById('cfg-zai-token').value.trim();
+
+  try {
+    await fetch(`${API_BASE}/api/config`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        minimax_api_key: mmxKey,
+        deepseek_api_key: dsKey,
+        zai_auth_token: zaiToken,
+      }),
+    });
+    document.getElementById('settings-modal').classList.remove('active');
+    await manualRefresh();
+  } catch (err) {
+    alert('保存失败: ' + err.message);
+  }
+}
+
+// ── Fetch ────────────────────────────────────────────────────────────────────
+
+async function fetchAll() {
+  await Promise.all([
+    fetchOverview(),
+    fetchMiniMaxDetail(),
+    fetchDeepSeekDetail(),
+    fetchZaiDetail(),
+  ]);
+}
+
+async function fetchOverview() {
+  try {
+    const res = await fetch(`${API_BASE}/api/all`);
+    const data = await res.json();
+    renderOverview(data);
+
+    if (data._nextPoll) {
+      const ms = data._nextPoll - Date.now();
+      if (ms > 0) countdownSec = Math.ceil(ms / 1000);
+    }
+  } catch (err) {
+    console.error('fetchOverview error:', err);
+  }
+}
+
+async function fetchMiniMaxDetail() {
+  const btn = document.getElementById('refreshBtn');
+  btn.disabled = true;
+  try {
+    const [quotaRes, historyRes] = await Promise.all([
+      fetch(`${API_BASE}/api/quota`),
+      fetch(`${API_BASE}/api/history`),
+    ]);
+    const quotaJson = await quotaRes.json();
+    const historyJson = await historyRes.json();
+    rawData = quotaJson.model_remains ?? [];
+    updateChart(historyJson);
+    renderCards(activeFilter);
+    renderTable();
+
+    if (quotaJson._nextPoll) {
+      const msUntilPoll = quotaJson._nextPoll - Date.now();
+      if (msUntilPoll > 0) countdownSec = Math.ceil(msUntilPoll / 1000);
+    }
+
+    if (rawData.length > 0) {
+      try {
+        const existing = JSON.parse(localStorage.getItem(LS_HISTORY_KEY) || '[]');
+        existing.push({ ts: Date.now(), data: rawData });
+        if (existing.length > MAX_LOCAL_PTS) existing.shift();
+        localStorage.setItem(LS_HISTORY_KEY, JSON.stringify(existing));
+      } catch {}
+    }
+  } catch (err) {
+    console.error('fetchMiniMaxDetail error:', err);
+  } finally {
+    btn.disabled = false;
+  }
+
+  // Consumption
+  try {
+    const res = await fetch(`${API_BASE}/api/consumption`);
+    renderConsumption(await res.json());
+  } catch {}
+
+  // Weekly history
+  try {
+    const res = await fetch(`${API_BASE}/api/weekly-history`);
+    renderWeeklyBar(await res.json());
+  } catch {}
+}
+
+async function fetchDeepSeekDetail() {
+  try {
+    const [balanceRes, historyRes] = await Promise.all([
+      fetch(`${API_BASE}/api/deepseek`),
+      fetch(`${API_BASE}/api/deepseek/history`),
+    ]);
+    const balanceData = await balanceRes.json();
+    const historyData = await historyRes.json();
+    renderDeepSeek(balanceData, historyData);
+  } catch (err) {
+    console.error('fetchDeepSeekDetail error:', err);
+  }
+}
+
+async function fetchZaiDetail() {
+  try {
+    const [quotaRes, historyRes] = await Promise.all([
+      fetch(`${API_BASE}/api/zai`),
+      fetch(`${API_BASE}/api/zai/history`),
+    ]);
+    const quotaData = await quotaRes.json();
+    const historyData = await historyRes.json();
+    renderZai(quotaData, historyData);
+  } catch (err) {
+    console.error('fetchZaiDetail error:', err);
+  }
+}
+
+async function manualRefresh() {
+  const btn = document.getElementById('refreshBtn');
+  btn.disabled = true;
+  document.getElementById('badge').style.display = 'inline-block';
+  try {
+    await fetch(`${API_BASE}/api/refresh`);
+    await fetchAll();
+  } finally {
+    btn.disabled = false;
+    document.getElementById('badge').style.display = 'none';
+  }
+}
+
+// ── Render Overview ──────────────────────────────────────────────────────────
+
+function statusText(s) {
+  if (!s) return { text: '--', cls: '' };
+  if (s.status === 'ok') return { text: '正常', cls: 'ok' };
+  if (s.status === 'error') return { text: '错误', cls: 'error' };
+  if (s.status === 'no_key') return { text: '未配置', cls: 'no_key' };
+  if (s.status === 'waiting') return { text: '等待中', cls: '' };
+  return { text: s.status, cls: '' };
+}
+
+function renderOverview(data) {
+  // MiniMax
+  const mmxModels = data.minimax?.models || [];
+  const mmxM = mmxModels.find(m => m.model_name === 'MiniMax-M*');
+  const mmxStatus = statusText(data.minimax?.status);
+  document.getElementById('ov-minimax-status').textContent = mmxStatus.text;
+  document.getElementById('ov-minimax-status').className = 'ov-status ' + mmxStatus.cls;
+  if (mmxM) {
+    const intervalTotal = mmxM.current_interval_total_count;
+    const intervalUsed = mmxM.current_interval_usage_count;
+    const remainPct = intervalTotal > 0 ? ((1 - intervalUsed / intervalTotal) * 100) : 0;
+    document.getElementById('ov-minimax-value').textContent = remainPct.toFixed(1) + '%';
+    document.getElementById('ov-minimax-sub').textContent = `剩余 ${(intervalTotal - intervalUsed).toLocaleString()} / ${intervalTotal.toLocaleString()}`;
+    document.getElementById('ov-minimax-bar').style.width = Math.min(100, remainPct).toFixed(1) + '%';
+    const color = remainPct < 20 ? 'var(--red)' : remainPct < 40 ? 'var(--yellow)' : 'var(--mmx-color)';
+    document.getElementById('ov-minimax-bar').style.background = color;
+  }
+
+  // DeepSeek
+  const dsStatus = statusText(data.deepseek?.status);
+  document.getElementById('ov-deepseek-status').textContent = dsStatus.text;
+  document.getElementById('ov-deepseek-status').className = 'ov-status ' + dsStatus.cls;
+  const dsBal = data.deepseek?.balance;
+  if (dsBal) {
+    document.getElementById('ov-deepseek-value').textContent = '¥' + dsBal.total_balance_cny.toFixed(2);
+    document.getElementById('ov-deepseek-sub').textContent =
+      '赠送 ¥' + dsBal.granted_cny.toFixed(2) + ' + 充值 ¥' + dsBal.topped_up_cny.toFixed(2);
+  }
+
+  // Z.AI
+  const zaiStatus = statusText(data.zai?.status);
+  document.getElementById('ov-zai-status').textContent = zaiStatus.text;
+  document.getElementById('ov-zai-status').className = 'ov-status ' + zaiStatus.cls;
+  const zaiQ = data.zai?.quota;
+  if (zaiQ) {
+    const remain5h = 100 - zaiQ.token_5h_pct;
+    document.getElementById('ov-zai-value').textContent = remain5h + '%';
+    document.getElementById('ov-zai-sub').textContent = `5h 已用 ${zaiQ.token_5h_pct}% · 周 ${zaiQ.token_week_pct}%`;
+    document.getElementById('ov-zai-bar').style.width = Math.min(100, remain5h) + '%';
+    const color = remain5h < 20 ? 'var(--red)' : remain5h < 40 ? 'var(--yellow)' : 'var(--zai-color)';
+    document.getElementById('ov-zai-bar').style.background = color;
+  }
+
+  updateFooter(data);
+}
+
+// ── Render DeepSeek Detail ──────────────────────────────────────────────────
+
+function renderDeepSeek(data, history) {
+  const noKey = document.getElementById('ds-no-key');
+  const content = document.getElementById('deepseek-content');
+
+  if (data.status?.status === 'no_key') {
+    noKey.style.display = 'block';
+    content.style.display = 'none';
+    return;
+  }
+  noKey.style.display = 'none';
+  content.style.display = 'block';
+
+  const bal = data.balance;
+  if (bal) {
+    document.getElementById('ds-balance-cny').textContent = '¥' + bal.total_balance_cny.toFixed(2);
+    document.getElementById('ds-balance-cny-sub').textContent =
+      `赠送 ¥${bal.granted_cny.toFixed(2)} + 充值 ¥${bal.topped_up_cny.toFixed(2)}`;
+    document.getElementById('ds-balance-usd').textContent = '$' + bal.total_balance_usd.toFixed(2);
+  }
+
+  // History chart
+  if (!dsHistoryChart || !history || history.length === 0) return;
+
+  const isDark = document.documentElement.getAttribute('data-theme') !== 'light';
+  const textColor = isDark ? '#8b949e' : '#656d76';
+  const splitColor = isDark ? '#21262d' : '#eaeef2';
+
+  dsHistoryChart.setOption({
+    backgroundColor: 'transparent',
+    textStyle: { color: textColor, fontFamily: 'Cascadia Code, Consolas, monospace' },
+    tooltip: {
+      trigger: 'axis',
+      backgroundColor: isDark ? '#21262d' : '#f6f8fa',
+      borderColor: isDark ? '#30363d' : '#d0d7de',
+      textStyle: { color: isDark ? '#e6edf3' : '#1f2328', fontSize: 12 },
+      formatter: params => {
+        const t = new Date(params[0].value[0]).toLocaleTimeString();
+        return `${params[0].marker} ¥${Number(params[0].value[1]).toFixed(2)}<div style="color:${textColor};font-size:10px;margin-top:2px">${t}</div>`;
+      },
+    },
+    grid: { left: 60, right: 20, top: 10, bottom: 30 },
+    xAxis: { type: 'time', axisLine: { lineStyle: { color: splitColor } }, axisLabel: { color: textColor, fontSize: 10 }, splitLine: { show: false } },
+    yAxis: { type: 'value', name: 'CNY', nameTextStyle: { color: textColor, fontSize: 10 }, axisLine: { show: false }, axisLabel: { color: textColor, fontSize: 10 }, splitLine: { lineStyle: { color: splitColor } } },
+    series: [{
+      name: '余额', type: 'line', smooth: true, symbol: 'none',
+      lineStyle: { color: '#4f8ff7', width: 2 },
+      areaStyle: { color: { type: 'linear', x: 0, y: 0, x2: 0, y2: 1, colorStops: [
+        { offset: 0, color: 'rgba(79,143,247,0.25)' },
+        { offset: 1, color: 'rgba(79,143,247,0.02)' },
+      ]}},
+      data: history.map(h => [h.ts, h.total_balance_cny]),
+    }],
+  }, { notMerge: true });
+}
+
+// ── Render Z.AI Detail ──────────────────────────────────────────────────────
+
+function renderZai(data, history) {
+  const noKey = document.getElementById('zai-no-key');
+  const content = document.getElementById('zai-content');
+
+  if (data.status?.status === 'no_key') {
+    noKey.style.display = 'block';
+    content.style.display = 'none';
+    return;
+  }
+  noKey.style.display = 'none';
+  content.style.display = 'block';
+
+  const q = data.quota;
+  if (q) {
+    updateZaiBar('5h', q.token_5h_pct);
+    updateZaiBar('week', q.token_week_pct);
+    updateZaiBar('mcp', q.mcp_month_pct);
+    if (q.mcp_total > 0) {
+      document.getElementById('zai-extra-mcp').textContent = `${q.mcp_used} / ${q.mcp_total}`;
+    }
+  }
+
+  // History chart
+  if (!zaiHistoryChart || !history || history.length === 0) return;
+
+  const isDark = document.documentElement.getAttribute('data-theme') !== 'light';
+  const textColor = isDark ? '#8b949e' : '#656d76';
+  const splitColor = isDark ? '#21262d' : '#eaeef2';
+
+  zaiHistoryChart.setOption({
+    backgroundColor: 'transparent',
+    textStyle: { color: textColor, fontFamily: 'Cascadia Code, Consolas, monospace' },
+    tooltip: {
+      trigger: 'axis',
+      backgroundColor: isDark ? '#21262d' : '#f6f8fa',
+      borderColor: isDark ? '#30363d' : '#d0d7de',
+      textStyle: { color: isDark ? '#e6edf3' : '#1f2328', fontSize: 12 },
+      formatter: params => {
+        const t = new Date(params[0].value[0]).toLocaleTimeString();
+        let s = `<div style="color:${textColor};font-size:10px">${t}</div>`;
+        for (const p of params) {
+          s += `${p.marker} ${p.seriesName}: <b>${p.value[1]}%</b><br/>`;
+        }
+        return s;
+      },
+    },
+    legend: { data: ['5h', '周', 'MCP'], textStyle: { color: textColor, fontSize: 10 }, top: 0 },
+    grid: { left: 50, right: 20, top: 30, bottom: 30 },
+    xAxis: { type: 'time', axisLine: { lineStyle: { color: splitColor } }, axisLabel: { color: textColor, fontSize: 10 }, splitLine: { show: false } },
+    yAxis: { type: 'value', name: '%', max: 100, nameTextStyle: { color: textColor, fontSize: 10 }, axisLine: { show: false }, axisLabel: { color: textColor, fontSize: 10 }, splitLine: { lineStyle: { color: splitColor } } },
+    series: [
+      { name: '5h', type: 'line', smooth: true, symbol: 'none', lineStyle: { width: 2 }, itemStyle: { color: '#22d3ee' }, data: history.map(h => [h.ts, h.token_5h_pct]) },
+      { name: '周', type: 'line', smooth: true, symbol: 'none', lineStyle: { width: 2 }, itemStyle: { color: '#818cf8' }, data: history.map(h => [h.ts, h.token_week_pct]) },
+      { name: 'MCP', type: 'line', smooth: true, symbol: 'none', lineStyle: { width: 2 }, itemStyle: { color: '#fb923c' }, data: history.map(h => [h.ts, h.mcp_month_pct]) },
+    ],
+  }, { notMerge: true });
+}
+
+function updateZaiBar(dim, pct) {
+  const bar = document.getElementById('zai-bar-' + dim);
+  const pctEl = document.getElementById('zai-pct-' + dim);
+  if (!bar || !pctEl) return;
+
+  bar.style.width = Math.min(100, pct) + '%';
+  pctEl.textContent = pct + '%';
+
+  const color = pct > 80 ? 'var(--red)' : pct > 50 ? 'var(--yellow)' : 'var(--zai-color)';
+  bar.style.background = color;
+  pctEl.style.color = pct > 80 ? 'var(--red)' : pct > 50 ? 'var(--yellow)' : 'var(--text)';
+}
+
+// ── MiniMax Rendering (unchanged) ───────────────────────────────────────────
+
+function renderConsumption(data) {
+  const model = 'MiniMax-M*';
+  const dayVal = data.day?.[model];
+  const weekVal = data.week?.[model];
+  document.getElementById('day-consumption').textContent =
+    dayVal !== null && dayVal !== undefined ? dayVal.toLocaleString() : '--';
+  document.getElementById('week-consumption').textContent =
+    weekVal !== null && weekVal !== undefined ? weekVal.toLocaleString() : '--';
+}
+
+function renderWeeklyBar(weeklyBar) {
+  if (!weeklyBarChart) return;
+  const isDark = document.documentElement.getAttribute('data-theme') !== 'light';
+  const textColor = isDark ? '#8b949e' : '#656d76';
+  const splitColor = isDark ? '#21262d' : '#eaeef2';
+
+  const labels = weeklyBar.map(d => d.label);
+  const values = weeklyBar.map(d => d.consumption ?? 0);
+
+  weeklyBarChart.setOption({
+    backgroundColor: 'transparent',
+    textStyle: { color: textColor, fontFamily: 'Cascadia Code, Consolas, monospace', fontSize: 11 },
+    grid: { left: 50, right: 20, top: 10, bottom: 30 },
+    xAxis: { type: 'category', data: labels, axisLine: { lineStyle: { color: isDark ? '#30363d' : '#d0d7de' } }, axisLabel: { color: textColor } },
+    yAxis: { type: 'value', name: '消耗次数', nameTextStyle: { color: textColor, fontSize: 10 }, axisLine: { show: false }, axisLabel: { color: textColor }, splitLine: { lineStyle: { color: splitColor } } },
+    series: [{
+      type: 'bar', data: values,
+      itemStyle: { color: p => p.dataIndex === 0 ? '#388bfd' : '#3fb950', borderRadius: [3, 3, 0, 0] },
+      barMaxWidth: 40,
+    }],
+    tooltip: {
+      trigger: 'axis', backgroundColor: isDark ? '#21262d' : '#f6f8fa',
+      borderColor: isDark ? '#30363d' : '#d0d7de',
+      textStyle: { color: isDark ? '#e6edf3' : '#1f2328', fontSize: 12 },
+      formatter: params => {
+        const isToday = params[0].dataIndex === 0 ? ' (今日)' : '';
+        return `${params[0].name}${isToday}: <b>${params[0].value}</b> 次`;
+      },
+    },
+  }, { notMerge: true });
+}
+
+// ── Countdown ────────────────────────────────────────────────────────────────
+
+function startCountdown() {
+  setInterval(() => {
+    countdownSec = Math.max(0, countdownSec - 1);
+    document.getElementById('countdown-val').textContent = formatCountdown(countdownSec);
+    if (countdownSec === 0) countdownSec = 60;
+  }, 1000);
+}
+
+function formatCountdown(sec) {
+  if (sec <= 0) return '刷新中…';
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return m > 0 ? `${m}m ${s}s` : `${s}s`;
+}
+
+// ── Filter tabs ──────────────────────────────────────────────────────────────
+
+function buildFilterTabs() {
+  const bar = document.getElementById('filterBar');
+  FILTER_CATEGORIES.forEach(cat => {
+    const btn = document.createElement('button');
+    btn.className = 'filter-tab' + (activeFilter === cat.label ? ' active' : '');
+    btn.textContent = cat.label;
+    btn.addEventListener('click', () => {
+      activeFilter = cat.label;
+      document.querySelectorAll('.filter-tab').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      renderCards(activeFilter);
+    });
+    bar.appendChild(btn);
+  });
+}
+
+// ── MiniMax Cards (unchanged logic) ─────────────────────────────────────────
+
+function getModelsToShow(filter) {
+  const cat = FILTER_CATEGORIES.find(c => c.label === filter) || FILTER_CATEGORIES[0];
+  if (!cat.models) return rawData;
+  return rawData.filter(m => cat.models.includes(m.model_name));
+}
+
+function getDisplayName(name) { return DISPLAY_NAMES[name] || name; }
+
+function pctColor(pct) {
+  if (pct >= 90) return 'very-low';
+  if (pct >= 70) return 'low';
+  return 'ok';
+}
+
+function barColor(pct) {
+  if (pct >= 90) return 'var(--red)';
+  if (pct >= 70) return 'var(--yellow)';
+  return 'var(--green)';
+}
+
+function buildCardHTML(m, subtitle) {
+  const intervalTotal = m.current_interval_total_count;
+  const intervalUsed  = m.current_interval_usage_count;
+  const intervalLeft  = intervalTotal - intervalUsed;
+  const intervalPct   = intervalTotal > 0 ? (intervalUsed / intervalTotal * 100) : 0;
+  const intervalReset = formatDuration(m.remains_time);
+
+  const weeklyTotal = m.current_weekly_total_count;
+  const weeklyUsed  = m.current_weekly_usage_count;
+  const weeklyLeft  = weeklyTotal - weeklyUsed;
+  const weeklyPct   = weeklyTotal > 0 ? (weeklyUsed / weeklyTotal * 100) : 0;
+  const weeklyReset = formatDuration(m.weekly_remains_time);
+
+  const barW = Math.min(100, intervalPct).toFixed(1);
+
+  return `
+    <div class="model-card">
+      <div class="model-name">${getDisplayName(m.model_name)}</div>
+      ${subtitle ? `<div class="shared-quota-hint">${subtitle}</div>` : ''}
+      <div class="quota-row">
+        <span class="quota-label">5h窗口</span>
+        <div class="progress-wrap">
+          <div class="progress-bar ${pctColor(intervalPct)}" style="width:${barW}%; background:${barColor(intervalPct)}"></div>
+        </div>
+        <div class="quota-info">
+          <span class="quota-pct" style="color:${intervalPct >= 90 ? 'var(--red)' : intervalPct >= 70 ? 'var(--yellow)' : 'var(--green)'}">
+            ${(100 - intervalPct).toFixed(1)}%
+          </span>
+          <span class="quota-count">${intervalLeft.toLocaleString()} / ${intervalTotal.toLocaleString()}</span>
+          <span class="quota-reset">重置 ${intervalReset}</span>
+        </div>
+      </div>
+      <div class="quota-row">
+        <span class="quota-label">周配额</span>
+        <div class="progress-wrap">
+          <div class="progress-bar ${pctColor(weeklyPct)}" style="width:${Math.min(100, weeklyPct).toFixed(1)}%; background:${barColor(weeklyPct)}"></div>
+        </div>
+        <div class="quota-info">
+          <span class="quota-pct" style="color:${weeklyPct >= 90 ? 'var(--red)' : weeklyPct >= 70 ? 'var(--yellow)' : 'var(--green)'}">
+            ${(100 - weeklyPct).toFixed(1)}%
+          </span>
+          <span class="quota-count">${weeklyLeft.toLocaleString()} / ${weeklyTotal.toLocaleString()}</span>
+          <span class="quota-reset">周重置 ${weeklyReset}</span>
+        </div>
+      </div>
+    </div>`;
+}
+
+function renderCards(filter) {
+  const container = document.getElementById('model-list');
+  const models = getModelsToShow(filter);
+
+  if (models.length === 0) {
+    container.innerHTML = '<div style="color:var(--muted);padding:12px">暂无数据</div>';
+    return;
+  }
+
+  const SHARED_MODELS = ['MiniMax-M*', 'coding-plan-vlm', 'coding-plan-search'];
+  if (filter === 'M*' && SHARED_MODELS.every(n => models.find(m => m.model_name === n))) {
+    const primary = models.find(m => m.model_name === 'MiniMax-M*');
+    const vlmName = DISPLAY_NAMES['coding-plan-vlm'] || 'Coding Plan VLM';
+    const searchName = DISPLAY_NAMES['coding-plan-search'] || 'Coding Plan Search';
+    container.innerHTML = buildCardHTML(primary, `与 ${searchName} · ${vlmName} 共享额度`);
+    return;
+  }
+
+  container.innerHTML = models.map(m => buildCardHTML(m, null)).join('');
+}
+
+// ── MiniMax Table (unchanged) ───────────────────────────────────────────────
+
+function renderTable() {
+  const tbody = document.getElementById('table-body');
+  tbody.innerHTML = rawData.map(m => {
+    const intervalLeft = m.current_interval_total_count - m.current_interval_usage_count;
+    const weeklyLeft   = m.current_weekly_total_count - m.current_weekly_usage_count;
+    const iPct = m.current_interval_total_count > 0 ? (m.current_interval_usage_count / m.current_interval_total_count * 100) : 0;
+    const wPct = m.current_weekly_total_count > 0 ? (m.current_weekly_usage_count / m.current_weekly_total_count * 100) : 0;
+
+    const badge = (pct) => `<span class="pct-badge ${pctColor(pct)}">${pct.toFixed(1)}%</span>`;
+
+    return `<tr>
+      <td>${getDisplayName(m.model_name)}</td>
+      <td>${m.current_interval_usage_count.toLocaleString()}</td>
+      <td>${intervalLeft.toLocaleString()}</td>
+      <td>${formatDuration(m.remains_time)}</td>
+      <td>${m.current_weekly_usage_count.toLocaleString()}</td>
+      <td>${weeklyLeft.toLocaleString()}</td>
+      <td>${formatDuration(m.weekly_remains_time)}</td>
+    </tr>`;
+  }).join('');
+}
+
+// ── ECharts (MiniMax trend, theme-aware) ──────────────────────────────────────
+
+function updateChart(history) {
+  if (!chart || !history || history.length === 0) return;
+
+  const isDark = document.documentElement.getAttribute('data-theme') !== 'light';
+  const textColor = isDark ? '#8b949e' : '#656d76';
+  const splitColor = isDark ? '#21262d' : '#eaeef2';
+
+  const times = history.map(h => new Date(h.ts));
+  const consumed = history.map(h => h.interval_usage);
+
+  chart.setOption({
+    backgroundColor: 'transparent',
+    textStyle: { color: textColor, fontFamily: 'Cascadia Code, Consolas, monospace' },
+    tooltip: {
+      trigger: 'axis',
+      backgroundColor: isDark ? '#21262d' : '#f6f8fa',
+      borderColor: isDark ? '#30363d' : '#d0d7de',
+      textStyle: { color: isDark ? '#e6edf3' : '#1f2328', fontSize: 12 },
+      formatter: params => {
+        const t = new Date(params[0].value[0]).toLocaleTimeString();
+        return `${params[0].marker} 5h消耗: <b>${Number(params[0].value[1]).toLocaleString()}</b><div style="color:${textColor};font-size:10px;margin-top:2px">${t}</div>`;
+      },
+    },
+    grid: { left: 60, right: 20, top: 10, bottom: 30 },
+    xAxis: { type: 'time', axisLine: { lineStyle: { color: isDark ? '#30363d' : '#d0d7de' } }, axisLabel: { color: textColor, fontSize: 10 }, splitLine: { show: false } },
+    yAxis: { type: 'value', name: '消耗次数', nameTextStyle: { color: textColor, fontSize: 10 }, axisLine: { show: false }, axisLabel: { color: textColor, fontSize: 10 }, splitLine: { lineStyle: { color: splitColor } } },
+    series: [{
+      name: '5h消耗', type: 'line', smooth: true, symbol: 'none',
+      lineStyle: { color: '#388bfd', width: 2 },
+      areaStyle: { color: { type: 'linear', x: 0, y: 0, x2: 0, y2: 1, colorStops: [
+        { offset: 0, color: 'rgba(56,139,253,0.25)' },
+        { offset: 1, color: 'rgba(56,139,253,0.02)' },
+      ]}},
+      data: times.map((t, i) => [t, consumed[i]]),
+    }],
+  }, { notMerge: true });
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+function formatDuration(ms) {
+  if (!ms || ms <= 0) return '已重置';
+  const s = Math.floor(ms / 1000);
+  const m = Math.floor(s / 60);
+  const h = Math.floor(m / 60);
+  const d = Math.floor(h / 24);
+  if (d > 0) return `${d}天${h % 24}h`;
+  if (h > 0) return `${h}h${m % 60}m`;
+  return `${m}m`;
+}
+
+function updateFooter(data) {
+  const now = new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const mmxTs = data?.minimax?.status?.lastTs ? new Date(data.minimax.status.lastTs).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : '--';
+  const dsTs = data?.deepseek?.status?.lastTs ? new Date(data.deepseek.status.lastTs).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : '--';
+  const zaiTs = data?.zai?.status?.lastTs ? new Date(data.zai.status.lastTs).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : '--';
+  document.getElementById('footer').textContent =
+    `最后更新: ${now}  ·  MMX ${mmxTs}  ·  DS ${dsTs}  ·  ZAI ${zaiTs}`;
+}
+
+// ── Boot ─────────────────────────────────────────────────────────────────────
+
+init();
+</script>
+</body>
+</html>

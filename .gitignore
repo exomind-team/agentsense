@@ -2,3 +2,4 @@
 config.toml
 quota.db
 tests/fixtures/
+*.log
