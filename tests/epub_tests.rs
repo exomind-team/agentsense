@@ -57,3 +57,33 @@ fn test_epub_open_nonexistent() {
     let result = agentsense::EpubDocument::open(&PathBuf::from("tests/fixtures/ghost.epub"));
     assert!(result.is_err());
 }
+
+#[test]
+fn test_epub_toc_returns_tree() {
+    let path = test_epub_path();
+    let doc = agentsense::EpubDocument::open(&path).expect("should open");
+    let toc = doc.toc();
+    assert!(!toc.is_empty(), "TOC should not be empty");
+    // The test EPUB has "First Chapter", "Second Chapter", "Third Chapter" as navPoints
+    let ch_count = toc.iter().filter(|e| e.title.contains("Chapter")).count();
+    assert!(
+        ch_count >= 3,
+        "should have chapter entries, got {} TOC items",
+        toc.len()
+    );
+}
+
+#[test]
+fn test_epub_read_toc_entry_by_title() {
+    let path = test_epub_path();
+    let doc = agentsense::EpubDocument::open(&path).expect("should open");
+
+    // Find chapter 1: "Chapter 1"
+    let ch1 = doc
+        .toc()
+        .iter()
+        .find(|e| e.title == "Chapter 1")
+        .expect("should find Chapter 1 entry");
+    let content = doc.read_toc_entry(ch1).expect("should read");
+    assert!(content.contains("first chapter"), "got: {content}");
+}

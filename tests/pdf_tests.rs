@@ -763,6 +763,135 @@ fn test_extract_image_out_of_range() {
     assert!(doc.extract_image(99, 0).is_err(), "page out of range");
 }
 
+// ── Test 26: PDF outline / bookmarks ─────────────────────────────
+
+fn generate_pdf_with_outline() -> Vec<u8> {
+    use lopdf::dictionary;
+    use lopdf::{Document, Object};
+
+    let mut doc = Document::with_version("1.4");
+    let pages_id = doc.new_object_id();
+    let catalog_id = doc.new_object_id();
+    let outline_root_id = doc.new_object_id();
+    let page1_id = doc.new_object_id();
+    let page2_id = doc.new_object_id();
+    let page3_id = doc.new_object_id();
+
+    // Three pages
+    for pid in [page1_id, page2_id, page3_id].iter() {
+        let page = dictionary! {
+            "Type" => "Page",
+            "Parent" => pages_id,
+            "MediaBox" => vec![Object::Integer(0), Object::Integer(0),
+                               Object::Integer(612), Object::Integer(792)],
+        };
+        doc.objects.insert(*pid, Object::Dictionary(page));
+    }
+
+    let pages = dictionary! {
+        "Type" => "Pages",
+        "Kids" => vec![Object::Reference(page1_id), Object::Reference(page2_id), Object::Reference(page3_id)],
+        "Count" => Object::Integer(3),
+    };
+    doc.objects.insert(pages_id, Object::Dictionary(pages));
+
+    // Build outline items (linked list via Next/First)
+    // Section 1 (page 1)
+    let s1_id = doc.new_object_id();
+    let s1 = dictionary! {
+        "Title" => Object::string_literal("Section 1"),
+        "Dest" => Object::Array(vec![Object::Reference(page1_id), "XYZ".into(),
+                                     Object::Real(0.0), Object::Real(0.0), Object::Real(1.0)]),
+        "Parent" => Object::Reference(outline_root_id),
+        "Next" => Object::Reference(outline_root_id), // will be updated
+    };
+    doc.objects.insert(s1_id, Object::Dictionary(s1));
+
+    // Section 2 (page 2)
+    let s2_id = doc.new_object_id();
+    let s2 = dictionary! {
+        "Title" => Object::string_literal("Section 2"),
+        "Dest" => Object::Array(vec![Object::Reference(page2_id), "XYZ".into(),
+                                     Object::Real(0.0), Object::Real(0.0), Object::Real(1.0)]),
+        "Parent" => Object::Reference(outline_root_id),
+    };
+    doc.objects.insert(s2_id, Object::Dictionary(s2));
+
+    // Update Section 1's Next to point to Section 2
+    if let Some(Object::Dictionary(ref mut d)) = doc.objects.get_mut(&s1_id) {
+        d.set("Next", Object::Reference(s2_id));
+    }
+
+    // Subsection 2.1 (page 2, child of Section 2)
+    let s21_id = doc.new_object_id();
+    let s21 = dictionary! {
+        "Title" => Object::string_literal("Subsection 2.1"),
+        "Dest" => Object::Array(vec![Object::Reference(page2_id), "XYZ".into(),
+                                     Object::Real(0.0), Object::Real(0.0), Object::Real(1.0)]),
+        "Parent" => Object::Reference(s2_id),
+    };
+    doc.objects.insert(s21_id, Object::Dictionary(s21));
+
+    // Update Section 2's First to point to Subsection 2.1
+    if let Some(Object::Dictionary(ref mut d)) = doc.objects.get_mut(&s2_id) {
+        d.set("First", Object::Reference(s21_id));
+    }
+
+    // Outline root
+    let outline = dictionary! {
+        "Type" => "Outlines",
+        "First" => Object::Reference(s1_id),
+        "Last" => Object::Reference(s2_id),
+        "Count" => Object::Integer(2),
+    };
+    doc.objects
+        .insert(outline_root_id, Object::Dictionary(outline));
+
+    let catalog = dictionary! {
+        "Type" => "Catalog",
+        "Pages" => Object::Reference(pages_id),
+        "Outlines" => Object::Reference(outline_root_id),
+    };
+    doc.objects.insert(catalog_id, Object::Dictionary(catalog));
+    doc.trailer.set("Root", catalog_id);
+
+    let mut buf = Vec::new();
+    doc.save_to(&mut buf)
+        .expect("failed to serialize PDF with outline");
+    buf
+}
+
+#[test]
+fn test_pdf_outline_returns_toc_tree() {
+    let pdf_bytes = generate_pdf_with_outline();
+    let path = write_temp_pdf("outline.pdf", &pdf_bytes);
+
+    let doc = agentsense::PdfDocument::open(&path).expect("should open PDF with outline");
+
+    let outline = doc.outline().expect("should extract outline");
+    assert_eq!(outline.len(), 2, "should have 2 top-level entries");
+    assert_eq!(outline[0].title, "Section 1");
+    assert_eq!(outline[1].title, "Section 2");
+    // Check subsection
+    assert_eq!(outline[1].children.len(), 1);
+    assert_eq!(outline[1].children[0].title, "Subsection 2.1");
+    // Check locations
+    if let agentsense::TocLocation::Pdf { page } = outline[0].location {
+        assert_eq!(page, 1);
+    } else {
+        panic!("expected Pdf location");
+    }
+}
+
+#[test]
+fn test_pdf_without_outline_returns_empty() {
+    let pdf_bytes = generate_test_pdf(1);
+    let path = write_temp_pdf("no_outline.pdf", &pdf_bytes);
+    let doc = agentsense::PdfDocument::open(&path).expect("should open");
+    let outline = doc.outline().expect("should work");
+    assert!(outline.is_empty());
+}
+
 // ── Test 25: multi-image page ─────────────────────────────────────
 
 #[test]

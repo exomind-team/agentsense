@@ -17,7 +17,7 @@ pub use config::AppConfig;
 pub use engine::PdfEngine;
 pub use epub::EpubDocument;
 pub use error::AgentSenseError;
-pub use types::{DocumentInfo, ImageInfo};
+pub use types::{DocumentInfo, ImageInfo, TocEntry, TocLocation};
 
 use engine::EngineData;
 
@@ -100,6 +100,49 @@ impl PdfDocument {
             }
         }
         Ok(images)
+    }
+
+    /// Extract the document outline (bookmarks) as a TOC tree.
+    pub fn outline(&self) -> Result<Vec<TocEntry>, AgentSenseError> {
+        let doc = lopdf::Document::load(&self.path)
+            .map_err(|e| AgentSenseError::InvalidPdf(format!("lopdf outline: {e}")))?;
+
+        // Build ObjectId → page number mapping
+        let pages = doc.get_pages();
+        let mut page_map: std::collections::HashMap<(u32, u16), usize> =
+            std::collections::HashMap::new();
+        for (page_num, obj_id) in &pages {
+            page_map.insert(*obj_id, *page_num as usize);
+        }
+
+        // Get the outline root from catalog
+        let catalog = match doc.trailer.get(b"Root").ok() {
+            Some(obj) => obj,
+            None => return Ok(Vec::new()),
+        };
+        let catalog_id = match catalog {
+            lopdf::Object::Reference(id) => id,
+            _ => return Ok(Vec::new()),
+        };
+        let catalog_dict = match doc.get_object(*catalog_id).ok() {
+            Some(lopdf::Object::Dictionary(d)) => d,
+            _ => return Ok(Vec::new()),
+        };
+        let outlines_ref = match catalog_dict.get(b"Outlines").ok() {
+            Some(lopdf::Object::Reference(id)) => id,
+            _ => return Ok(Vec::new()),
+        };
+        let outline_root = match doc.get_object(*outlines_ref).ok() {
+            Some(lopdf::Object::Dictionary(d)) => d,
+            _ => return Ok(Vec::new()),
+        };
+
+        let first_id = match outline_root.get(b"First").ok() {
+            Some(lopdf::Object::Reference(id)) => id,
+            _ => return Ok(Vec::new()),
+        };
+
+        Ok(traverse_outline(&doc, *first_id, &page_map, 0))
     }
 
     /// Extract raw image bytes by page number (1-indexed) and image index.
@@ -250,6 +293,73 @@ pub(crate) fn float_val(obj: &lopdf::Object) -> f64 {
         lopdf::Object::Real(f) => *f as f64,
         _ => 0.0,
     }
+}
+
+/// Recursively traverse the PDF outline (bookmark) tree.
+fn traverse_outline(
+    doc: &lopdf::Document,
+    first_id: (u32, u16),
+    page_map: &std::collections::HashMap<(u32, u16), usize>,
+    level: usize,
+) -> Vec<TocEntry> {
+    let mut entries = Vec::new();
+    let mut current_id = Some(first_id);
+
+    while let Some(id) = current_id {
+        let obj = match doc.get_object(id).ok() {
+            Some(o) => o,
+            None => break,
+        };
+        let dict = match obj {
+            lopdf::Object::Dictionary(d) => d,
+            _ => break,
+        };
+
+        // Title
+        let title = dict
+            .get(b"Title")
+            .ok()
+            .and_then(text_from_object)
+            .unwrap_or_default();
+
+        // Page number from /Dest
+        let page = dict
+            .get(b"Dest")
+            .ok()
+            .and_then(|d| match d {
+                lopdf::Object::Array(arr) => arr.first(),
+                _ => None,
+            })
+            .and_then(|first| match first {
+                lopdf::Object::Reference(id) => page_map.get(id).copied(),
+                lopdf::Object::Integer(n) => Some(*n as usize),
+                _ => None,
+            })
+            .unwrap_or(1);
+
+        // Children (via /First)
+        let children = match dict.get(b"First").ok() {
+            Some(lopdf::Object::Reference(child_id)) => {
+                traverse_outline(doc, *child_id, page_map, level + 1)
+            }
+            _ => Vec::new(),
+        };
+
+        entries.push(TocEntry {
+            title,
+            level,
+            children,
+            location: TocLocation::Pdf { page },
+        });
+
+        // Next sibling
+        current_id = match dict.get(b"Next").ok() {
+            Some(lopdf::Object::Reference(next_id)) => Some(*next_id),
+            _ => None,
+        };
+    }
+
+    entries
 }
 
 /// Extract a text value from a PDF object (handles both string and name types).

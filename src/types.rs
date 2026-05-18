@@ -61,6 +61,31 @@ impl DocumentInfo {
     }
 }
 
+/// A table of contents entry — unified across PDF and EPUB.
+#[derive(Debug, Clone)]
+pub struct TocEntry {
+    /// Section title.
+    pub title: String,
+    /// Nesting depth (0 = top-level).
+    pub level: usize,
+    /// Child entries.
+    pub children: Vec<TocEntry>,
+    /// Where this entry is located in the document.
+    pub location: TocLocation,
+}
+
+/// Location of a TOC entry within a document.
+#[derive(Debug, Clone)]
+pub enum TocLocation {
+    /// EPUB: XHTML resource path + optional fragment anchor.
+    Epub {
+        path: String,
+        fragment: Option<String>,
+    },
+    /// PDF: 1-indexed page number.
+    Pdf { page: usize },
+}
+
 /// Metadata for an image embedded in a PDF page.
 #[derive(Debug, Clone)]
 pub struct ImageInfo {
