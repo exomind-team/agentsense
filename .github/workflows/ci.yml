@@ -9,25 +9,26 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   test:
-    name: Test (stable)
+    name: Test (Ubuntu)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Cache dependencies
-        uses: actions/cache@v4
+      - name: Cache cargo registry
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
 
       - name: Run tests
         run: cargo test --locked
@@ -36,21 +37,21 @@ jobs:
     name: Clippy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
 
-      - name: Cache dependencies
-        uses: actions/cache@v4
+      - name: Cache cargo registry
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-clippy-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
 
       - name: Run Clippy
         run: cargo clippy --all-targets -- -D warnings
@@ -59,7 +60,7 @@ jobs:
     name: Format
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -73,7 +74,7 @@ jobs:
     name: Docs
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -87,7 +88,7 @@ jobs:
     name: Test (Windows)
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
