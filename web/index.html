@@ -24,6 +24,7 @@
       --ds-color: #4f8ff7;
       --zai-color: #22d3ee;
       --claude-color: #d97757;
+      --mimo-color: #818cf8;
     }
 
     [data-theme="light"] {
@@ -44,6 +45,7 @@
       --ds-color: #1d4ed8;
       --zai-color: #0891b2;
       --claude-color: #bd5d3a;
+      --mimo-color: #6366f1;
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -117,7 +119,7 @@
     /* ── Overview Cards (3 columns) ── */
     .overview-grid {
       display: grid;
-      grid-template-columns: 1fr 1fr 1fr;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
       gap: 10px;
       margin-bottom: 14px;
     }
@@ -163,6 +165,10 @@
     .ov-avatar.claude {
       background-color: var(--claude-color);
       background-image: url("data:image/svg+xml;base64,PHN2ZyBmaWxsPSIjZmZmZmZmIiByb2xlPSJpbWciIHZpZXdCb3g9IjAgMCAyNCAyNCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48dGl0bGU+QW50aHJvcGljPC90aXRsZT48cGF0aCBkPSJNMTcuMzA0MSAzLjU0MWgtMy42NzE4bDYuNjk2IDE2LjkxOEgyNFPtLTEwLjYwODIgMEwwIDIwLjQ1OWgzLjc0NDJsMS4zNjkzLTMuNTUyN2g3LjAwNTJsMS4zNjkzIDMuNTUyOGgzLjc0NDJMMTAuNTM2MyAzLjU0MDlabS0uMzcxMiAxMC4yMjMyIDIuMjkxNC01Ljk0NTYgMi4yOTE0IDUuOTQ1NloiLz48L3N2Zz4=");
+    }
+    .ov-avatar.mimo {
+      background-color: var(--mimo-color);
+      background-image: url("data:image/svg+xml;base64,PHN2ZyBmaWxsPSIjZmZmZmZmIiByb2xlPSJpbWciIHZpZXdCb3g9IjAgMCAyNCAyNCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48dGl0bGU+TWlNbzwvdGl0bGU+PHBhdGggZD0iTTUgN2gxMnYxMEg1eiIvPjwvc3ZnPg==");
     }
 
     .ov-label {
@@ -697,6 +703,16 @@
     <div class="ov-bar-wrap"><div class="ov-bar" id="ov-claude-bar" style="width:0;background:var(--claude-color)"></div></div>
   </div>
 </div>
+  <div class="overview-card" id="ov-mimo">
+    <div class="ov-header">
+      <span class="ov-avatar mimo"></span>
+      <span class="ov-label">MiMo</span>
+      <span class="ov-status" id="ov-mimo-status">--</span>
+    </div>
+    <div class="ov-value" id="ov-mimo-value">--</div>
+    <div class="ov-sub" id="ov-mimo-sub">月额度</div>
+    <div class="ov-bar-wrap"><div class="ov-bar" id="ov-mimo-bar" style="width:0;background:var(--mimo-color)"></div></div>
+  </div>
 
 <!-- Service tabs -->
 <div class="service-tabs">
@@ -704,6 +720,7 @@
   <button class="service-tab" data-service="deepseek">DeepSeek</button>
   <button class="service-tab" data-service="zai">GLM</button>
   <button class="service-tab" data-service="claude">Claude</button>
+  <button class="service-tab" data-service="mimo">MiMo</button>
 </div>
 
 <!-- ═══════ MiniMax Section ═══════ -->
@@ -845,6 +862,22 @@
   </div>
 </div>
 
+<!-- ═══════ MiMo Section ═══════ -->
+<div class="service-section" id="sec-mimo">
+  <div id="mimo-content">
+    <div class="chart-container">
+      <div class="chart-title">MiMo 套餐额度 <span id="mimo-plan-label" style="font-size:11px;color:var(--muted);font-weight:400"></span></div>
+      <div class="zai-quotas" id="mimo-quotas"></div>
+    </div>
+    <div class="chart-container">
+      <div class="chart-title">用量变化趋势</div>
+      <div id="mimo-history-chart" class="chart" style="height:200px" role="img" aria-label="MiMo用量变化趋势"></div>
+    </div>
+  </div>
+  <div class="no-key-msg" id="mimo-no-key" style="display:none">
+    MiMo Cookie 未配置。<a onclick="document.getElementById('settings-btn').click()">前往设置</a>
+  </div>
+</div>
 <!-- Settings Modal -->
 <div class="modal-overlay" id="settings-modal">
   <div class="modal">
@@ -863,6 +896,11 @@
       <label for="cfg-zai-token">GLM Auth Token</label>
       <input type="password" id="cfg-zai-token" placeholder="Bearer token..." autocomplete="off" />
       <div class="form-hint">智谱 BigModel 开发者面板获取</div>
+    </div>
+    <div class="form-group">
+      <label for="cfg-mimo-cookie">MiMo Cookie</label>
+      <input type="password" id="cfg-mimo-cookie" placeholder="api-platform_serviceToken=..." autocomplete="off" />
+      <div class="form-hint">从 platform.xiaomimimo.com 控制台复制 Cookie。Cookie 会过期，需定期更新</div>
     </div>
     <div class="modal-actions">
       <button class="modal-close" id="modal-cancel">取消</button>
@@ -915,6 +953,7 @@ let zaiHistoryChart = null;
 let zaiHourlyChart = null;
 let zaiModelBar = null;
 let claudeHistoryChart = null;
+let mimoHistoryChart = null;
 let countdownSec = 60;
 
 // ── Init ─────────────────────────────────────────────────────────────────────
@@ -927,6 +966,7 @@ function init() {
   zaiHourlyChart = echarts.init(document.getElementById('zai-hourly-chart'), null, { renderer: 'canvas' });
   zaiModelBar = echarts.init(document.getElementById('zai-model-bar'), null, { renderer: 'canvas' });
   claudeHistoryChart = echarts.init(document.getElementById('claude-history-chart'), null, { renderer: 'canvas' });
+  mimoHistoryChart = echarts.init(document.getElementById('mimo-history-chart'), null, { renderer: 'canvas' });
 
   initTheme();
   buildFilterTabs();
@@ -943,6 +983,7 @@ function init() {
     zaiHourlyChart?.resize();
     zaiModelBar?.resize();
     claudeHistoryChart?.resize();
+    mimoHistoryChart?.resize();
   });
 
   fetchAll();
@@ -995,6 +1036,7 @@ function bindServiceTabs() {
         zaiHourlyChart?.resize();
         zaiModelBar?.resize();
         claudeHistoryChart?.resize();
+        mimoHistoryChart?.resize();
       }, 100);
     });
   });
@@ -1020,6 +1062,7 @@ async function loadConfigToForm() {
     document.getElementById('cfg-mmx-key').value = cfg.minimax_api_key || '';
     document.getElementById('cfg-ds-key').value = cfg.deepseek_api_key || '';
     document.getElementById('cfg-zai-token').value = cfg.zai_auth_token || '';
+    document.getElementById('cfg-mimo-cookie').value = cfg.mimo_cookie || '';
   } catch {}
 }
 
@@ -1027,6 +1070,7 @@ async function saveConfigFromForm() {
   const mmxKey = document.getElementById('cfg-mmx-key').value.trim();
   const dsKey = document.getElementById('cfg-ds-key').value.trim();
   const zaiToken = document.getElementById('cfg-zai-token').value.trim();
+  const mimoCookie = document.getElementById('cfg-mimo-cookie').value.trim();
 
   try {
     await fetch(`${API_BASE}/api/config`, {
@@ -1036,6 +1080,7 @@ async function saveConfigFromForm() {
         minimax_api_key: mmxKey,
         deepseek_api_key: dsKey,
         zai_auth_token: zaiToken,
+        mimo_cookie: mimoCookie,
       }),
     });
     document.getElementById('settings-modal').classList.remove('active');
@@ -1054,6 +1099,7 @@ async function fetchAll() {
     fetchDeepSeekDetail(),
     fetchZaiDetail(),
     fetchClaudeDetail(),
+    fetchMimoDetail(),
   ]);
 }
 
@@ -1157,6 +1203,17 @@ async function fetchClaudeDetail() {
     ]);
     renderClaude(await quotaRes.json(), await historyRes.json());
   } catch (err) {
+nasync function fetchMimoDetail() {
+  try {
+    const [quotaRes, historyRes] = await Promise.all([
+      fetch(`${API_BASE}/api/mimo`),
+      fetch(`${API_BASE}/api/mimo/history`),
+    ]);
+    renderMimo(await quotaRes.json(), await historyRes.json());
+  } catch (err) {
+    console.error('fetchMimoDetail error:', err);
+  }
+}
     console.error('fetchClaudeDetail error:', err);
   }
 }
@@ -1262,6 +1319,25 @@ function renderOverview(data) {
       document.getElementById('ov-claude-bar').style.width = Math.min(100, remain5h) + '%';
       const color = remain5h < 20 ? 'var(--red)' : remain5h < 40 ? 'var(--yellow)' : 'var(--claude-color)';
       document.getElementById('ov-claude-bar').style.background = color;
+    }
+  }
+n  // MiMo
+  const mimoStatus = statusText(data.mimo?.status);
+  document.getElementById('ov-mimo-status').textContent = mimoStatus.text;
+  document.getElementById('ov-mimo-status').className = 'ov-status ' + mimoStatus.cls;
+  if (mimoStatus.cls === 'no_key') {
+    document.getElementById('ov-mimo-value').textContent = '--';
+    document.getElementById('ov-mimo-sub').textContent = '未配置';
+    document.getElementById('ov-mimo-bar').style.width = '0%';
+  } else {
+    const mQ = data.mimo?.quota;
+    if (mQ) {
+      const remainPct = (100 - mQ.month_percent * 100);
+      document.getElementById('ov-mimo-value').textContent = remainPct.toFixed(1) + '%';
+      document.getElementById('ov-mimo-sub').textContent = `${mQ.plan_name} · ${mQ.period_end}`;
+      document.getElementById('ov-mimo-bar').style.width = Math.min(100, remainPct) + '%';
+      const color = remainPct < 20 ? 'var(--red)' : remainPct < 40 ? 'var(--yellow)' : 'var(--mimo-color)';
+      document.getElementById('ov-mimo-bar').style.background = color;
     }
   }
 
@@ -1674,6 +1750,111 @@ function renderClaude(data, history) {
   }, { notMerge: true });
 }
 
+
+function renderMimo(data, history) {
+  const noKey = document.getElementById('mimo-no-key');
+  const content = document.getElementById('mimo-content');
+
+  if (data.status?.status === 'no_key') {
+    noKey.style.display = 'block';
+    content.style.display = 'none';
+    return;
+  }
+  noKey.style.display = 'none';
+  content.style.display = 'block';
+
+  const q = data.quota;
+  const box = document.getElementById('mimo-quotas');
+  const planLabel = document.getElementById('mimo-plan-label');
+  box.innerHTML = '';
+
+  if (q) {
+    const usedPct = q.month_percent * 100;
+    const remainPct = 100 - usedPct;
+    const fmtCredits = (v) => {
+      if (v >= 1e8) return (v / 1e8).toFixed(2) + '亿';
+      if (v >= 1e4) return (v / 1e4).toFixed(1) + '万';
+      return v.toLocaleString();
+    };
+
+    planLabel.textContent = `${q.plan_name} · 到期 ${q.period_end}`;
+
+    // Plan info row
+    const info = document.createElement('div');
+    info.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)';
+    info.innerHTML = `
+      <span style="color:var(--muted);font-size:12px">套餐</span>
+      <span style="font-weight:600;color:${q.expired ? 'var(--red)' : 'var(--fg)'}">${q.plan_name}${q.expired ? ' (已过期)' : ''}</span>
+    `;
+    box.appendChild(info);
+
+    // Usage bar
+    const usageRow = document.createElement('div');
+    usageRow.style.cssText = 'padding:8px 0;border-bottom:1px solid var(--border)';
+    usageRow.innerHTML = `
+      <div style="display:flex;justify-content:space-between;margin-bottom:6px">
+        <span style="color:var(--muted);font-size:12px">月用量</span>
+        <span style="font-weight:600">${fmtCredits(q.month_used)} / ${fmtCredits(q.month_limit)}</span>
+      </div>
+      <div style="background:var(--bg);border-radius:4px;height:8px;overflow:hidden">
+        <div style="height:100%;width:${Math.min(100, usedPct).toFixed(1)}%;background:${usedPct > 80 ? 'var(--red)' : usedPct > 50 ? 'var(--yellow)' : 'var(--mimo-color)'};border-radius:4px;transition:width 0.5s"></div>
+      </div>
+      <div style="display:flex;justify-content:space-between;margin-top:4px;font-size:10px;color:var(--muted)">
+        <span>已用 ${usedPct.toFixed(2)}%</span>
+        <span>剩余 ${fmtCredits(q.month_limit - q.month_used)}</span>
+      </div>
+    `;
+    box.appendChild(usageRow);
+
+    // Period end
+    const periodRow = document.createElement('div');
+    periodRow.style.cssText = 'display:flex;justify-content:space-between;padding:8px 0';
+    periodRow.innerHTML = `
+      <span style="color:var(--muted);font-size:12px">到期时间</span>
+      <span>${q.period_end}</span>
+    `;
+    box.appendChild(periodRow);
+  }
+
+  // History chart
+  if (!mimoHistoryChart || !history || history.length === 0) return;
+
+  const isDark = document.documentElement.getAttribute('data-theme') !== 'light';
+  const textColor = isDark ? '#8b949e' : '#656d76';
+  const splitColor = isDark ? '#21262d' : '#eaeef2';
+
+  mimoHistoryChart.setOption({
+    backgroundColor: 'transparent',
+    textStyle: { color: textColor, fontFamily: 'Cascadia Code, Consolas, monospace' },
+    tooltip: {
+      trigger: 'axis',
+      backgroundColor: isDark ? '#21262d' : '#f6f8fa',
+      borderColor: isDark ? '#30363d' : '#d0d7de',
+      textStyle: { color: isDark ? '#e6edf3' : '#1f2328', fontSize: 12 },
+      formatter: params => {
+        const t = new Date(params[0].value[0]).toLocaleString();
+        const fmtC = v => v >= 1e8 ? (v/1e8).toFixed(2)+'亿' : v >= 1e4 ? (v/1e4).toFixed(1)+'万' : v.toLocaleString();
+        return `<div style="color:${textColor};font-size:10px">${t}</div>` +
+          params.map(p => `${p.marker} ${p.seriesName}: <b>${fmtC(p.value[1])}</b>`).join('<br/>');
+      },
+    },
+    grid: { left: 65, right: 20, top: 20, bottom: 30 },
+    xAxis: { type: 'time', axisLine: { lineStyle: { color: splitColor } }, axisLabel: { color: textColor, fontSize: 10 }, splitLine: { show: false } },
+    yAxis: {
+      type: 'value',
+      axisLabel: { color: textColor, fontSize: 9, formatter: v => v >= 1e8 ? (v/1e8).toFixed(1)+'亿' : v >= 1e4 ? (v/1e4)+'万' : v },
+      axisLine: { show: false }, axisTick: { show: false },
+      splitLine: { lineStyle: { color: splitColor, type: 'dashed' } },
+    },
+    series: [{
+      name: '月用量', type: 'line', smooth: true, symbol: 'circle', symbolSize: 4,
+      lineStyle: { width: 2, color: '#818cf8' },
+      itemStyle: { color: '#818cf8' },
+      areaStyle: { color: { type: 'linear', x: 0, y: 0, x2: 0, y2: 1, colorStops: [{ offset: 0, color: 'rgba(129,140,248,0.3)' }, { offset: 1, color: 'rgba(129,140,248,0.02)' }] } },
+      data: history.map(h => [h.timestamp, h.month_used]),
+    }],
+  }, { notMerge: true });
+}
 // ── MiniMax Rendering (unchanged) ───────────────────────────────────────────
 
 function renderConsumption(data) {

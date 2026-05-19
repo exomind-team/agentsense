@@ -3,6 +3,7 @@ use std::path::Path;
 
 use super::claude::{ClaudeLimit, ClaudeSnapshot};
 use super::deepseek::DeepSeekSnapshot;
+use super::mimo::MimoSnapshot;
 use super::minimax::MinimaxSnapshot;
 use super::zai::ZaiSnapshot;
 use crate::error::AgentSenseError;
@@ -75,6 +76,19 @@ impl QuotaDb {
                 extra_json      TEXT NOT NULL DEFAULT '[]'
             );
             CREATE INDEX IF NOT EXISTS idx_claude_ts ON claude_quota_log(ts);
+
+            CREATE TABLE IF NOT EXISTS mimo_quota_log (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts              INTEGER NOT NULL,
+                plan_code       TEXT NOT NULL,
+                plan_name       TEXT NOT NULL,
+                period_end      TEXT NOT NULL DEFAULT '',
+                expired         INTEGER NOT NULL DEFAULT 0,
+                month_used      INTEGER NOT NULL,
+                month_limit     INTEGER NOT NULL,
+                month_percent   REAL NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_mimo_ts ON mimo_quota_log(ts);
             ",
         )?;
         Ok(())
@@ -135,6 +149,24 @@ impl QuotaDb {
                 snap.seven_d_pct,
                 snap.seven_d_reset,
                 extra_json
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn insert_mimo(&self, snap: &MimoSnapshot) -> Result<(), AgentSenseError> {
+        self.conn.execute(
+            "INSERT INTO mimo_quota_log (ts, plan_code, plan_name, period_end, expired, month_used, month_limit, month_percent)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                snap.timestamp,
+                snap.plan_code,
+                snap.plan_name,
+                snap.period_end,
+                snap.expired as i32,
+                snap.month_used,
+                snap.month_limit,
+                snap.month_percent,
             ],
         )?;
         Ok(())
@@ -226,6 +258,54 @@ impl QuotaDb {
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
             Err(e) => Err(AgentSenseError::Database(e.to_string())),
         }
+    }
+
+    pub fn latest_mimo(&self) -> Result<Option<MimoSnapshot>, AgentSenseError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT ts, plan_code, plan_name, period_end, expired, month_used, month_limit, month_percent
+             FROM mimo_quota_log ORDER BY ts DESC LIMIT 1",
+        )?;
+        let row = stmt.query_row([], |row| {
+            Ok(MimoSnapshot {
+                timestamp: row.get(0)?,
+                plan_code: row.get(1)?,
+                plan_name: row.get(2)?,
+                period_end: row.get(3)?,
+                expired: row.get::<_, i32>(4)? != 0,
+                month_used: row.get(5)?,
+                month_limit: row.get(6)?,
+                month_percent: row.get(7)?,
+            })
+        });
+        match row {
+            Ok(snap) => Ok(Some(snap)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(AgentSenseError::Database(e.to_string())),
+        }
+    }
+
+    pub fn mimo_history(&self, hours: u64) -> Result<Vec<MimoSnapshot>, AgentSenseError> {
+        let now = chrono::Utc::now().timestamp_millis();
+        let cutoff = now - (hours as i64) * 60 * 60 * 1000;
+        let mut stmt = self.conn.prepare(
+            "SELECT ts, plan_code, plan_name, period_end, expired, month_used, month_limit, month_percent
+             FROM mimo_quota_log WHERE ts >= ?1 ORDER BY ts",
+        )?;
+        let rows = stmt
+            .query_map(params![cutoff], |row| {
+                Ok(MimoSnapshot {
+                    timestamp: row.get(0)?,
+                    plan_code: row.get(1)?,
+                    plan_name: row.get(2)?,
+                    period_end: row.get(3)?,
+                    expired: row.get::<_, i32>(4)? != 0,
+                    month_used: row.get(5)?,
+                    month_limit: row.get(6)?,
+                    month_percent: row.get(7)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
     }
 
     pub fn latest_minimax(&self) -> Result<Vec<super::minimax::ModelQuota>, AgentSenseError> {

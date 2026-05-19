@@ -39,6 +39,12 @@ pub async fn api_all(State(state): State<Arc<AppState>>) -> axum::Json<serde_jso
         claude_quota.as_ref().map(|s| s.timestamp),
     );
 
+    let mimo_quota = db.latest_mimo().unwrap_or_default();
+    let mimo_status = provider_status(
+        state.mimo_cookie.read().await.is_some(),
+        mimo_quota.as_ref().map(|s| s.timestamp),
+    );
+
     let mut mmx_models_json = Vec::new();
     let now_ms = chrono::Utc::now().timestamp_millis();
     for m in &mmx_models {
@@ -72,6 +78,7 @@ pub async fn api_all(State(state): State<Arc<AppState>>) -> axum::Json<serde_jso
         "deepseek": { "balance": ds_balance, "status": ds_status },
         "zai": { "quota": zai_quota, "status": zai_status },
         "claude": { "quota": claude_quota, "status": claude_status },
+        "mimo": { "quota": mimo_quota, "status": mimo_status },
         "_nextPoll": state.next_poll.load(std::sync::atomic::Ordering::Relaxed),
     }))
 }
@@ -258,6 +265,35 @@ pub async fn api_claude_history(
     axum::Json(serde_json::json!(history))
 }
 
+pub async fn api_mimo(
+    State(state): State<Arc<AppState>>,
+) -> axum::Json<serde_json::Value> {
+    let db = state.db.lock().await;
+    let quota = db.latest_mimo().unwrap_or_default();
+    drop(db);
+
+    let status = provider_status(
+        state.mimo_cookie.read().await.is_some(),
+        quota.as_ref().map(|s| s.timestamp),
+    );
+
+    axum::Json(serde_json::json!({
+        "quota": quota,
+        "status": status,
+    }))
+}
+
+pub async fn api_mimo_history(
+    State(state): State<Arc<AppState>>,
+    Query(q): Query<HoursQuery>,
+) -> axum::Json<serde_json::Value> {
+    let hours = q.hours.unwrap_or(24);
+    let db = state.db.lock().await;
+    let history = db.mimo_history(hours).unwrap_or_default();
+    drop(db);
+    axum::Json(serde_json::json!(history))
+}
+
 pub async fn api_config_get(
     State(state): State<Arc<AppState>>,
 ) -> axum::Json<serde_json::Value> {
@@ -272,15 +308,18 @@ pub async fn api_config_get(
     let mmx = state.minimax_key.read().await;
     let ds = state.deepseek_key.read().await;
     let zai = state.zai_token.read().await;
+    let mimo = state.mimo_cookie.read().await;
     let claude = state.claude_creds.read().await;
 
     axum::Json(serde_json::json!({
         "minimax_api_key": mask(&mmx),
         "deepseek_api_key": mask(&ds),
         "zai_auth_token": mask(&zai),
+        "mimo_cookie": mask(&mimo),
         "minimax_configured": mmx.is_some(),
         "deepseek_configured": ds.is_some(),
         "zai_configured": zai.is_some(),
+        "mimo_configured": mimo.is_some(),
         "claude_configured": claude.is_some(),
         "claude_creds_path": claude.as_ref().map(|p| p.display().to_string()),
     }))
@@ -291,6 +330,7 @@ pub struct ConfigBody {
     pub minimax_api_key: Option<String>,
     pub deepseek_api_key: Option<String>,
     pub zai_auth_token: Option<String>,
+    pub mimo_cookie: Option<String>,
 }
 
 pub async fn api_config_put(
@@ -314,10 +354,16 @@ pub async fn api_config_put(
             *state.zai_token.write().await = Some(token.clone());
         }
     }
+    if let Some(ref cookie) = body.mimo_cookie {
+        if !cookie.starts_with(masked_prefix) && !cookie.is_empty() {
+            *state.mimo_cookie.write().await = Some(cookie.clone());
+        }
+    }
 
     let mmx = state.minimax_key.read().await;
     let ds = state.deepseek_key.read().await;
     let zai = state.zai_token.read().await;
+    let mimo = state.mimo_cookie.read().await;
 
     let mut config =
         crate::AppConfig::load(&state.config_path).unwrap_or_default();
@@ -333,6 +379,9 @@ pub async fn api_config_put(
     config.quota.zai = Some(crate::config::ZaiKeyConfig {
         auth_token: zai.clone(),
         auth_token_env: None,
+    });
+    config.quota.mimo = Some(crate::config::MimoConfig {
+        cookie: mimo.clone(),
     });
 
     let toml_str = toml::to_string_pretty(&config).unwrap_or_default();
