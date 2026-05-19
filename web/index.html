@@ -22,7 +22,7 @@
       --selection-bg: #264f78;
       --mmx-color: #388bfd;
       --ds-color: #4f8ff7;
-      --zai-color: #de2910;
+      --zai-color: #22d3ee;
       --claude-color: #d97757;
     }
 
@@ -42,7 +42,7 @@
       --selection-bg: #b6d6f0;
       --mmx-color: #0969da;
       --ds-color: #1d4ed8;
-      --zai-color: #c4190c;
+      --zai-color: #0891b2;
       --claude-color: #bd5d3a;
     }
 
@@ -137,17 +137,24 @@
       margin-bottom: 10px;
     }
 
-    .ov-dot {
-      width: 8px;
-      height: 8px;
+    .ov-avatar {
+      width: 22px;
+      height: 22px;
       border-radius: 50%;
       flex-shrink: 0;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      font-weight: 700;
+      color: #fff;
     }
 
-    .ov-dot.mmx { background: var(--mmx-color); }
-    .ov-dot.ds  { background: var(--ds-color); }
-    .ov-dot.zai { background: var(--zai-color); }
-    .ov-dot.claude { background: var(--claude-color); }
+    .ov-avatar.mmx    { background: var(--mmx-color); }
+    .ov-avatar.ds     { background: var(--ds-color); }
+    .ov-avatar.zai    { background: var(--zai-color); }
+    .ov-avatar.claude { background: var(--claude-color); }
 
     .ov-label {
       font-size: 12px;
@@ -643,7 +650,7 @@
 <div class="overview-grid" id="overview">
   <div class="overview-card" id="ov-minimax">
     <div class="ov-header">
-      <span class="ov-dot mmx"></span>
+      <span class="ov-avatar mmx">M</span>
       <span class="ov-label">MiniMax 🌐</span>
       <span class="ov-status" id="ov-minimax-status">--</span>
     </div>
@@ -653,7 +660,7 @@
   </div>
   <div class="overview-card" id="ov-deepseek">
     <div class="ov-header">
-      <span class="ov-dot ds"></span>
+      <span class="ov-avatar ds">D</span>
       <span class="ov-label">DeepSeek</span>
       <span class="ov-status" id="ov-deepseek-status">--</span>
     </div>
@@ -662,7 +669,7 @@
   </div>
   <div class="overview-card" id="ov-zai">
     <div class="ov-header">
-      <span class="ov-dot zai"></span>
+      <span class="ov-avatar zai">G</span>
       <span class="ov-label">GLM</span>
       <span class="ov-status" id="ov-zai-status">--</span>
     </div>
@@ -672,7 +679,7 @@
   </div>
   <div class="overview-card" id="ov-claude">
     <div class="ov-header">
-      <span class="ov-dot claude"></span>
+      <span class="ov-avatar claude">C</span>
       <span class="ov-label">Claude</span>
       <span class="ov-status" id="ov-claude-status">--</span>
     </div>
