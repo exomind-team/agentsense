@@ -644,7 +644,7 @@
   <div class="overview-card" id="ov-minimax">
     <div class="ov-header">
       <span class="ov-dot mmx"></span>
-      <span class="ov-label">MiniMax</span>
+      <span class="ov-label">MiniMax 🌐</span>
       <span class="ov-status" id="ov-minimax-status">--</span>
     </div>
     <div class="ov-value" id="ov-minimax-value">--</div>
@@ -684,7 +684,7 @@
 
 <!-- Service tabs -->
 <div class="service-tabs">
-  <button class="service-tab active" data-service="minimax">MiniMax</button>
+  <button class="service-tab active" data-service="minimax">MiniMax 🌐</button>
   <button class="service-tab" data-service="deepseek">DeepSeek</button>
   <button class="service-tab" data-service="zai">GLM 🇨🇳</button>
   <button class="service-tab" data-service="claude">Claude</button>
@@ -1697,7 +1697,7 @@ function updateFooter(data) {
   const zaiTs = data?.zai?.status?.lastTs ? new Date(data.zai.status.lastTs).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : '--';
   const ccTs = data?.claude?.status?.lastTs ? new Date(data.claude.status.lastTs).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : '--';
   document.getElementById('footer').textContent =
-    `最后更新: ${now}  ·  MMX ${mmxTs}  ·  DS ${dsTs}  ·  ZAI ${zaiTs}  ·  CC ${ccTs}`;
+    `最后更新: ${now}  ·  MMX🌐 ${mmxTs}  ·  DS ${dsTs}  ·  GLM🇨🇳 ${zaiTs}  ·  CC ${ccTs}`;
 }
 
 // ── Boot ─────────────────────────────────────────────────────────────────────
