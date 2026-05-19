@@ -1334,8 +1334,9 @@ function renderOverview(data) {
     const mQ = data.mimo?.quota;
     if (mQ) {
       const remainPct = (100 - mQ.month_percent * 100);
+      const fmtM = (v) => { const m = v / 1e6; return (m < 10 ? m.toFixed(2) : m.toFixed(1)) + 'M'; };
       document.getElementById('ov-mimo-value').textContent = remainPct.toFixed(1) + '%';
-      document.getElementById('ov-mimo-sub').textContent = `${mQ.plan_name} · ${mQ.period_end}`;
+      document.getElementById('ov-mimo-sub').textContent = `${fmtM(mQ.month_limit - mQ.month_used)} 剩余 · ${mQ.plan_name}`;
       document.getElementById('ov-mimo-bar').style.width = Math.min(100, remainPct) + '%';
       const color = remainPct < 20 ? 'var(--red)' : remainPct < 40 ? 'var(--yellow)' : 'var(--mimo-color)';
       document.getElementById('ov-mimo-bar').style.background = color;
@@ -1772,11 +1773,7 @@ function renderMimo(data, history) {
   if (q) {
     const usedPct = q.month_percent * 100;
     const remainPct = 100 - usedPct;
-    const fmtCredits = (v) => {
-      if (v >= 1e8) return (v / 1e8).toFixed(2) + '亿';
-      if (v >= 1e4) return (v / 1e4).toFixed(1) + '万';
-      return v.toLocaleString();
-    };
+    const fmtM = (v) => { const m = v / 1e6; return (m < 10 ? m.toFixed(2) : m.toFixed(1)) + 'M'; };
 
     planLabel.textContent = `${q.plan_name} · 到期 ${q.period_end}`;
 
@@ -1795,14 +1792,14 @@ function renderMimo(data, history) {
     usageRow.innerHTML = `
       <div style="display:flex;justify-content:space-between;margin-bottom:6px">
         <span style="color:var(--muted);font-size:12px">月用量</span>
-        <span style="font-weight:600">${fmtCredits(q.month_used)} / ${fmtCredits(q.month_limit)}</span>
+        <span style="font-weight:600">${fmtM(q.month_used)} / ${fmtM(q.month_limit)}</span>
       </div>
       <div style="background:var(--bg);border-radius:4px;height:8px;overflow:hidden">
         <div style="height:100%;width:${Math.min(100, usedPct).toFixed(1)}%;background:${usedPct > 80 ? 'var(--red)' : usedPct > 50 ? 'var(--yellow)' : 'var(--mimo-color)'};border-radius:4px;transition:width 0.5s"></div>
       </div>
       <div style="display:flex;justify-content:space-between;margin-top:4px;font-size:10px;color:var(--muted)">
         <span>已用 ${usedPct.toFixed(2)}%</span>
-        <span>剩余 ${fmtCredits(q.month_limit - q.month_used)}</span>
+        <span>剩余 ${fmtM(q.month_limit - q.month_used)}</span>
       </div>
     `;
     box.appendChild(usageRow);
