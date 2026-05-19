@@ -17,6 +17,7 @@ pub struct AppState {
     pub zai_token: Arc<tokio::sync::RwLock<Option<String>>>,
     pub claude_creds: Arc<tokio::sync::RwLock<Option<PathBuf>>>,
     pub next_poll: Arc<AtomicI64>,
+    pub last_claude_poll: Arc<AtomicI64>,
     pub poll_interval_secs: u64,
     pub config_path: PathBuf,
 }
@@ -36,6 +37,7 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
         .route("/api/deepseek/history", get(handlers::api_deepseek_history))
         .route("/api/zai", get(handlers::api_zai))
         .route("/api/zai/history", get(handlers::api_zai_history))
+        .route("/api/zai/models", get(handlers::api_zai_models))
         .route("/api/claude", get(handlers::api_claude))
         .route("/api/claude/history", get(handlers::api_claude_history))
         .route(
@@ -69,6 +71,7 @@ pub async fn serve(
         zai_token: Arc::new(tokio::sync::RwLock::new(config.zai_token())),
         claude_creds: Arc::new(tokio::sync::RwLock::new(config.claude_creds_path())),
         next_poll: Arc::new(AtomicI64::new(0)),
+        last_claude_poll: Arc::new(AtomicI64::new(0)),
         poll_interval_secs: config.poll_interval_secs,
         config_path,
     });
@@ -159,16 +162,24 @@ pub async fn do_poll(state: Arc<AppState>) {
 
     let claude_path = state.claude_creds.read().await.clone();
     let claude = if let Some(path) = claude_path {
-        let client = state.client.clone();
-        Some(
-            tokio::spawn(async move {
-                crate::quota::claude::fetch_with_creds(&client, &path).await
-            })
-            .await
-            .unwrap_or_else(|e| {
-                Err(AgentSenseError::Http(format!("Claude task panicked: {e}")))
-            }),
-        )
+        let now = chrono::Utc::now().timestamp();
+        let elapsed = now - state.last_claude_poll.load(Ordering::Relaxed);
+        if elapsed >= 300 {
+            let client = state.client.clone();
+            let result = Some(
+                tokio::spawn(async move {
+                    crate::quota::claude::fetch_with_creds(&client, &path).await
+                })
+                .await
+                .unwrap_or_else(|e| {
+                    Err(AgentSenseError::Http(format!("Claude task panicked: {e}")))
+                }),
+            );
+            state.last_claude_poll.store(now, Ordering::Relaxed);
+            result
+        } else {
+            None
+        }
     } else {
         None
     };

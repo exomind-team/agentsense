@@ -39,18 +39,33 @@ pub async fn api_all(State(state): State<Arc<AppState>>) -> axum::Json<serde_jso
         claude_quota.as_ref().map(|s| s.timestamp),
     );
 
-    drop(db);
-
     let mut mmx_models_json = Vec::new();
+    let now_ms = chrono::Utc::now().timestamp_millis();
     for m in &mmx_models {
+        let interval_remains = m.interval_end
+            .map(|t| (t - now_ms).max(0))
+            .filter(|t| *t > 0)
+            .unwrap_or_else(|| {
+                db.interval_reset_info(&m.name).map(|(_, r)| r).unwrap_or(0)
+            });
+        let weekly_remains = m.weekly_end
+            .map(|t| (t - now_ms).max(0))
+            .filter(|t| *t > 0)
+            .unwrap_or_else(|| {
+                db.weekly_model_reset_info(&m.name).map(|(_, r)| r).unwrap_or(0)
+            });
         mmx_models_json.push(serde_json::json!({
             "model_name": m.name,
             "current_interval_usage_count": m.interval_usage,
             "current_interval_total_count": m.interval_total,
             "current_weekly_usage_count": m.weekly_usage,
             "current_weekly_total_count": m.weekly_total,
+            "remains_time": interval_remains,
+            "weekly_remains_time": weekly_remains,
         }));
     }
+
+    drop(db);
 
     axum::Json(serde_json::json!({
         "minimax": { "models": mmx_models_json, "status": mmx_status },
@@ -66,18 +81,33 @@ pub async fn api_quota(
 ) -> axum::Json<serde_json::Value> {
     let db = state.db.lock().await;
     let (_, models) = db.latest_minimax_with_ts().unwrap_or((0, vec![]));
-    drop(db);
 
     let mut remains = Vec::new();
+    let now_ms = chrono::Utc::now().timestamp_millis();
     for m in &models {
+        let interval_remains = m.interval_end
+            .map(|t| (t - now_ms).max(0))
+            .filter(|t| *t > 0)
+            .unwrap_or_else(|| {
+                db.interval_reset_info(&m.name).map(|(_, r)| r).unwrap_or(0)
+            });
+        let weekly_remains = m.weekly_end
+            .map(|t| (t - now_ms).max(0))
+            .filter(|t| *t > 0)
+            .unwrap_or_else(|| {
+                db.weekly_model_reset_info(&m.name).map(|(_, r)| r).unwrap_or(0)
+            });
         remains.push(serde_json::json!({
             "model_name": m.name,
             "current_interval_usage_count": m.interval_usage,
             "current_interval_total_count": m.interval_total,
             "current_weekly_usage_count": m.weekly_usage,
             "current_weekly_total_count": m.weekly_total,
+            "remains_time": interval_remains,
+            "weekly_remains_time": weekly_remains,
         }));
     }
+    drop(db);
 
     axum::Json(serde_json::json!({
         "model_remains": remains,
@@ -183,6 +213,20 @@ pub async fn api_zai_history(
     let history = db.zai_history(hours).unwrap_or_default();
     drop(db);
     axum::Json(serde_json::json!(history))
+}
+
+pub async fn api_zai_models(
+    State(state): State<Arc<AppState>>,
+) -> axum::Json<serde_json::Value> {
+    let token = state.zai_token.read().await;
+    let Some(token) = token.clone() else {
+        return axum::Json(serde_json::json!({"error": "no_token"}));
+    };
+
+    match crate::quota::zai::fetch_model_usage(&state.client, &token).await {
+        Ok(data) => axum::Json(serde_json::json!(data)),
+        Err(e) => axum::Json(serde_json::json!({"error": e.to_string()})),
+    }
 }
 
 pub async fn api_claude(

@@ -22,6 +22,8 @@ fn seed_db(db: &QuotaDb) {
                 interval_total: 5000,
                 weekly_usage: 500,
                 weekly_total: 50000,
+                interval_end: None,
+                weekly_end: None,
             },
             ModelQuota {
                 name: "MiniMax-M1".into(),
@@ -29,6 +31,8 @@ fn seed_db(db: &QuotaDb) {
                 interval_total: 3000,
                 weekly_usage: 200,
                 weekly_total: 30000,
+                interval_end: None,
+                weekly_end: None,
             },
         ],
     }).expect("insert minimax");
@@ -42,10 +46,15 @@ fn seed_db(db: &QuotaDb) {
     db.insert_zai(&ZaiSnapshot {
         timestamp: now,
         token_5h_pct: 35,
+        token_5h_reset: 0,
         token_week_pct: 60,
+        token_week_reset: 0,
         mcp_month_pct: 20,
         mcp_used: 100,
         mcp_total: 500,
+        mcp_remaining: 400,
+        level: "max".into(),
+        usage_details_json: "[]".into(),
     }).expect("insert zai");
 }
 
@@ -64,6 +73,7 @@ fn make_state_with_data() -> Arc<AppState> {
         zai_token: Arc::new(tokio::sync::RwLock::new(Some("test-zai-token".into()))),
         claude_creds: Arc::new(tokio::sync::RwLock::new(None)),
         next_poll: Arc::new(AtomicI64::new(0)),
+        last_claude_poll: Arc::new(AtomicI64::new(0)),
         poll_interval_secs: 60,
         config_path,
     })
@@ -83,6 +93,7 @@ fn make_state_no_keys() -> Arc<AppState> {
         zai_token: Arc::new(tokio::sync::RwLock::new(None)),
         claude_creds: Arc::new(tokio::sync::RwLock::new(None)),
         next_poll: Arc::new(AtomicI64::new(0)),
+        last_claude_poll: Arc::new(AtomicI64::new(0)),
         poll_interval_secs: 60,
         config_path,
     })
@@ -102,6 +113,7 @@ fn make_state_empty() -> Arc<AppState> {
         zai_token: Arc::new(tokio::sync::RwLock::new(Some("test-token".into()))),
         claude_creds: Arc::new(tokio::sync::RwLock::new(None)),
         next_poll: Arc::new(AtomicI64::new(0)),
+        last_claude_poll: Arc::new(AtomicI64::new(0)),
         poll_interval_secs: 60,
         config_path,
     })
