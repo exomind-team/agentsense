@@ -1203,7 +1203,11 @@ async function fetchClaudeDetail() {
     ]);
     renderClaude(await quotaRes.json(), await historyRes.json());
   } catch (err) {
-nasync function fetchMimoDetail() {
+    console.error('fetchClaudeDetail error:', err);
+  }
+}
+
+async function fetchMimoDetail() {
   try {
     const [quotaRes, historyRes] = await Promise.all([
       fetch(`${API_BASE}/api/mimo`),
@@ -1212,9 +1216,6 @@ nasync function fetchMimoDetail() {
     renderMimo(await quotaRes.json(), await historyRes.json());
   } catch (err) {
     console.error('fetchMimoDetail error:', err);
-  }
-}
-    console.error('fetchClaudeDetail error:', err);
   }
 }
 
