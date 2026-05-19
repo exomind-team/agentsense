@@ -808,8 +808,8 @@
 
     <div class="chart-container">
       <div class="chart-title">模型 Token 消耗 <span id="zai-model-summary" style="font-size:11px;color:var(--muted);font-weight:400"></span></div>
-      <div id="zai-model-highlight" style="display:flex;gap:12px;margin-bottom:8px"></div>
-      <div id="zai-model-bar" class="chart" style="height:240px" role="img" aria-label="GLM模型Token消耗"></div>
+      <div id="zai-model-highlight" style="display:flex;gap:12px;margin-bottom:4px"></div>
+      <div id="zai-model-bar" class="chart" style="height:300px" role="img" aria-label="GLM模型Token消耗"></div>
     </div>
 
     <div class="chart-container">
@@ -993,8 +993,9 @@ function bindServiceTabs() {
         dsHistoryChart?.resize();
         zaiHistoryChart?.resize();
         zaiHourlyChart?.resize();
+        zaiModelBar?.resize();
         claudeHistoryChart?.resize();
-      }, 50);
+      }, 100);
     });
   });
 }
@@ -1388,14 +1389,14 @@ function renderZai(data, history, modelsData) {
     const total = modelsData.total_tokens || 0;
     modelSummaryEl.textContent = `共 ${fmtTokens(total)} tokens · ${modelsData.total_calls || 0} calls`;
 
-    // GLM-5.1 highlight block
+    // GLM-5.1 highlight block (compact inline style)
     const mainModel = modelsData.models.find(m => m.name === 'GLM-5.1');
     if (mainModel) {
       modelHighlightEl.innerHTML = `
-        <div style="flex:1;background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:8px 12px;text-align:center">
-          <div style="font-size:11px;color:var(--muted)">GLM-5.1</div>
-          <div style="font-size:18px;font-weight:bold;color:#22d3ee">${fmtTokens(mainModel.total_tokens)}</div>
-          <div style="font-size:10px;color:var(--muted)">tokens</div>
+        <div style="flex:1;background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:4px 12px;display:flex;align-items:center;justify-content:center;gap:8px">
+          <span style="font-size:11px;color:var(--muted)">GLM-5.1</span>
+          <span style="font-size:16px;font-weight:bold;color:#22d3ee">${fmtTokens(mainModel.total_tokens)}</span>
+          <span style="font-size:10px;color:var(--muted)">tokens</span>
         </div>
       `;
     }
@@ -1538,14 +1539,14 @@ function renderZaiModelBar(modelsData) {
       textStyle: { color: isDark ? '#e6edf3' : '#1f2328', fontSize: 11 },
       formatter: params => {
         const p = params[0];
-        return `${p.marker} ${p.name}: <b>${fmtTokens(p.value)}</b>`;
+        return `${p.marker} ${p.name}: <b>${fmtTokens(p.value)}</b> tokens`;
       },
     },
-    grid: { left: 55, right: 16, top: 16, bottom: 50 },
+    grid: { left: 55, right: 20, top: 20, bottom: 65 },
     xAxis: {
       type: 'category',
       data: names,
-      axisLabel: { color: textColor, fontSize: 10, rotate: 25, interval: 0 },
+      axisLabel: { color: textColor, fontSize: 9, rotate: 35, interval: 0 },
       axisLine: { lineStyle: { color: splitColor } },
       axisTick: { show: false },
     },
@@ -1553,7 +1554,7 @@ function renderZaiModelBar(modelsData) {
       type: 'log',
       logBase: 10,
       min: 1,
-      axisLabel: { color: textColor, fontSize: 10, formatter: v => fmtTokens(v) },
+      axisLabel: { color: textColor, fontSize: 9, formatter: v => fmtTokens(v) },
       axisLine: { show: false },
       axisTick: { show: false },
       splitLine: { lineStyle: { color: splitColor, type: 'dashed' } },
@@ -1562,13 +1563,13 @@ function renderZaiModelBar(modelsData) {
       type: 'bar',
       barMaxWidth: 48,
       barMinWidth: 16,
-      barMinHeight: 14,
+      barMinHeight: 16,
       itemStyle: { borderRadius: [4, 4, 0, 0] },
       data: values.map((v, i) => ({ value: v, itemStyle: { color: colors[i % colors.length], borderRadius: [4, 4, 0, 0] } })),
       label: {
         show: true,
         position: 'top',
-        fontSize: 10,
+        fontSize: 9,
         fontWeight: 'bold',
         color: isDark ? '#e6edf3' : '#1f2328',
         formatter: p => fmtTokens(p.value),
