@@ -23,6 +23,7 @@
       --mmx-color: #388bfd;
       --ds-color: #4f8ff7;
       --zai-color: #22d3ee;
+      --claude-color: #d97757;
     }
 
     [data-theme="light"] {
@@ -42,6 +43,7 @@
       --mmx-color: #0969da;
       --ds-color: #1d4ed8;
       --zai-color: #0891b2;
+      --claude-color: #bd5d3a;
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -145,6 +147,7 @@
     .ov-dot.mmx { background: var(--mmx-color); }
     .ov-dot.ds  { background: var(--ds-color); }
     .ov-dot.zai { background: var(--zai-color); }
+    .ov-dot.claude { background: var(--claude-color); }
 
     .ov-label {
       font-size: 12px;
@@ -667,6 +670,16 @@
     <div class="ov-sub" id="ov-zai-sub">5h 窗口</div>
     <div class="ov-bar-wrap"><div class="ov-bar" id="ov-zai-bar" style="width:0;background:var(--zai-color)"></div></div>
   </div>
+  <div class="overview-card" id="ov-claude">
+    <div class="ov-header">
+      <span class="ov-dot claude"></span>
+      <span class="ov-label">Claude</span>
+      <span class="ov-status" id="ov-claude-status">--</span>
+    </div>
+    <div class="ov-value" id="ov-claude-value">--</div>
+    <div class="ov-sub" id="ov-claude-sub">5h 窗口</div>
+    <div class="ov-bar-wrap"><div class="ov-bar" id="ov-claude-bar" style="width:0;background:var(--claude-color)"></div></div>
+  </div>
 </div>
 
 <!-- Service tabs -->
@@ -674,6 +687,7 @@
   <button class="service-tab active" data-service="minimax">MiniMax</button>
   <button class="service-tab" data-service="deepseek">DeepSeek</button>
   <button class="service-tab" data-service="zai">Z.AI</button>
+  <button class="service-tab" data-service="claude">Claude</button>
 </div>
 
 <!-- ═══════ MiniMax Section ═══════ -->
@@ -784,6 +798,24 @@
   </div>
 </div>
 
+<!-- ═══════ Claude Section ═══════ -->
+<div class="service-section" id="sec-claude">
+  <div id="claude-content">
+    <div class="chart-container">
+      <div class="chart-title">Claude 订阅配额（OAuth usage）</div>
+      <div class="zai-quotas" id="claude-quotas"></div>
+    </div>
+
+    <div class="chart-container">
+      <div class="chart-title">配额变化趋势（24h）</div>
+      <div id="claude-history-chart" class="chart" role="img" aria-label="Claude配额变化趋势"></div>
+    </div>
+  </div>
+  <div class="no-key-msg" id="claude-no-key" style="display:none">
+    未找到 Claude Code 凭证（<code>~/.claude/.credentials.json</code>）。登录 Claude Code 后自动生效。
+  </div>
+</div>
+
 <!-- Settings Modal -->
 <div class="modal-overlay" id="settings-modal">
   <div class="modal">
@@ -851,6 +883,7 @@ let chart = null;
 let weeklyBarChart = null;
 let dsHistoryChart = null;
 let zaiHistoryChart = null;
+let claudeHistoryChart = null;
 let countdownSec = 60;
 
 // ── Init ─────────────────────────────────────────────────────────────────────
@@ -860,6 +893,7 @@ function init() {
   weeklyBarChart = echarts.init(document.getElementById('weekly-bar-chart'), null, { renderer: 'canvas' });
   dsHistoryChart = echarts.init(document.getElementById('ds-history-chart'), null, { renderer: 'canvas' });
   zaiHistoryChart = echarts.init(document.getElementById('zai-history-chart'), null, { renderer: 'canvas' });
+  claudeHistoryChart = echarts.init(document.getElementById('claude-history-chart'), null, { renderer: 'canvas' });
 
   initTheme();
   buildFilterTabs();
@@ -873,6 +907,7 @@ function init() {
     weeklyBarChart?.resize();
     dsHistoryChart?.resize();
     zaiHistoryChart?.resize();
+    claudeHistoryChart?.resize();
   });
 
   fetchAll();
@@ -922,6 +957,7 @@ function bindServiceTabs() {
         weeklyBarChart?.resize();
         dsHistoryChart?.resize();
         zaiHistoryChart?.resize();
+        claudeHistoryChart?.resize();
       }, 50);
     });
   });
@@ -980,6 +1016,7 @@ async function fetchAll() {
     fetchMiniMaxDetail(),
     fetchDeepSeekDetail(),
     fetchZaiDetail(),
+    fetchClaudeDetail(),
   ]);
 }
 
@@ -1073,6 +1110,18 @@ async function fetchZaiDetail() {
   }
 }
 
+async function fetchClaudeDetail() {
+  try {
+    const [quotaRes, historyRes] = await Promise.all([
+      fetch(`${API_BASE}/api/claude`),
+      fetch(`${API_BASE}/api/claude/history`),
+    ]);
+    renderClaude(await quotaRes.json(), await historyRes.json());
+  } catch (err) {
+    console.error('fetchClaudeDetail error:', err);
+  }
+}
+
 async function manualRefresh() {
   const btn = document.getElementById('refreshBtn');
   btn.disabled = true;
@@ -1138,6 +1187,20 @@ function renderOverview(data) {
     document.getElementById('ov-zai-bar').style.width = Math.min(100, remain5h) + '%';
     const color = remain5h < 20 ? 'var(--red)' : remain5h < 40 ? 'var(--yellow)' : 'var(--zai-color)';
     document.getElementById('ov-zai-bar').style.background = color;
+  }
+
+  // Claude
+  const claudeStatus = statusText(data.claude?.status);
+  document.getElementById('ov-claude-status').textContent = claudeStatus.text;
+  document.getElementById('ov-claude-status').className = 'ov-status ' + claudeStatus.cls;
+  const cQ = data.claude?.quota;
+  if (cQ) {
+    const remain5h = 100 - cQ.five_h_pct;
+    document.getElementById('ov-claude-value').textContent = remain5h + '%';
+    document.getElementById('ov-claude-sub').textContent = `5h 已用 ${cQ.five_h_pct}% · 7d ${cQ.seven_d_pct}%`;
+    document.getElementById('ov-claude-bar').style.width = Math.min(100, remain5h) + '%';
+    const color = remain5h < 20 ? 'var(--red)' : remain5h < 40 ? 'var(--yellow)' : 'var(--claude-color)';
+    document.getElementById('ov-claude-bar').style.background = color;
   }
 
   updateFooter(data);
@@ -1271,6 +1334,86 @@ function updateZaiBar(dim, pct) {
   const color = pct > 80 ? 'var(--red)' : pct > 50 ? 'var(--yellow)' : 'var(--zai-color)';
   bar.style.background = color;
   pctEl.style.color = pct > 80 ? 'var(--red)' : pct > 50 ? 'var(--yellow)' : 'var(--text)';
+}
+
+// ── Render Claude Detail ────────────────────────────────────────────────────
+
+function fmtReset(ts) {
+  if (!ts || ts <= 0) return '';
+  return '→ ' + new Date(ts).toLocaleString('zh-CN', {
+    month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+  });
+}
+
+function claudeRow(label, pct, resetTs) {
+  const color = pct > 80 ? 'var(--red)' : pct > 50 ? 'var(--yellow)' : 'var(--claude-color)';
+  const pctColor = pct > 80 ? 'var(--red)' : pct > 50 ? 'var(--yellow)' : 'var(--text)';
+  const row = document.createElement('div');
+  row.className = 'zai-row';
+  row.innerHTML =
+    `<span class="zai-label">${label}</span>` +
+    `<div class="zai-bar-wrap"><div class="zai-bar" style="width:${Math.min(100, pct)}%;background:${color}"></div></div>` +
+    `<span class="zai-pct" style="color:${pctColor}">${pct}%</span>` +
+    `<span class="zai-extra">${fmtReset(resetTs)}</span>`;
+  return row;
+}
+
+function renderClaude(data, history) {
+  const noKey = document.getElementById('claude-no-key');
+  const content = document.getElementById('claude-content');
+
+  if (data.status?.status === 'no_key') {
+    noKey.style.display = 'block';
+    content.style.display = 'none';
+    return;
+  }
+  noKey.style.display = 'none';
+  content.style.display = 'block';
+
+  const q = data.quota;
+  const box = document.getElementById('claude-quotas');
+  box.innerHTML = '';
+  if (q) {
+    box.appendChild(claudeRow('5h 窗口', q.five_h_pct, q.five_h_reset));
+    box.appendChild(claudeRow('7d 窗口', q.seven_d_pct, q.seven_d_reset));
+    for (const l of (q.extra || [])) {
+      box.appendChild(claudeRow(l.label, l.pct, l.reset_ts));
+    }
+  }
+
+  // History chart (5h / 7d utilization over 24h)
+  if (!claudeHistoryChart || !history || history.length === 0) return;
+
+  const isDark = document.documentElement.getAttribute('data-theme') !== 'light';
+  const textColor = isDark ? '#8b949e' : '#656d76';
+  const splitColor = isDark ? '#21262d' : '#eaeef2';
+
+  claudeHistoryChart.setOption({
+    backgroundColor: 'transparent',
+    textStyle: { color: textColor, fontFamily: 'Cascadia Code, Consolas, monospace' },
+    tooltip: {
+      trigger: 'axis',
+      backgroundColor: isDark ? '#21262d' : '#f6f8fa',
+      borderColor: isDark ? '#30363d' : '#d0d7de',
+      textStyle: { color: isDark ? '#e6edf3' : '#1f2328', fontSize: 12 },
+      formatter: params => {
+        const t = new Date(params[0].value[0]).toLocaleTimeString();
+        let s = `<div style="color:${textColor};font-size:10px">${t}</div>`;
+        for (const p of params) {
+          s += `${p.marker} ${p.seriesName}: <b>${p.value[1]}%</b><br/>`;
+        }
+        return s;
+      },
+    },
+    legend: { data: ['5h', '7d'], textStyle: { color: textColor, fontSize: 10 }, top: 0 },
+    grid: { left: 50, right: 20, top: 30, bottom: 30 },
+    xAxis: { type: 'time', axisLine: { lineStyle: { color: splitColor } }, axisLabel: { color: textColor, fontSize: 10 }, splitLine: { show: false } },
+    yAxis: { type: 'value', name: '%', max: 100, nameTextStyle: { color: textColor, fontSize: 10 }, axisLine: { show: false }, axisLabel: { color: textColor, fontSize: 10 }, splitLine: { lineStyle: { color: splitColor } } },
+    series: [
+      { name: '5h', type: 'line', smooth: true, symbol: 'none', lineStyle: { width: 2 }, itemStyle: { color: '#d97757' }, data: history.map(h => [h.timestamp, h.five_h_pct]) },
+      { name: '7d', type: 'line', smooth: true, symbol: 'none', lineStyle: { width: 2 }, itemStyle: { color: '#e8a87c' }, data: history.map(h => [h.timestamp, h.seven_d_pct]) },
+    ],
+  }, { notMerge: true });
 }
 
 // ── MiniMax Rendering (unchanged) ───────────────────────────────────────────
@@ -1525,8 +1668,9 @@ function updateFooter(data) {
   const mmxTs = data?.minimax?.status?.lastTs ? new Date(data.minimax.status.lastTs).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : '--';
   const dsTs = data?.deepseek?.status?.lastTs ? new Date(data.deepseek.status.lastTs).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : '--';
   const zaiTs = data?.zai?.status?.lastTs ? new Date(data.zai.status.lastTs).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : '--';
+  const ccTs = data?.claude?.status?.lastTs ? new Date(data.claude.status.lastTs).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : '--';
   document.getElementById('footer').textContent =
-    `最后更新: ${now}  ·  MMX ${mmxTs}  ·  DS ${dsTs}  ·  ZAI ${zaiTs}`;
+    `最后更新: ${now}  ·  MMX ${mmxTs}  ·  DS ${dsTs}  ·  ZAI ${zaiTs}  ·  CC ${ccTs}`;
 }
 
 // ── Boot ─────────────────────────────────────────────────────────────────────

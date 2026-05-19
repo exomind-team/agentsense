@@ -1,6 +1,7 @@
 use rusqlite::{params, Connection};
 use std::path::Path;
 
+use super::claude::{ClaudeLimit, ClaudeSnapshot};
 use super::deepseek::DeepSeekSnapshot;
 use super::minimax::MinimaxSnapshot;
 use super::zai::ZaiSnapshot;
@@ -58,6 +59,17 @@ impl QuotaDb {
                 mcp_total       INTEGER NOT NULL DEFAULT 0
             );
             CREATE INDEX IF NOT EXISTS idx_zai_ts ON zai_quota_log(ts);
+
+            CREATE TABLE IF NOT EXISTS claude_quota_log (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts              INTEGER NOT NULL,
+                five_h_pct      INTEGER NOT NULL,
+                five_h_reset    INTEGER NOT NULL DEFAULT 0,
+                seven_d_pct     INTEGER NOT NULL,
+                seven_d_reset   INTEGER NOT NULL DEFAULT 0,
+                extra_json      TEXT NOT NULL DEFAULT '[]'
+            );
+            CREATE INDEX IF NOT EXISTS idx_claude_ts ON claude_quota_log(ts);
             ",
         )?;
         Ok(())
@@ -92,6 +104,62 @@ impl QuotaDb {
             params![snap.timestamp, snap.token_5h_pct, snap.token_week_pct, snap.mcp_month_pct, snap.mcp_used, snap.mcp_total],
         )?;
         Ok(())
+    }
+
+    pub fn insert_claude(&self, snap: &ClaudeSnapshot) -> Result<(), AgentSenseError> {
+        let extra_json = serde_json::to_string(&snap.extra).unwrap_or_else(|_| "[]".into());
+        self.conn.execute(
+            "INSERT INTO claude_quota_log (ts, five_h_pct, five_h_reset, seven_d_pct, seven_d_reset, extra_json)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                snap.timestamp,
+                snap.five_h_pct,
+                snap.five_h_reset,
+                snap.seven_d_pct,
+                snap.seven_d_reset,
+                extra_json
+            ],
+        )?;
+        Ok(())
+    }
+
+    fn row_to_claude(row: &rusqlite::Row) -> rusqlite::Result<ClaudeSnapshot> {
+        let extra_json: String = row.get(5)?;
+        let extra: Vec<ClaudeLimit> = serde_json::from_str(&extra_json).unwrap_or_default();
+        Ok(ClaudeSnapshot {
+            timestamp: row.get(0)?,
+            five_h_pct: row.get(1)?,
+            five_h_reset: row.get(2)?,
+            seven_d_pct: row.get(3)?,
+            seven_d_reset: row.get(4)?,
+            extra,
+        })
+    }
+
+    pub fn latest_claude(&self) -> Result<Option<ClaudeSnapshot>, AgentSenseError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT ts, five_h_pct, five_h_reset, seven_d_pct, seven_d_reset, extra_json
+             FROM claude_quota_log ORDER BY ts DESC LIMIT 1",
+        )?;
+        let row = stmt.query_row([], Self::row_to_claude);
+        match row {
+            Ok(snap) => Ok(Some(snap)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(AgentSenseError::Database(e.to_string())),
+        }
+    }
+
+    pub fn claude_history(&self, hours: u64) -> Result<Vec<ClaudeSnapshot>, AgentSenseError> {
+        let now = chrono::Utc::now().timestamp_millis();
+        let cutoff = now - (hours as i64) * 60 * 60 * 1000;
+        let mut stmt = self.conn.prepare(
+            "SELECT ts, five_h_pct, five_h_reset, seven_d_pct, seven_d_reset, extra_json
+             FROM claude_quota_log WHERE ts >= ?1 ORDER BY ts",
+        )?;
+        let rows = stmt
+            .query_map(params![cutoff], Self::row_to_claude)?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
     }
 
     pub fn latest_deepseek(&self) -> Result<Option<DeepSeekSnapshot>, AgentSenseError> {

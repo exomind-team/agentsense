@@ -142,6 +142,52 @@ fn display_results(result: &agentsense::quota::FetchResult) {
     }
 
     println!();
+
+    // Claude (Anthropic OAuth subscription)
+    match &result.claude {
+        Some(Ok(snap)) => {
+            let ts = format_ts(snap.timestamp);
+            println!("  \x1b[32m\u{25cf}\x1b[0m Claude \x1b[2m({ts})\x1b[0m");
+            let r5 = if snap.five_h_reset > 0 {
+                format!("  \x1b[2m\u{2192}{}\x1b[0m", format_ts(snap.five_h_reset))
+            } else {
+                String::new()
+            };
+            let r7 = if snap.seven_d_reset > 0 {
+                format!("  \x1b[2m\u{2192}{}\x1b[0m", format_ts(snap.seven_d_reset))
+            } else {
+                String::new()
+            };
+            println!(
+                "    5h:    {:>5}% {}{}",
+                snap.five_h_pct,
+                progress_bar(snap.five_h_pct, 20),
+                r5
+            );
+            println!(
+                "    7d:    {:>5}% {}{}",
+                snap.seven_d_pct,
+                progress_bar(snap.seven_d_pct, 20),
+                r7
+            );
+            for l in &snap.extra {
+                println!(
+                    "    {:<6} {:>5}% {}",
+                    l.label,
+                    l.pct,
+                    progress_bar(l.pct, 20)
+                );
+            }
+        }
+        Some(Err(e)) => {
+            println!("  \x1b[31m\u{25cf}\x1b[0m Claude \x1b[31m\u{2717}\x1b[0m {e}");
+        }
+        None => {
+            println!("  \x1b[2m\u{25cb}\x1b[0m Claude \u{2014} not configured");
+        }
+    }
+
+    println!();
 }
 
 #[tokio::main]

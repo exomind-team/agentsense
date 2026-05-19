@@ -1,7 +1,10 @@
+pub mod claude;
 pub mod db;
 pub mod deepseek;
 pub mod minimax;
 pub mod zai;
+
+use std::path::PathBuf;
 
 use crate::config::QuotaConfig;
 use crate::error::AgentSenseError;
@@ -14,12 +17,14 @@ pub struct QuotaOrchestrator {
     minimax_key: Option<String>,
     deepseek_key: Option<String>,
     zai_token: Option<String>,
+    claude_creds: Option<PathBuf>,
 }
 
 pub struct FetchResult {
     pub minimax: Option<Result<minimax::MinimaxSnapshot, AgentSenseError>>,
     pub deepseek: Option<Result<deepseek::DeepSeekSnapshot, AgentSenseError>>,
     pub zai: Option<Result<zai::ZaiSnapshot, AgentSenseError>>,
+    pub claude: Option<Result<claude::ClaudeSnapshot, AgentSenseError>>,
 }
 
 impl QuotaOrchestrator {
@@ -41,6 +46,7 @@ impl QuotaOrchestrator {
             minimax_key: config.minimax_key(),
             deepseek_key: config.deepseek_key(),
             zai_token: config.zai_token(),
+            claude_creds: config.claude_creds_path(),
         })
     }
 
@@ -89,6 +95,20 @@ impl QuotaOrchestrator {
             None
         };
 
+        let claude = if let Some(ref path) = self.claude_creds {
+            let path = path.clone();
+            let client = self.client.clone();
+            Some(
+                tokio::spawn(async move { claude::fetch_with_creds(&client, &path).await })
+                    .await
+                    .unwrap_or_else(|e| {
+                        Err(AgentSenseError::Http(format!("Claude task panicked: {e}")))
+                    }),
+            )
+        } else {
+            None
+        };
+
         // Persist to DB
         if let Some(Ok(ref snap)) = mmx {
             let _ = self.db.insert_minimax(snap);
@@ -99,11 +119,15 @@ impl QuotaOrchestrator {
         if let Some(Ok(ref snap)) = zai {
             let _ = self.db.insert_zai(snap);
         }
+        if let Some(Ok(ref snap)) = claude {
+            let _ = self.db.insert_claude(snap);
+        }
 
         FetchResult {
             minimax: mmx,
             deepseek: ds,
             zai,
+            claude,
         }
     }
 

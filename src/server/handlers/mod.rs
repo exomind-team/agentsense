@@ -33,6 +33,12 @@ pub async fn api_all(State(state): State<Arc<AppState>>) -> axum::Json<serde_jso
         zai_quota.as_ref().map(|s| s.timestamp),
     );
 
+    let claude_quota = db.latest_claude().unwrap_or_default();
+    let claude_status = provider_status(
+        state.claude_creds.read().await.is_some(),
+        claude_quota.as_ref().map(|s| s.timestamp),
+    );
+
     drop(db);
 
     let mut mmx_models_json = Vec::new();
@@ -50,6 +56,7 @@ pub async fn api_all(State(state): State<Arc<AppState>>) -> axum::Json<serde_jso
         "minimax": { "models": mmx_models_json, "status": mmx_status },
         "deepseek": { "balance": ds_balance, "status": ds_status },
         "zai": { "quota": zai_quota, "status": zai_status },
+        "claude": { "quota": claude_quota, "status": claude_status },
         "_nextPoll": state.next_poll.load(std::sync::atomic::Ordering::Relaxed),
     }))
 }
@@ -178,6 +185,35 @@ pub async fn api_zai_history(
     axum::Json(serde_json::json!(history))
 }
 
+pub async fn api_claude(
+    State(state): State<Arc<AppState>>,
+) -> axum::Json<serde_json::Value> {
+    let db = state.db.lock().await;
+    let quota = db.latest_claude().unwrap_or_default();
+    drop(db);
+
+    let status = provider_status(
+        state.claude_creds.read().await.is_some(),
+        quota.as_ref().map(|s| s.timestamp),
+    );
+
+    axum::Json(serde_json::json!({
+        "quota": quota,
+        "status": status,
+    }))
+}
+
+pub async fn api_claude_history(
+    State(state): State<Arc<AppState>>,
+    Query(q): Query<HoursQuery>,
+) -> axum::Json<serde_json::Value> {
+    let hours = q.hours.unwrap_or(24);
+    let db = state.db.lock().await;
+    let history = db.claude_history(hours).unwrap_or_default();
+    drop(db);
+    axum::Json(serde_json::json!(history))
+}
+
 pub async fn api_config_get(
     State(state): State<Arc<AppState>>,
 ) -> axum::Json<serde_json::Value> {
@@ -192,6 +228,7 @@ pub async fn api_config_get(
     let mmx = state.minimax_key.read().await;
     let ds = state.deepseek_key.read().await;
     let zai = state.zai_token.read().await;
+    let claude = state.claude_creds.read().await;
 
     axum::Json(serde_json::json!({
         "minimax_api_key": mask(&mmx),
@@ -200,6 +237,8 @@ pub async fn api_config_get(
         "minimax_configured": mmx.is_some(),
         "deepseek_configured": ds.is_some(),
         "zai_configured": zai.is_some(),
+        "claude_configured": claude.is_some(),
+        "claude_creds_path": claude.as_ref().map(|p| p.display().to_string()),
     }))
 }
 
@@ -324,7 +363,7 @@ fn tools_list_json(id: &Option<serde_json::Value>) -> serde_json::Value {
         tool_def("epub_read_chapter","Read EPUB chapter by number",&[("path","string","EPUB path"),("chapter","integer","Chapter number")]),
         tool_def("epub_toc","Get EPUB table of contents",&[("path","string","EPUB path")]),
         tool_def("epub_read_section","Read EPUB section by TOC title",&[("path","string","EPUB path"),("title","string","Section title")]),
-        tool_def("quota_status","Get AI quota for MiniMax/DeepSeek/Z.AI",&[]),
+        tool_def("quota_status","Get AI quota for MiniMax/DeepSeek/Z.AI/Claude",&[]),
     ];
     serde_json::json!({"jsonrpc":"2.0","id":id,"result":{"tools":tools}})
 }
@@ -537,6 +576,12 @@ async fn tool_quota_status() -> String {
     });}
     if let Some(Ok(s))=&r.zai{json["zai"]=serde_json::json!({
         "token_5h_pct":s.token_5h_pct,"token_week_pct":s.token_week_pct,"mcp_month_pct":s.mcp_month_pct
+    });}
+    if let Some(Ok(s))=&r.claude{json["claude"]=serde_json::json!({
+        "five_h_pct":s.five_h_pct,"seven_d_pct":s.seven_d_pct,
+        "extra":s.extra.iter().map(|l|serde_json::json!({
+            "label":l.label,"pct":l.pct
+        })).collect::<Vec<_>>()
     });}
     to_json(&json)
 }

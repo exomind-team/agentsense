@@ -15,6 +15,7 @@ pub struct AppState {
     pub minimax_key: Arc<tokio::sync::RwLock<Option<String>>>,
     pub deepseek_key: Arc<tokio::sync::RwLock<Option<String>>>,
     pub zai_token: Arc<tokio::sync::RwLock<Option<String>>>,
+    pub claude_creds: Arc<tokio::sync::RwLock<Option<PathBuf>>>,
     pub next_poll: Arc<AtomicI64>,
     pub poll_interval_secs: u64,
     pub config_path: PathBuf,
@@ -35,6 +36,8 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
         .route("/api/deepseek/history", get(handlers::api_deepseek_history))
         .route("/api/zai", get(handlers::api_zai))
         .route("/api/zai/history", get(handlers::api_zai_history))
+        .route("/api/claude", get(handlers::api_claude))
+        .route("/api/claude/history", get(handlers::api_claude_history))
         .route(
             "/api/config",
             get(handlers::api_config_get).put(handlers::api_config_put),
@@ -64,6 +67,7 @@ pub async fn serve(
         minimax_key: Arc::new(tokio::sync::RwLock::new(config.minimax_key())),
         deepseek_key: Arc::new(tokio::sync::RwLock::new(config.deepseek_key())),
         zai_token: Arc::new(tokio::sync::RwLock::new(config.zai_token())),
+        claude_creds: Arc::new(tokio::sync::RwLock::new(config.claude_creds_path())),
         next_poll: Arc::new(AtomicI64::new(0)),
         poll_interval_secs: config.poll_interval_secs,
         config_path,
@@ -90,6 +94,16 @@ pub async fn serve(
         state.minimax_key.read().await.is_some(),
         state.deepseek_key.read().await.is_some(),
         state.zai_token.read().await.is_some(),
+    );
+    println!(
+        "  Claude:    {}",
+        state
+            .claude_creds
+            .read()
+            .await
+            .as_ref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "disabled".into())
     );
 
     axum::serve(listener, app)
@@ -143,6 +157,22 @@ pub async fn do_poll(state: Arc<AppState>) {
         None
     };
 
+    let claude_path = state.claude_creds.read().await.clone();
+    let claude = if let Some(path) = claude_path {
+        let client = state.client.clone();
+        Some(
+            tokio::spawn(async move {
+                crate::quota::claude::fetch_with_creds(&client, &path).await
+            })
+            .await
+            .unwrap_or_else(|e| {
+                Err(AgentSenseError::Http(format!("Claude task panicked: {e}")))
+            }),
+        )
+    } else {
+        None
+    };
+
     let db = state.db.lock().await;
     if let Some(Ok(ref snap)) = mmx {
         let _ = db.insert_minimax(snap);
@@ -152,6 +182,9 @@ pub async fn do_poll(state: Arc<AppState>) {
     }
     if let Some(Ok(ref snap)) = zai {
         let _ = db.insert_zai(snap);
+    }
+    if let Some(Ok(ref snap)) = claude {
+        let _ = db.insert_claude(snap);
     }
     drop(db);
 

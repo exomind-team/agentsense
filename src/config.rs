@@ -17,6 +17,7 @@ pub struct QuotaConfig {
     pub deepseek: Option<KeyConfig>,
     #[serde(rename = "zai")]
     pub zai: Option<ZaiKeyConfig>,
+    pub claude: Option<ClaudeConfig>,
 }
 
 impl Default for QuotaConfig {
@@ -28,8 +29,17 @@ impl Default for QuotaConfig {
             minimax: None,
             deepseek: None,
             zai: None,
+            claude: None,
         }
     }
+}
+
+/// Claude reuses Claude Code's OAuth credentials file instead of an API key.
+/// Default: enabled whenever the credentials file exists.
+#[derive(Debug, Deserialize, Serialize, Default)]
+pub struct ClaudeConfig {
+    pub enabled: Option<bool>,
+    pub credentials_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -86,6 +96,19 @@ impl QuotaConfig {
         self.zai
             .as_ref()
             .and_then(|c| resolve_key(&c.auth_token, &c.auth_token_env))
+    }
+
+    /// Resolved credentials path when Claude monitoring is active, else None.
+    /// Active = not explicitly disabled AND the credentials file exists.
+    pub fn claude_creds_path(&self) -> Option<PathBuf> {
+        let cfg = self.claude.as_ref();
+        if matches!(cfg.and_then(|c| c.enabled), Some(false)) {
+            return None;
+        }
+        let path = crate::quota::claude::credentials_path(
+            &cfg.and_then(|c| c.credentials_path.clone()),
+        );
+        path.exists().then_some(path)
     }
 }
 
