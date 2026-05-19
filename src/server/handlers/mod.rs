@@ -275,23 +275,21 @@ pub async fn api_config_put(
     let ds = state.deepseek_key.read().await;
     let zai = state.zai_token.read().await;
 
-    let config = crate::config::AppConfig {
-        quota: crate::config::QuotaConfig {
-            minimax: Some(crate::config::KeyConfig {
-                api_key: mmx.clone(),
-                api_key_env: None,
-            }),
-            deepseek: Some(crate::config::KeyConfig {
-                api_key: ds.clone(),
-                api_key_env: None,
-            }),
-            zai: Some(crate::config::ZaiKeyConfig {
-                auth_token: zai.clone(),
-                auth_token_env: None,
-            }),
-            ..Default::default()
-        },
-    };
+    let mut config =
+        crate::AppConfig::load(&state.config_path).unwrap_or_default();
+
+    config.quota.minimax = Some(crate::config::KeyConfig {
+        api_key: mmx.clone(),
+        api_key_env: None,
+    });
+    config.quota.deepseek = Some(crate::config::KeyConfig {
+        api_key: ds.clone(),
+        api_key_env: None,
+    });
+    config.quota.zai = Some(crate::config::ZaiKeyConfig {
+        auth_token: zai.clone(),
+        auth_token_env: None,
+    });
 
     let toml_str = toml::to_string_pretty(&config).unwrap_or_default();
     let _ = std::fs::write(&state.config_path, toml_str);
@@ -559,30 +557,52 @@ async fn tool_epub_read_section(args: &serde_json::Value) -> String {
 }
 
 async fn tool_quota_status() -> String {
-    let config = crate::AppConfig::load(&std::path::PathBuf::from("config.toml")).unwrap_or_default();
-    let orch = match crate::quota::QuotaOrchestrator::new(&config.quota) {
-        Ok(o)=>o, Err(e)=>return e.to_string(),
+    let db_path = std::path::Path::new("quota.db");
+    let db = match crate::quota::db::QuotaDb::open(db_path) {
+        Ok(d) => d,
+        Err(e) => return format!("quota db error: {e}"),
     };
-    let r = orch.fetch_all().await;
+
     let mut json = serde_json::json!({});
-    if let Some(Ok(s))=&r.minimax{json["minimax"]=serde_json::json!({
-        "models":s.models.iter().map(|m|serde_json::json!({
-            "name":m.name,"interval_remaining":m.interval_total-m.interval_usage,
-            "interval_total":m.interval_total,"weekly_remaining":m.weekly_total-m.weekly_usage,"weekly_total":m.weekly_total
-        })).collect::<Vec<_>>()});
+
+    if let Ok((_, models)) = db.latest_minimax_with_ts() {
+        json["minimax"] = serde_json::json!({
+            "models": models.iter().map(|m| serde_json::json!({
+                "name": m.name,
+                "interval_remaining": m.interval_total - m.interval_usage,
+                "interval_total": m.interval_total,
+                "weekly_remaining": m.weekly_total - m.weekly_usage,
+                "weekly_total": m.weekly_total,
+            })).collect::<Vec<_>>()
+        });
     }
-    if let Some(Ok(s))=&r.deepseek{json["deepseek"]=serde_json::json!({
-        "balance_cny":s.total_balance_cny,"balance_usd":s.total_balance_usd
-    });}
-    if let Some(Ok(s))=&r.zai{json["zai"]=serde_json::json!({
-        "token_5h_pct":s.token_5h_pct,"token_week_pct":s.token_week_pct,"mcp_month_pct":s.mcp_month_pct
-    });}
-    if let Some(Ok(s))=&r.claude{json["claude"]=serde_json::json!({
-        "five_h_pct":s.five_h_pct,"seven_d_pct":s.seven_d_pct,
-        "extra":s.extra.iter().map(|l|serde_json::json!({
-            "label":l.label,"pct":l.pct
-        })).collect::<Vec<_>>()
-    });}
+
+    if let Ok(Some(s)) = db.latest_deepseek() {
+        json["deepseek"] = serde_json::json!({
+            "balance_cny": s.total_balance_cny,
+            "balance_usd": s.total_balance_usd,
+        });
+    }
+
+    if let Ok(Some(s)) = db.latest_zai() {
+        json["zai"] = serde_json::json!({
+            "token_5h_pct": s.token_5h_pct,
+            "token_week_pct": s.token_week_pct,
+            "mcp_month_pct": s.mcp_month_pct,
+        });
+    }
+
+    if let Ok(Some(s)) = db.latest_claude() {
+        json["claude"] = serde_json::json!({
+            "five_h_pct": s.five_h_pct,
+            "seven_d_pct": s.seven_d_pct,
+            "extra": s.extra.iter().map(|l| serde_json::json!({
+                "label": l.label,
+                "pct": l.pct,
+            })).collect::<Vec<_>>(),
+        });
+    }
+
     to_json(&json)
 }
 

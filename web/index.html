@@ -1153,7 +1153,11 @@ function renderOverview(data) {
   const mmxStatus = statusText(data.minimax?.status);
   document.getElementById('ov-minimax-status').textContent = mmxStatus.text;
   document.getElementById('ov-minimax-status').className = 'ov-status ' + mmxStatus.cls;
-  if (mmxM) {
+  if (mmxStatus.cls === 'no_key') {
+    document.getElementById('ov-minimax-value').textContent = '--';
+    document.getElementById('ov-minimax-sub').textContent = '未配置';
+    document.getElementById('ov-minimax-bar').style.width = '0%';
+  } else if (mmxM) {
     const intervalTotal = mmxM.current_interval_total_count;
     const intervalUsed = mmxM.current_interval_usage_count;
     const remainPct = intervalTotal > 0 ? ((1 - intervalUsed / intervalTotal) * 100) : 0;
@@ -1168,39 +1172,56 @@ function renderOverview(data) {
   const dsStatus = statusText(data.deepseek?.status);
   document.getElementById('ov-deepseek-status').textContent = dsStatus.text;
   document.getElementById('ov-deepseek-status').className = 'ov-status ' + dsStatus.cls;
-  const dsBal = data.deepseek?.balance;
-  if (dsBal) {
-    document.getElementById('ov-deepseek-value').textContent = '¥' + dsBal.total_balance_cny.toFixed(2);
-    document.getElementById('ov-deepseek-sub').textContent =
-      '赠送 ¥' + dsBal.granted_cny.toFixed(2) + ' + 充值 ¥' + dsBal.topped_up_cny.toFixed(2);
+  if (dsStatus.cls === 'no_key') {
+    document.getElementById('ov-deepseek-value').textContent = '--';
+    document.getElementById('ov-deepseek-sub').textContent = '未配置';
+  } else {
+    const dsBal = data.deepseek?.balance;
+    if (dsBal) {
+      document.getElementById('ov-deepseek-value').textContent = '¥' + dsBal.total_balance_cny.toFixed(2);
+      document.getElementById('ov-deepseek-sub').textContent =
+        '赠送 ¥' + dsBal.granted_cny.toFixed(2) + ' + 充值 ¥' + dsBal.topped_up_cny.toFixed(2);
+    }
   }
 
   // Z.AI
   const zaiStatus = statusText(data.zai?.status);
   document.getElementById('ov-zai-status').textContent = zaiStatus.text;
   document.getElementById('ov-zai-status').className = 'ov-status ' + zaiStatus.cls;
-  const zaiQ = data.zai?.quota;
-  if (zaiQ) {
-    const remain5h = 100 - zaiQ.token_5h_pct;
-    document.getElementById('ov-zai-value').textContent = remain5h + '%';
-    document.getElementById('ov-zai-sub').textContent = `5h 已用 ${zaiQ.token_5h_pct}% · 周 ${zaiQ.token_week_pct}%`;
-    document.getElementById('ov-zai-bar').style.width = Math.min(100, remain5h) + '%';
-    const color = remain5h < 20 ? 'var(--red)' : remain5h < 40 ? 'var(--yellow)' : 'var(--zai-color)';
-    document.getElementById('ov-zai-bar').style.background = color;
+  if (zaiStatus.cls === 'no_key') {
+    document.getElementById('ov-zai-value').textContent = '--';
+    document.getElementById('ov-zai-sub').textContent = '未配置';
+    document.getElementById('ov-zai-bar').style.width = '0%';
+  } else {
+    const zaiQ = data.zai?.quota;
+    if (zaiQ) {
+      const remain5h = 100 - zaiQ.token_5h_pct;
+      document.getElementById('ov-zai-value').textContent = remain5h + '%';
+      document.getElementById('ov-zai-sub').textContent = `5h 已用 ${zaiQ.token_5h_pct}% · 周 ${zaiQ.token_week_pct}%`;
+      document.getElementById('ov-zai-bar').style.width = Math.min(100, remain5h) + '%';
+      const color = remain5h < 20 ? 'var(--red)' : remain5h < 40 ? 'var(--yellow)' : 'var(--zai-color)';
+      document.getElementById('ov-zai-bar').style.background = color;
+    }
   }
 
   // Claude
   const claudeStatus = statusText(data.claude?.status);
   document.getElementById('ov-claude-status').textContent = claudeStatus.text;
   document.getElementById('ov-claude-status').className = 'ov-status ' + claudeStatus.cls;
-  const cQ = data.claude?.quota;
-  if (cQ) {
-    const remain5h = 100 - cQ.five_h_pct;
-    document.getElementById('ov-claude-value').textContent = remain5h + '%';
-    document.getElementById('ov-claude-sub').textContent = `5h 已用 ${cQ.five_h_pct}% · 7d ${cQ.seven_d_pct}%`;
-    document.getElementById('ov-claude-bar').style.width = Math.min(100, remain5h) + '%';
-    const color = remain5h < 20 ? 'var(--red)' : remain5h < 40 ? 'var(--yellow)' : 'var(--claude-color)';
-    document.getElementById('ov-claude-bar').style.background = color;
+  if (claudeStatus.cls === 'no_key') {
+    document.getElementById('ov-claude-value').textContent = '--';
+    document.getElementById('ov-claude-sub').textContent = '未配置';
+    document.getElementById('ov-claude-bar').style.width = '0%';
+  } else {
+    const cQ = data.claude?.quota;
+    if (cQ) {
+      const remain5h = 100 - cQ.five_h_pct;
+      document.getElementById('ov-claude-value').textContent = remain5h + '%';
+      document.getElementById('ov-claude-sub').textContent = `5h 已用 ${cQ.five_h_pct}% · 7d ${cQ.seven_d_pct}%`;
+      document.getElementById('ov-claude-bar').style.width = Math.min(100, remain5h) + '%';
+      const color = remain5h < 20 ? 'var(--red)' : remain5h < 40 ? 'var(--yellow)' : 'var(--claude-color)';
+      document.getElementById('ov-claude-bar').style.background = color;
+    }
   }
 
   updateFooter(data);
@@ -1534,8 +1555,8 @@ function buildCardHTML(m, subtitle) {
 
   return `
     <div class="model-card">
-      <div class="model-name">${getDisplayName(m.model_name)}</div>
-      ${subtitle ? `<div class="shared-quota-hint">${subtitle}</div>` : ''}
+      <div class="model-name">${escapeHtml(getDisplayName(m.model_name))}</div>
+      ${subtitle ? `<div class="shared-quota-hint">${escapeHtml(subtitle)}</div>` : ''}
       <div class="quota-row">
         <span class="quota-label">5h窗口</span>
         <div class="progress-wrap">
@@ -1599,7 +1620,7 @@ function renderTable() {
     const badge = (pct) => `<span class="pct-badge ${pctColor(pct)}">${pct.toFixed(1)}%</span>`;
 
     return `<tr>
-      <td>${getDisplayName(m.model_name)}</td>
+      <td>${escapeHtml(getDisplayName(m.model_name))}</td>
       <td>${m.current_interval_usage_count.toLocaleString()}</td>
       <td>${intervalLeft.toLocaleString()}</td>
       <td>${formatDuration(m.remains_time)}</td>
@@ -1651,6 +1672,12 @@ function updateChart(history) {
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
+
+function escapeHtml(str) {
+  const d = document.createElement('div');
+  d.textContent = str;
+  return d.innerHTML;
+}
 
 function formatDuration(ms) {
   if (!ms || ms <= 0) return '已重置';
