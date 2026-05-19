@@ -22,7 +22,7 @@
       --selection-bg: #264f78;
       --mmx-color: #388bfd;
       --ds-color: #4f8ff7;
-      --zai-color: #22d3ee;
+      --zai-color: #de2910;
       --claude-color: #d97757;
     }
 
@@ -42,7 +42,7 @@
       --selection-bg: #b6d6f0;
       --mmx-color: #0969da;
       --ds-color: #1d4ed8;
-      --zai-color: #0891b2;
+      --zai-color: #c4190c;
       --claude-color: #bd5d3a;
     }
 
@@ -663,7 +663,7 @@
   <div class="overview-card" id="ov-zai">
     <div class="ov-header">
       <span class="ov-dot zai"></span>
-      <span class="ov-label">GLM 🇨🇳</span>
+      <span class="ov-label">GLM</span>
       <span class="ov-status" id="ov-zai-status">--</span>
     </div>
     <div class="ov-value" id="ov-zai-value">--</div>
@@ -686,7 +686,7 @@
 <div class="service-tabs">
   <button class="service-tab active" data-service="minimax">MiniMax 🌐</button>
   <button class="service-tab" data-service="deepseek">DeepSeek</button>
-  <button class="service-tab" data-service="zai">GLM 🇨🇳</button>
+  <button class="service-tab" data-service="zai">GLM</button>
   <button class="service-tab" data-service="claude">Claude</button>
 </div>
 
@@ -1697,7 +1697,7 @@ function updateFooter(data) {
   const zaiTs = data?.zai?.status?.lastTs ? new Date(data.zai.status.lastTs).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : '--';
   const ccTs = data?.claude?.status?.lastTs ? new Date(data.claude.status.lastTs).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : '--';
   document.getElementById('footer').textContent =
-    `最后更新: ${now}  ·  MMX🌐 ${mmxTs}  ·  DS ${dsTs}  ·  GLM🇨🇳 ${zaiTs}  ·  CC ${ccTs}`;
+    `最后更新: ${now}  ·  MMX🌐 ${mmxTs}  ·  DS ${dsTs}  ·  GLM ${zaiTs}  ·  CC ${ccTs}`;
 }
 
 // ── Boot ─────────────────────────────────────────────────────────────────────
