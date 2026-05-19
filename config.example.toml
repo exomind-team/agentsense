@@ -14,5 +14,5 @@ api_key = "sk-xxxx"             # DeepSeek API Key
 # api_key_env = "DEEPSEEK_API_KEY"
 
 [quota.zai]
-auth_token = "xxxx"             # Z.AI Auth Token
-# auth_token_env = "ZAI_AUTH_TOKEN"
+# auth_token = "xxxx"             # GLM (智谱) Auth Token
+auth_token_env = "GLM_CN_TOKEN"   # or read from env var

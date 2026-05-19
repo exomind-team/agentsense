@@ -39,7 +39,7 @@ pub async fn fetch(
     auth_token: &str,
 ) -> Result<ZaiSnapshot, AgentSenseError> {
     let resp = client
-        .get("https://api.z.ai/api/monitor/usage/quota/limit")
+        .get("https://open.bigmodel.cn/api/monitor/usage/quota/limit")
         .header("Authorization", format!("Bearer {auth_token}"))
         .timeout(std::time::Duration::from_secs(15))
         .send()
