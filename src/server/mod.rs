@@ -1,14 +1,16 @@
 pub mod handlers;
 
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::Arc;
 
 #[cfg(feature = "psu")]
 use std::time::Instant;
 
 use crate::config::AppConfig;
 use crate::error::AgentSenseError;
+#[cfg(feature = "psu")]
+use crate::quota::db::PowerSampleRow;
 use crate::quota::db::QuotaDb;
 
 #[derive(Clone)]
@@ -24,8 +26,6 @@ pub struct AppState {
     pub config_path: PathBuf,
     #[cfg(feature = "psu")]
     pub psu: Arc<std::sync::Mutex<Option<wattson::PsuHandle>>>,
-    #[cfg(feature = "psu")]
-    pub psu_cost_wh: Arc<std::sync::Mutex<f64>>,
     #[cfg(feature = "psu")]
     pub psu_start: Instant,
     #[cfg(feature = "psu")]
@@ -63,9 +63,18 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
         .route("/api/thermal", get(handlers::psu::api_thermal))
         .route("/api/psu-cost", get(handlers::psu::api_psu_cost))
         .route("/api/power/history", get(handlers::psu::api_power_history))
-        .route("/api/fan/mode", axum::routing::post(handlers::psu::set_fan_mode))
-        .route("/api/fan/speed", axum::routing::post(handlers::psu::set_fan_speed))
-        .route("/api/fan/curve", axum::routing::post(handlers::psu::set_fan_curve));
+        .route(
+            "/api/fan/mode",
+            axum::routing::post(handlers::psu::set_fan_mode),
+        )
+        .route(
+            "/api/fan/speed",
+            axum::routing::post(handlers::psu::set_fan_speed),
+        )
+        .route(
+            "/api/fan/curve",
+            axum::routing::post(handlers::psu::set_fan_curve),
+        );
 
     router
         .layer(tower_http::cors::CorsLayer::permissive())
@@ -99,8 +108,6 @@ pub async fn serve(
         #[cfg(feature = "psu")]
         psu: Arc::new(std::sync::Mutex::new(None)),
         #[cfg(feature = "psu")]
-        psu_cost_wh: Arc::new(std::sync::Mutex::new(0.0)),
-        #[cfg(feature = "psu")]
         psu_start: Instant::now(),
         #[cfg(feature = "psu")]
         price_per_kwh: config.cost.price_per_kwh,
@@ -127,7 +134,7 @@ pub async fn serve(
                     *state.psu.lock().unwrap() = Some(handle);
                 }
                 Err(e) => {
-                    eprintln!("  PSU:       {} failed: {e}", serial_cfg.port);
+                    tracing::warn!(port = %serial_cfg.port, error = %e, "PSU init failed on port");
                 }
             }
         }
@@ -140,17 +147,27 @@ pub async fn serve(
         tokio::spawn(async move { poll_loop(loop_state).await });
     }
 
-    // Spawn power sampling background task
+    // Create shutdown channel shared between axum and the sampling loop.
+    // Fix A: watch channel carries the shutdown signal.
     #[cfg(feature = "psu")]
-    {
+    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+
+    // Spawn power sampling background task; capture the JoinHandle for a clean shutdown join.
+    #[cfg(feature = "psu")]
+    let sampling_task = {
         let sample_state = state.clone();
-        let sample_interval = config.serial.as_ref()
+        // Fix I: clamp sample_interval_ms to [50, 60_000] so interval is never 0.
+        let sample_interval = config
+            .serial
+            .as_ref()
             .map(|s| s.sample_interval_ms)
-            .unwrap_or(300);
+            .unwrap_or(300)
+            .clamp(50, 60_000);
+        let rx = shutdown_rx;
         tokio::spawn(async move {
-            power_sampling_loop(sample_state, sample_interval).await;
-        });
-    }
+            power_sampling_loop(sample_state, sample_interval, rx).await;
+        })
+    };
 
     let app = router(state.clone());
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{port}"))
@@ -178,9 +195,26 @@ pub async fn serve(
             .unwrap_or_else(|| "disabled".into())
     );
 
+    // Fix A: wire graceful shutdown — axum stops accepting after Ctrl-C.
     axum::serve(listener, app)
+        .with_graceful_shutdown(async {
+            let _ = tokio::signal::ctrl_c().await;
+        })
         .await
         .map_err(|e| AgentSenseError::Http(format!("server error: {e}")))?;
+
+    // Fix A: signal the sampling loop to flush and exit, then join it with a bounded timeout.
+    #[cfg(feature = "psu")]
+    {
+        let _ = shutdown_tx.send(true);
+        match tokio::time::timeout(std::time::Duration::from_secs(5), sampling_task).await {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => tracing::warn!(error = %e, "power sampling task join failed on shutdown"),
+            Err(_) => {
+                tracing::warn!("power sampling task did not finish its final flush within 5s")
+            }
+        }
+    }
 
     Ok(())
 }
@@ -209,7 +243,9 @@ pub async fn do_poll(state: Arc<AppState>) {
             tokio::spawn(async move { crate::quota::deepseek::fetch(&client, &key).await })
                 .await
                 .unwrap_or_else(|e| {
-                    Err(AgentSenseError::Http(format!("DeepSeek task panicked: {e}")))
+                    Err(AgentSenseError::Http(format!(
+                        "DeepSeek task panicked: {e}"
+                    )))
                 }),
         )
     } else {
@@ -221,9 +257,7 @@ pub async fn do_poll(state: Arc<AppState>) {
         Some(
             tokio::spawn(async move { crate::quota::zai::fetch(&client, &token).await })
                 .await
-                .unwrap_or_else(|e| {
-                    Err(AgentSenseError::Http(format!("Z.AI task panicked: {e}")))
-                }),
+                .unwrap_or_else(|e| Err(AgentSenseError::Http(format!("Z.AI task panicked: {e}")))),
         )
     } else {
         None
@@ -233,13 +267,11 @@ pub async fn do_poll(state: Arc<AppState>) {
     let claude = if let Some(path) = claude_path {
         let client = state.client.clone();
         Some(
-            tokio::spawn(async move {
-                crate::quota::claude::fetch_with_creds(&client, &path).await
-            })
+            tokio::spawn(
+                async move { crate::quota::claude::fetch_with_creds(&client, &path).await },
+            )
             .await
-            .unwrap_or_else(|e| {
-                Err(AgentSenseError::Http(format!("Claude task panicked: {e}")))
-            }),
+            .unwrap_or_else(|e| Err(AgentSenseError::Http(format!("Claude task panicked: {e}")))),
         )
     } else {
         None
@@ -260,8 +292,7 @@ pub async fn do_poll(state: Arc<AppState>) {
     }
     drop(db);
 
-    let next =
-        chrono::Utc::now().timestamp_millis() + (state.poll_interval_secs as i64) * 1000;
+    let next = chrono::Utc::now().timestamp_millis() + (state.poll_interval_secs as i64) * 1000;
     state.next_poll.store(next, Ordering::Relaxed);
 
     let ts = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
@@ -278,29 +309,46 @@ async fn poll_loop(state: Arc<AppState>) {
     }
 }
 
+/// High-water cap for the in-memory sample buffer (≈1h at 300 ms intervals).
+/// Fix B: oldest samples are dropped if the buffer exceeds this limit.
 #[cfg(feature = "psu")]
-async fn power_sampling_loop(state: Arc<AppState>, sample_interval_ms: u64) {
+const MAX_SAMPLE_BUFFER: usize = 1200;
+
+#[cfg(feature = "psu")]
+async fn power_sampling_loop(
+    state: Arc<AppState>,
+    sample_interval_ms: u64,
+    mut shutdown: tokio::sync::watch::Receiver<bool>,
+) {
     let batch_interval = std::time::Duration::from_secs(5);
-    let mut buffer: Vec<(i64, f64, Option<f64>, Option<f64>, Option<u32>)> = Vec::new();
+    let mut buffer: Vec<PowerSampleRow> = Vec::new();
     let mut interval = tokio::time::interval(std::time::Duration::from_millis(sample_interval_ms));
     let mut batch_timer = tokio::time::interval(batch_interval);
     loop {
         tokio::select! {
+            // Fix D: use try_lock so a slow fan command never stalls the worker.
             _ = interval.tick() => {
-                let guard = state.psu.lock().unwrap();
-                if let Some(handle) = guard.as_ref() {
-                    let snap = handle.latest();
-                    if snap.meta.connected && snap.meta.data_age_s < 5.0 {
-                        let ts = chrono::Utc::now().timestamp_millis();
-                        buffer.push((
-                            ts,
-                            snap.power.ac_input_w,
-                            Some(snap.power.dc_output_est_w),
-                            Some(snap.thermal.temp_main_c),
-                            Some(snap.fan.rpm),
-                        ));
+                if let Ok(guard) = state.psu.try_lock() {
+                    if let Some(handle) = guard.as_ref() {
+                        let snap = handle.latest();
+                        if snap.meta.connected && snap.meta.data_age_s < 5.0 {
+                            let ts = chrono::Utc::now().timestamp_millis();
+                            buffer.push((
+                                ts,
+                                snap.power.ac_input_w,
+                                Some(snap.power.dc_output_est_w),
+                                Some(snap.thermal.temp_main_c),
+                                Some(snap.fan.rpm),
+                            ));
+                            // Fix B: enforce high-water cap, dropping oldest entries.
+                            if buffer.len() > MAX_SAMPLE_BUFFER {
+                                let overflow = buffer.len() - MAX_SAMPLE_BUFFER;
+                                buffer.drain(0..overflow);
+                            }
+                        }
                     }
                 }
+                // If try_lock fails, skip this tick rather than blocking.
             }
             _ = batch_timer.tick() => {
                 if !buffer.is_empty() {
@@ -310,6 +358,19 @@ async fn power_sampling_loop(state: Arc<AppState>, sample_interval_ms: u64) {
                         }
                         buffer.clear();
                     }
+                }
+            }
+            // Fix A: shutdown branch — final flush then exit.
+            _ = shutdown.changed() => {
+                if *shutdown.borrow() {
+                    if !buffer.is_empty() {
+                        let db = state.db.lock().await;
+                        if let Err(e) = db.insert_power_batch(&buffer) {
+                            eprintln!("power sample final flush error: {e}");
+                        }
+                        buffer.clear();
+                    }
+                    break;
                 }
             }
         }

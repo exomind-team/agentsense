@@ -1,9 +1,9 @@
-use std::sync::Arc;
 use std::sync::atomic::AtomicI64;
+use std::sync::Arc;
 
 use agentsense::quota::db::QuotaDb;
-use agentsense::quota::minimax::{MinimaxSnapshot, ModelQuota};
 use agentsense::quota::deepseek::DeepSeekSnapshot;
+use agentsense::quota::minimax::{MinimaxSnapshot, ModelQuota};
 use agentsense::quota::zai::ZaiSnapshot;
 use agentsense::server::AppState;
 use axum::body::Body;
@@ -31,14 +31,16 @@ fn seed_db(db: &QuotaDb) {
                 weekly_total: 30000,
             },
         ],
-    }).expect("insert minimax");
+    })
+    .expect("insert minimax");
     db.insert_deepseek(&DeepSeekSnapshot {
         timestamp: now,
         total_balance_cny: 42.5,
         total_balance_usd: 5.8,
         granted_cny: 10.0,
         topped_up_cny: 32.5,
-    }).expect("insert deepseek");
+    })
+    .expect("insert deepseek");
     db.insert_zai(&ZaiSnapshot {
         timestamp: now,
         token_5h_pct: 35,
@@ -46,7 +48,8 @@ fn seed_db(db: &QuotaDb) {
         mcp_month_pct: 20,
         mcp_used: 100,
         mcp_total: 500,
-    }).expect("insert zai");
+    })
+    .expect("insert zai");
 }
 
 fn make_state_with_data() -> Arc<AppState> {
@@ -68,8 +71,6 @@ fn make_state_with_data() -> Arc<AppState> {
         config_path,
         #[cfg(feature = "psu")]
         psu: Arc::new(std::sync::Mutex::new(None)),
-        #[cfg(feature = "psu")]
-        psu_cost_wh: Arc::new(std::sync::Mutex::new(0.0)),
         #[cfg(feature = "psu")]
         psu_start: std::time::Instant::now(),
         #[cfg(feature = "psu")]
@@ -98,8 +99,6 @@ fn make_state_no_keys() -> Arc<AppState> {
         #[cfg(feature = "psu")]
         psu: Arc::new(std::sync::Mutex::new(None)),
         #[cfg(feature = "psu")]
-        psu_cost_wh: Arc::new(std::sync::Mutex::new(0.0)),
-        #[cfg(feature = "psu")]
         psu_start: std::time::Instant::now(),
         #[cfg(feature = "psu")]
         price_per_kwh: 0.56,
@@ -126,8 +125,6 @@ fn make_state_empty() -> Arc<AppState> {
         config_path,
         #[cfg(feature = "psu")]
         psu: Arc::new(std::sync::Mutex::new(None)),
-        #[cfg(feature = "psu")]
-        psu_cost_wh: Arc::new(std::sync::Mutex::new(0.0)),
         #[cfg(feature = "psu")]
         psu_start: std::time::Instant::now(),
         #[cfg(feature = "psu")]
@@ -243,7 +240,9 @@ async fn get_quota_with_data() {
     let (status, json) = get_json(state, "/api/quota").await;
     assert_eq!(status, http::StatusCode::OK);
 
-    let remains = json["model_remains"].as_array().expect("model_remains array");
+    let remains = json["model_remains"]
+        .as_array()
+        .expect("model_remains array");
     assert_eq!(remains.len(), 2);
     assert_eq!(json["base_resp"]["status_code"], 0);
     assert!(json["_nextPoll"].is_number());
@@ -417,7 +416,10 @@ async fn put_config_updates_keys() {
 
     let (_, cfg) = get_json(state, "/api/config").await;
     let mmx = cfg["minimax_api_key"].as_str().unwrap();
-    assert!(mmx.ends_with("1234"), "should show last 4 of new key: {mmx}");
+    assert!(
+        mmx.ends_with("1234"),
+        "should show last 4 of new key: {mmx}"
+    );
 }
 
 #[tokio::test]

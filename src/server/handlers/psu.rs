@@ -3,7 +3,7 @@ use std::sync::Arc;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::Json;
-use chrono::{Datelike, Timelike};
+use chrono::Datelike;
 use serde::{Deserialize, Serialize};
 
 use crate::server::AppState;
@@ -31,9 +31,15 @@ struct PowerResponse {
 
 #[derive(Serialize)]
 struct DcData {
-    volt_12v: f64, curr_12v_a: f64, power_12v_w: f64,
-    volt_5v: f64, curr_5v_a: f64, power_5v_w: f64,
-    volt_3v3: f64, curr_3v3_a: f64, power_3v3_w: f64,
+    volt_12v: f64,
+    curr_12v_a: f64,
+    power_12v_w: f64,
+    volt_5v: f64,
+    curr_5v_a: f64,
+    power_5v_w: f64,
+    volt_3v3: f64,
+    curr_3v3_a: f64,
+    power_3v3_w: f64,
 }
 
 #[derive(Serialize)]
@@ -109,7 +115,11 @@ fn read_psu(state: &AppState) -> Option<wattson::PsuSnapshot> {
     let guard = state.psu.lock().unwrap();
     let handle = guard.as_ref()?;
     let snap = handle.latest();
-    if snap.meta.connected { Some(snap) } else { None }
+    if snap.meta.connected {
+        Some(snap)
+    } else {
+        None
+    }
 }
 
 pub async fn api_power(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
@@ -119,9 +129,19 @@ pub async fn api_power(State(state): State<Arc<AppState>>) -> Json<serde_json::V
 
     let today_start = {
         let now = chrono::Local::now();
-        now.date_naive().and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp_millis()
+        now.date_naive()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_utc()
+            .timestamp_millis()
     };
-    let stats = state.db.lock().await.query_power_stats(today_start).ok().flatten();
+    let stats = state
+        .db
+        .lock()
+        .await
+        .query_power_stats(today_start)
+        .ok()
+        .flatten();
     let (peak, avg) = stats.unwrap_or((0.0, 0.0));
 
     let resp = PowerResponse {
@@ -129,9 +149,15 @@ pub async fn api_power(State(state): State<Arc<AppState>>) -> Json<serde_json::V
         ac_input_w: snap.power.ac_input_w,
         dc_output_est_w: snap.power.dc_output_est_w,
         dc: DcData {
-            volt_12v: snap.dc.volt_12v, curr_12v_a: snap.dc.curr_12v_a, power_12v_w: snap.dc.power_12v_w,
-            volt_5v: snap.dc.volt_5v, curr_5v_a: snap.dc.curr_5v_a, power_5v_w: snap.dc.power_5v_w,
-            volt_3v3: snap.dc.volt_3v3, curr_3v3_a: snap.dc.curr_3v3_a, power_3v3_w: snap.dc.power_3v3_w,
+            volt_12v: snap.dc.volt_12v,
+            curr_12v_a: snap.dc.curr_12v_a,
+            power_12v_w: snap.dc.power_12v_w,
+            volt_5v: snap.dc.volt_5v,
+            curr_5v_a: snap.dc.curr_5v_a,
+            power_5v_w: snap.dc.power_5v_w,
+            volt_3v3: snap.dc.volt_3v3,
+            curr_3v3_a: snap.dc.curr_3v3_a,
+            power_3v3_w: snap.dc.power_3v3_w,
         },
         today_peak_w: peak,
         today_avg_w: avg,
@@ -168,39 +194,81 @@ pub async fn api_psu_cost(State(state): State<Arc<AppState>>) -> Json<serde_json
     let price = state.price_per_kwh;
 
     let now = chrono::Local::now();
-    let day_start = now.date_naive().and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp_millis();
+    let day_start = now
+        .date_naive()
+        .and_hms_opt(0, 0, 0)
+        .unwrap()
+        .and_utc()
+        .timestamp_millis();
     let week_start = (now - chrono::Duration::days(now.weekday().num_days_from_monday() as i64))
-        .date_naive().and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp_millis();
-    let month_start = now.date_naive().with_day(1).unwrap().and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp_millis();
+        .date_naive()
+        .and_hms_opt(0, 0, 0)
+        .unwrap()
+        .and_utc()
+        .timestamp_millis();
+    let month_start = now
+        .date_naive()
+        .with_day(1)
+        .unwrap()
+        .and_hms_opt(0, 0, 0)
+        .unwrap()
+        .and_utc()
+        .timestamp_millis();
 
     let day_kwh = db.compute_energy_kwh(day_start).unwrap_or(0.0);
     let week_kwh = db.compute_energy_kwh(week_start).unwrap_or(0.0);
     let month_kwh = db.compute_energy_kwh(month_start).unwrap_or(0.0);
 
-    let day_elapsed_h = now.num_seconds_from_midnight() as f64 / 3600.0;
-    let day_total_h = 24.0;
-    let week_elapsed_days = now.weekday().num_days_from_monday() as f64 + day_elapsed_h / 24.0;
-    let week_total_days = 7.0;
-    let month_elapsed_days = now.day() as f64 - 1.0 + day_elapsed_h / 24.0;
+    let duration_s = state.psu_start.elapsed().as_secs_f64();
     let month_total_days = now.num_days_in_month() as f64;
 
-    let project = |kwh: f64, elapsed: f64, total: f64| -> CostPeriod {
-        if elapsed <= 0.0 { return CostPeriod { kwh: 0.0, cost: 0.0 }; }
-        let projected_kwh = kwh / elapsed * total;
-        CostPeriod { kwh: (projected_kwh * 100.0).round() / 100.0, cost: (projected_kwh * price * 100.0).round() / 100.0 }
+    // Projection model (方案 1): extrapolate from the observed MEAN draw, assuming the PSU
+    // keeps running at that average. The mean of all recorded ac_w samples this month
+    // (query_power_stats avg) ≈ average power while monitored. This is restart-safe (it
+    // spans every session, not just the current uptime) and gap-safe (a sample mean, not
+    // a calendar divide), avoiding the trap of dividing DB-accumulated energy by one
+    // session's uptime. day/week/month then scale correctly as 24h : 168h : (days*24)h.
+    // Requires >=60s of data so the first samples don't yield a noisy rate.
+    let avg_w = db
+        .query_power_stats(month_start)
+        .ok()
+        .flatten()
+        .map(|(_peak, avg)| avg)
+        .unwrap_or(0.0);
+    let rate_kw = avg_w / 1000.0;
+    let can_project = duration_s >= 60.0 && avg_w > 0.0;
+    let project = |total_h: f64| -> CostPeriod {
+        if !can_project {
+            return CostPeriod {
+                kwh: 0.0,
+                cost: 0.0,
+            };
+        }
+        let projected_kwh = rate_kw * total_h;
+        CostPeriod {
+            kwh: (projected_kwh * 1000.0).round() / 1000.0,
+            cost: (projected_kwh * price * 100.0).round() / 100.0,
+        }
     };
-
-    let duration_s = state.psu_start.elapsed().as_secs_f64();
 
     let resp = PsuCostResponse {
         connected: true,
-        day: CostPeriod { kwh: (day_kwh * 1000.0).round() / 1000.0, cost: (day_kwh * price * 100.0).round() / 100.0 },
-        week: CostPeriod { kwh: (week_kwh * 100.0).round() / 100.0, cost: (week_kwh * price * 100.0).round() / 100.0 },
-        month: CostPeriod { kwh: (month_kwh * 100.0).round() / 100.0, cost: (month_kwh * price * 100.0).round() / 100.0 },
+        day: CostPeriod {
+            kwh: (day_kwh * 1000.0).round() / 1000.0,
+            cost: (day_kwh * price * 100.0).round() / 100.0,
+        },
+        week: CostPeriod {
+            kwh: (week_kwh * 1000.0).round() / 1000.0,
+            cost: (week_kwh * price * 100.0).round() / 100.0,
+        },
+        month: CostPeriod {
+            kwh: (month_kwh * 1000.0).round() / 1000.0,
+            cost: (month_kwh * price * 100.0).round() / 100.0,
+        },
         projected: PsuCostProjected {
-            day: project(day_kwh, day_elapsed_h, day_total_h),
-            week: project(week_kwh, week_elapsed_days, week_total_days),
-            month: project(month_kwh, month_elapsed_days, month_total_days),
+            day: project(24.0),
+            week: project(24.0 * 7.0),
+            month: project(24.0 * month_total_days),
         },
         price_per_kwh: price,
         currency: state.currency.clone(),
@@ -231,29 +299,75 @@ pub async fn api_power_history(
 
     let data: Vec<PowerHistoryPoint> = if raw.len() > 500 {
         let step = raw.len() / 500;
-        raw.into_iter().enumerate()
+        raw.into_iter()
+            .enumerate()
             .filter(|(i, _)| i % step == 0)
-            .map(|(_, (ts, ac_w, dc_w, temp_c, fan_rpm))| PowerHistoryPoint { ts, ac_w, dc_w, temp_c, fan_rpm })
+            .map(|(_, (ts, ac_w, dc_w, temp_c, fan_rpm))| PowerHistoryPoint {
+                ts,
+                ac_w,
+                dc_w,
+                temp_c,
+                fan_rpm,
+            })
             .collect()
     } else {
         raw.into_iter()
-            .map(|(ts, ac_w, dc_w, temp_c, fan_rpm)| PowerHistoryPoint { ts, ac_w, dc_w, temp_c, fan_rpm })
+            .map(|(ts, ac_w, dc_w, temp_c, fan_rpm)| PowerHistoryPoint {
+                ts,
+                ac_w,
+                dc_w,
+                temp_c,
+                fan_rpm,
+            })
             .collect()
     };
 
-    Json(serde_json::to_value(PowerHistoryResponse { connected: true, data }).unwrap())
+    Json(
+        serde_json::to_value(PowerHistoryResponse {
+            connected: true,
+            data,
+        })
+        .unwrap(),
+    )
 }
 
 pub async fn set_fan_mode(
     State(state): State<Arc<AppState>>,
     Json(req): Json<FanModeRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
-    let guard = state.psu.lock().unwrap();
-    let Some(handle) = guard.as_ref() else {
-        return Err((StatusCode::SERVICE_UNAVAILABLE, Json(serde_json::json!({"ok": false, "message": "PSU not connected"}))));
-    };
-    handle.set_fan_mode(req.mode).map_err(|e| {
-        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"ok": false, "message": format!("{e}")})))
+    // Fast-path: if PSU handle is absent, skip the spawn entirely.
+    {
+        let guard = state.psu.lock().unwrap();
+        if guard.is_none() {
+            return Err((
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({"ok": false, "message": "PSU not connected"})),
+            ));
+        }
+    }
+    // Fix C: move the blocking serial call off the tokio worker thread.
+    let psu_arc = Arc::clone(&state.psu);
+    let mode = req.mode;
+    let result = tokio::task::spawn_blocking(move || {
+        let guard = psu_arc.lock().unwrap();
+        match guard.as_ref() {
+            None => Err("PSU not connected".to_string()),
+            Some(handle) => handle.set_fan_mode(mode).map_err(|e| format!("{e}")),
+        }
+    })
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"ok": false, "message": format!("task panic: {e}")})),
+        )
+    })?;
+
+    result.map_err(|msg| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"ok": false, "message": msg})),
+        )
     })?;
     Ok(Json(serde_json::json!({"ok": true, "action": "fan_mode"})))
 }
@@ -263,18 +377,50 @@ pub async fn set_fan_speed(
     Json(req): Json<FanSpeedRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     if req.pwm < MIN_PWM {
-        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({
-            "ok": false, "message": format!("PWM must be >= {} (safety minimum)", MIN_PWM)
-        }))));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "ok": false, "message": format!("PWM must be >= {} (safety minimum)", MIN_PWM)
+            })),
+        ));
     }
-    let guard = state.psu.lock().unwrap();
-    let Some(handle) = guard.as_ref() else {
-        return Err((StatusCode::SERVICE_UNAVAILABLE, Json(serde_json::json!({"ok": false, "message": "PSU not connected"}))));
-    };
-    handle.set_fan_pwm(req.pwm).map_err(|e| {
-        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"ok": false, "message": format!("{e}")})))
+    // Fast-path: if PSU handle is absent, skip the spawn entirely.
+    {
+        let guard = state.psu.lock().unwrap();
+        if guard.is_none() {
+            return Err((
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({"ok": false, "message": "PSU not connected"})),
+            ));
+        }
+    }
+    // Fix C: move the blocking serial call off the tokio worker thread.
+    let psu_arc = Arc::clone(&state.psu);
+    let pwm = req.pwm;
+    let result = tokio::task::spawn_blocking(move || {
+        let guard = psu_arc.lock().unwrap();
+        match guard.as_ref() {
+            None => Err("PSU not connected".to_string()),
+            Some(handle) => handle.set_fan_pwm(pwm).map_err(|e| format!("{e}")),
+        }
+    })
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"ok": false, "message": format!("task panic: {e}")})),
+        )
     })?;
-    Ok(Json(serde_json::json!({"ok": true, "action": "fan_speed", "pwm": req.pwm})))
+
+    result.map_err(|msg| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"ok": false, "message": msg})),
+        )
+    })?;
+    Ok(Json(
+        serde_json::json!({"ok": true, "action": "fan_speed", "pwm": pwm}),
+    ))
 }
 
 pub async fn set_fan_curve(
@@ -282,16 +428,46 @@ pub async fn set_fan_curve(
     Json(req): Json<FanCurveRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     if req.points.len() != 3 && req.points.len() != 5 {
-        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({
-            "ok": false, "message": "fan curve requires exactly 3 or 5 points"
-        }))));
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "ok": false, "message": "fan curve requires exactly 3 or 5 points"
+            })),
+        ));
     }
-    let guard = state.psu.lock().unwrap();
-    let Some(handle) = guard.as_ref() else {
-        return Err((StatusCode::SERVICE_UNAVAILABLE, Json(serde_json::json!({"ok": false, "message": "PSU not connected"}))));
-    };
-    handle.set_fan_curve(req.points).map_err(|e| {
-        (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"ok": false, "message": format!("{e}")})))
+    // Fast-path: if PSU handle is absent, skip the spawn entirely.
+    {
+        let guard = state.psu.lock().unwrap();
+        if guard.is_none() {
+            return Err((
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({"ok": false, "message": "PSU not connected"})),
+            ));
+        }
+    }
+    // Fix C: move the blocking serial call off the tokio worker thread.
+    let psu_arc = Arc::clone(&state.psu);
+    let points = req.points;
+    let result = tokio::task::spawn_blocking(move || {
+        let guard = psu_arc.lock().unwrap();
+        match guard.as_ref() {
+            None => Err("PSU not connected".to_string()),
+            Some(handle) => handle.set_fan_curve(points).map_err(|e| format!("{e}")),
+        }
+    })
+    .await
+    .map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"ok": false, "message": format!("task panic: {e}")})),
+        )
+    })?;
+
+    result.map_err(|msg| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"ok": false, "message": msg})),
+        )
     })?;
     Ok(Json(serde_json::json!({"ok": true, "action": "fan_curve"})))
 }
