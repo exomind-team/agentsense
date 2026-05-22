@@ -16,3 +16,20 @@ api_key = "sk-xxxx"             # DeepSeek API Key
 [quota.zai]
 auth_token = "xxxx"             # Z.AI Auth Token
 # auth_token_env = "ZAI_AUTH_TOKEN"
+
+# ── PSU Power Monitoring ──────────────────────────
+# Requires the `psu` feature (enabled by default).
+# Remove or comment out [serial] to disable PSU monitoring.
+
+# [serial]
+# port = "COM4"
+# baud = 115200
+# mode = "active"             # active | passive
+# sample_interval_ms = 300    # 200-1000ms
+
+# [device]
+# profile = "segotep_dm"      # segotep_dm | segotep_dm850g
+
+# [cost]
+# price_per_kwh = 0.56
+# currency = "CNY"
