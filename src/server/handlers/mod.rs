@@ -64,9 +64,7 @@ pub async fn api_all(State(state): State<Arc<AppState>>) -> axum::Json<serde_jso
     }))
 }
 
-pub async fn api_quota(
-    State(state): State<Arc<AppState>>,
-) -> axum::Json<serde_json::Value> {
+pub async fn api_quota(State(state): State<Arc<AppState>>) -> axum::Json<serde_json::Value> {
     let db = state.db.lock().await;
     let (_, models) = db.latest_minimax_with_ts().unwrap_or((0, vec![]));
     drop(db);
@@ -116,18 +114,14 @@ pub async fn api_weekly_history(
     axum::Json(serde_json::json!(history))
 }
 
-pub async fn api_consumption(
-    State(state): State<Arc<AppState>>,
-) -> axum::Json<serde_json::Value> {
+pub async fn api_consumption(State(state): State<Arc<AppState>>) -> axum::Json<serde_json::Value> {
     let db = state.db.lock().await;
     let summary = db.consumption_summary();
     drop(db);
     axum::Json(summary)
 }
 
-pub async fn api_deepseek(
-    State(state): State<Arc<AppState>>,
-) -> axum::Json<serde_json::Value> {
+pub async fn api_deepseek(State(state): State<Arc<AppState>>) -> axum::Json<serde_json::Value> {
     let db = state.db.lock().await;
     let balance = db.latest_deepseek().unwrap_or_default();
     drop(db);
@@ -159,9 +153,7 @@ pub async fn api_deepseek_history(
     axum::Json(serde_json::json!(history))
 }
 
-pub async fn api_zai(
-    State(state): State<Arc<AppState>>,
-) -> axum::Json<serde_json::Value> {
+pub async fn api_zai(State(state): State<Arc<AppState>>) -> axum::Json<serde_json::Value> {
     let db = state.db.lock().await;
     let quota = db.latest_zai().unwrap_or_default();
     drop(db);
@@ -188,9 +180,7 @@ pub async fn api_zai_history(
     axum::Json(serde_json::json!(history))
 }
 
-pub async fn api_claude(
-    State(state): State<Arc<AppState>>,
-) -> axum::Json<serde_json::Value> {
+pub async fn api_claude(State(state): State<Arc<AppState>>) -> axum::Json<serde_json::Value> {
     let db = state.db.lock().await;
     let quota = db.latest_claude().unwrap_or_default();
     drop(db);
@@ -217,12 +207,12 @@ pub async fn api_claude_history(
     axum::Json(serde_json::json!(history))
 }
 
-pub async fn api_config_get(
-    State(state): State<Arc<AppState>>,
-) -> axum::Json<serde_json::Value> {
+pub async fn api_config_get(State(state): State<Arc<AppState>>) -> axum::Json<serde_json::Value> {
     let mask = |key: &Option<String>| -> String {
         match key {
-            Some(k) if k.len() > 4 => format!("\u{2022}\u{2022}\u{2022}\u{2022}{}", &k[k.len() - 4..]),
+            Some(k) if k.len() > 4 => {
+                format!("\u{2022}\u{2022}\u{2022}\u{2022}{}", &k[k.len() - 4..])
+            }
             Some(k) => k.clone(),
             None => String::new(),
         }
@@ -280,9 +270,7 @@ pub async fn api_config_put(
 
     let config = {
         #[cfg(feature = "psu")]
-        let psu_fields = {
-            (None, Default::default(), Default::default())
-        };
+        let psu_fields = { (None, Default::default(), Default::default()) };
         crate::config::AppConfig {
             quota: crate::config::QuotaConfig {
                 minimax: Some(crate::config::KeyConfig {
@@ -314,9 +302,7 @@ pub async fn api_config_put(
     axum::Json(serde_json::json!({"ok": true}))
 }
 
-pub async fn api_refresh(
-    State(state): State<Arc<AppState>>,
-) -> axum::Json<serde_json::Value> {
+pub async fn api_refresh(State(state): State<Arc<AppState>>) -> axum::Json<serde_json::Value> {
     super::do_poll(state.clone()).await;
     axum::Json(serde_json::json!({
         "ok": true,
@@ -324,10 +310,7 @@ pub async fn api_refresh(
     }))
 }
 
-fn provider_status(
-    configured: bool,
-    last_ts: Option<i64>,
-) -> serde_json::Value {
+fn provider_status(configured: bool, last_ts: Option<i64>) -> serde_json::Value {
     if !configured {
         return serde_json::json!({"status": "no_key"});
     }
@@ -350,51 +333,131 @@ pub async fn mcp_handler(
         "notifications/initialized" => serde_json::json!({"jsonrpc":"2.0","id":id,"result":{}}),
         "tools/list" => tools_list_json(&id),
         "tools/call" => tools_call_dispatch(&id, req.get("params")).await,
-        _ => serde_json::json!({"jsonrpc":"2.0","id":id,"error":{"code":-32601,"message":format!("Unknown: {method}")}}),
+        _ => {
+            serde_json::json!({"jsonrpc":"2.0","id":id,"error":{"code":-32601,"message":format!("Unknown: {method}")}})
+        }
     };
     axum::Json(result)
 }
 
 // Dispatched via spawn_blocking to keep the handler future Send
-async fn tools_call_dispatch(id: &Option<serde_json::Value>, params: Option<&serde_json::Value>) -> serde_json::Value {
+async fn tools_call_dispatch(
+    id: &Option<serde_json::Value>,
+    params: Option<&serde_json::Value>,
+) -> serde_json::Value {
     let id = id.clone();
     let params_val = params.cloned();
     tokio::task::spawn_blocking(move || {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(tools_call_json(&id, params_val.as_ref()))
-    }).await.unwrap_or_else(|e| err_resp(&None, &format!("Task panic: {e}")))
+    })
+    .await
+    .unwrap_or_else(|e| err_resp(&None, &format!("Task panic: {e}")))
 }
 
 fn tools_list_json(id: &Option<serde_json::Value>) -> serde_json::Value {
     let tools: Vec<serde_json::Value> = vec![
-        tool_def("doc_open","Open a PDF, return metadata and TOC",&[("path","string","PDF path")]),
-        tool_def("doc_read","Read PDF text. Optional pages array; omit for full text",&[("path","string","PDF path"),("pages","array","Optional page numbers")]),
-        tool_def("doc_read_page","Read single PDF page by number",&[("path","string","PDF path"),("page","integer","Page number (1-indexed)")]),
-        tool_def("doc_toc","Get PDF table of contents tree",&[("path","string","PDF path")]),
-        tool_def("doc_section","Read PDF section by TOC title",&[("path","string","PDF path"),("title","string","Section title")]),
-        tool_def("doc_images","List PDF images with dimensions",&[("path","string","PDF path")]),
-        tool_def("doc_extract_image","Extract PDF image as base64",&[("path","string","PDF path"),("page","integer","Page"),("index","integer","Image index (0-based)")]),
-        tool_def("epub_open","Open EPUB, return metadata and TOC",&[("path","string","EPUB path")]),
-        tool_def("epub_read_chapter","Read EPUB chapter by number",&[("path","string","EPUB path"),("chapter","integer","Chapter number")]),
-        tool_def("epub_toc","Get EPUB table of contents",&[("path","string","EPUB path")]),
-        tool_def("epub_read_section","Read EPUB section by TOC title",&[("path","string","EPUB path"),("title","string","Section title")]),
-        tool_def("quota_status","Get AI quota for MiniMax/DeepSeek/Z.AI/Claude",&[]),
+        tool_def(
+            "doc_open",
+            "Open a PDF, return metadata and TOC",
+            &[("path", "string", "PDF path")],
+        ),
+        tool_def(
+            "doc_read",
+            "Read PDF text. Optional pages array; omit for full text",
+            &[
+                ("path", "string", "PDF path"),
+                ("pages", "array", "Optional page numbers"),
+            ],
+        ),
+        tool_def(
+            "doc_read_page",
+            "Read single PDF page by number",
+            &[
+                ("path", "string", "PDF path"),
+                ("page", "integer", "Page number (1-indexed)"),
+            ],
+        ),
+        tool_def(
+            "doc_toc",
+            "Get PDF table of contents tree",
+            &[("path", "string", "PDF path")],
+        ),
+        tool_def(
+            "doc_section",
+            "Read PDF section by TOC title",
+            &[
+                ("path", "string", "PDF path"),
+                ("title", "string", "Section title"),
+            ],
+        ),
+        tool_def(
+            "doc_images",
+            "List PDF images with dimensions",
+            &[("path", "string", "PDF path")],
+        ),
+        tool_def(
+            "doc_extract_image",
+            "Extract PDF image as base64",
+            &[
+                ("path", "string", "PDF path"),
+                ("page", "integer", "Page"),
+                ("index", "integer", "Image index (0-based)"),
+            ],
+        ),
+        tool_def(
+            "epub_open",
+            "Open EPUB, return metadata and TOC",
+            &[("path", "string", "EPUB path")],
+        ),
+        tool_def(
+            "epub_read_chapter",
+            "Read EPUB chapter by number",
+            &[
+                ("path", "string", "EPUB path"),
+                ("chapter", "integer", "Chapter number"),
+            ],
+        ),
+        tool_def(
+            "epub_toc",
+            "Get EPUB table of contents",
+            &[("path", "string", "EPUB path")],
+        ),
+        tool_def(
+            "epub_read_section",
+            "Read EPUB section by TOC title",
+            &[
+                ("path", "string", "EPUB path"),
+                ("title", "string", "Section title"),
+            ],
+        ),
+        tool_def(
+            "quota_status",
+            "Get AI quota for MiniMax/DeepSeek/Z.AI/Claude",
+            &[],
+        ),
     ];
     serde_json::json!({"jsonrpc":"2.0","id":id,"result":{"tools":tools}})
 }
 
-fn tool_def(name:&str, desc:&str, props:&[(&str,&str,&str)]) -> serde_json::Value {
+fn tool_def(name: &str, desc: &str, props: &[(&str, &str, &str)]) -> serde_json::Value {
     let mut p = serde_json::Map::new();
     let mut r = Vec::new();
-    for (k,t,d) in props {
+    for (k, t, d) in props {
         p.insert(k.to_string(), serde_json::json!({"type":t,"description":d}));
         r.push(serde_json::Value::String(k.to_string()));
     }
     serde_json::json!({"name":name,"description":desc,"inputSchema":{"type":"object","properties":p,"required":r}})
 }
 
-async fn tools_call_json(id: &Option<serde_json::Value>, params: Option<&serde_json::Value>) -> serde_json::Value {
-    let params = match params { Some(p) => p, None => return err_resp(id,"Missing params") };
+async fn tools_call_json(
+    id: &Option<serde_json::Value>,
+    params: Option<&serde_json::Value>,
+) -> serde_json::Value {
+    let params = match params {
+        Some(p) => p,
+        None => return err_resp(id, "Missing params"),
+    };
     let name = params.get("name").and_then(|v| v.as_str()).unwrap_or("");
     let empty_args = serde_json::json!({});
     let args = params.get("arguments").unwrap_or(&empty_args);
@@ -422,18 +485,29 @@ fn err_resp(id: &Option<serde_json::Value>, msg: &str) -> serde_json::Value {
 
 // ── Tool implementations ────────────────────────────────────────────
 
-fn get_str<'a>(args: &'a serde_json::Value, k: &str) -> Result<String, String> {
-    args.get(k).and_then(|v| v.as_str()).map(|s| s.to_string()).ok_or_else(|| format!("Missing: {k}"))
+fn get_str(args: &serde_json::Value, k: &str) -> Result<String, String> {
+    args.get(k)
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .ok_or_else(|| format!("Missing: {k}"))
 }
 fn get_u64(args: &serde_json::Value, k: &str) -> Result<u64, String> {
-    args.get(k).and_then(|v| v.as_u64()).ok_or_else(|| format!("Missing: {k}"))
+    args.get(k)
+        .and_then(|v| v.as_u64())
+        .ok_or_else(|| format!("Missing: {k}"))
 }
-fn to_json(v: &serde_json::Value) -> String { serde_json::to_string_pretty(v).unwrap_or_default() }
+fn to_json(v: &serde_json::Value) -> String {
+    serde_json::to_string_pretty(v).unwrap_or_default()
+}
 
 async fn tool_doc_open(args: &serde_json::Value) -> String {
-    let path = match get_str(args, "path") { Ok(p) => p, Err(e) => return e };
+    let path = match get_str(args, "path") {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
     let doc = match crate::PdfDocument::open(std::path::Path::new(&path)) {
-        Ok(d) => d, Err(e) => return e.to_string(),
+        Ok(d) => d,
+        Err(e) => return e.to_string(),
     };
     let info = doc.info();
     let outline = doc.outline().unwrap_or_default();
@@ -446,32 +520,51 @@ async fn tool_doc_open(args: &serde_json::Value) -> String {
 }
 
 async fn tool_doc_read(args: &serde_json::Value) -> String {
-    let path = match get_str(args, "path") { Ok(p) => p, Err(e) => return e };
+    let path = match get_str(args, "path") {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
     let doc = match crate::PdfDocument::open(std::path::Path::new(&path)) {
-        Ok(d) => d, Err(e) => return e.to_string(),
+        Ok(d) => d,
+        Err(e) => return e.to_string(),
     };
     if let Some(pages) = args.get("pages").and_then(|v| v.as_array()) {
         let mut out = String::new();
-        for p in pages { if let Some(n) = p.as_u64() {
-            match doc.read_page(n as usize) {
-                Ok(t) => out.push_str(&format!("\n--- Page {n} ---\n{t}")),
-                Err(e) => out.push_str(&format!("\n[P{n}: {e}]")),
+        for p in pages {
+            if let Some(n) = p.as_u64() {
+                match doc.read_page(n as usize) {
+                    Ok(t) => out.push_str(&format!("\n--- Page {n} ---\n{t}")),
+                    Err(e) => out.push_str(&format!("\n[P{n}: {e}]")),
+                }
             }
-        }}
+        }
         out
-    } else { doc.text().unwrap_or_else(|e| e.to_string()) }
+    } else {
+        doc.text().unwrap_or_else(|e| e.to_string())
+    }
 }
 
 async fn tool_doc_read_page(args: &serde_json::Value) -> String {
-    let path = match get_str(args,"path"){Ok(p)=>p,Err(e)=>return e};
-    let page = match get_u64(args,"page"){Ok(p)=>p as usize,Err(e)=>return e};
+    let path = match get_str(args, "path") {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    let page = match get_u64(args, "page") {
+        Ok(p) => p as usize,
+        Err(e) => return e,
+    };
     let doc = match crate::PdfDocument::open(std::path::Path::new(&path)) {
-        Ok(d)=>d,Err(e)=>return e.to_string()};
-    doc.read_page(page).unwrap_or_else(|e|e.to_string())
+        Ok(d) => d,
+        Err(e) => return e.to_string(),
+    };
+    doc.read_page(page).unwrap_or_else(|e| e.to_string())
 }
 
 async fn tool_doc_toc(args: &serde_json::Value) -> String {
-    let path = match get_str(args,"path"){Ok(p)=>p,Err(e)=>return e};
+    let path = match get_str(args, "path") {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
     match crate::PdfDocument::open(std::path::Path::new(&path)) {
         Ok(d) => match d.outline() {
             Ok(o) => to_json(&serde_json::json!({"toc":toc_to_json(&o)})),
@@ -482,22 +575,38 @@ async fn tool_doc_toc(args: &serde_json::Value) -> String {
 }
 
 async fn tool_doc_section(args: &serde_json::Value) -> String {
-    let path = match get_str(args,"path"){Ok(p)=>p,Err(e)=>return e};
-    let title = match get_str(args,"title"){Ok(t)=>t,Err(e)=>return e};
+    let path = match get_str(args, "path") {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    let title = match get_str(args, "title") {
+        Ok(t) => t,
+        Err(e) => return e,
+    };
     let doc = match crate::PdfDocument::open(std::path::Path::new(&path)) {
-        Ok(d)=>d,Err(e)=>return e.to_string()};
-    let outline = match doc.outline(){Ok(o)=>o,Err(e)=>return e.to_string()};
+        Ok(d) => d,
+        Err(e) => return e.to_string(),
+    };
+    let outline = match doc.outline() {
+        Ok(o) => o,
+        Err(e) => return e.to_string(),
+    };
     if let Some(entry) = find_toc(&outline, &title) {
-        if let crate::TocLocation::Pdf{page} = entry.location {
-            return doc.read_page(page).unwrap_or_else(|e|e.to_string());
+        if let crate::TocLocation::Pdf { page } = entry.location {
+            return doc.read_page(page).unwrap_or_else(|e| e.to_string());
         }
     }
-    format!("Section '{title}' not found. Available: {:?}",
-        outline.iter().map(|e|&e.title).collect::<Vec<_>>())
+    format!(
+        "Section '{title}' not found. Available: {:?}",
+        outline.iter().map(|e| &e.title).collect::<Vec<_>>()
+    )
 }
 
 async fn tool_doc_images(args: &serde_json::Value) -> String {
-    let path = match get_str(args,"path"){Ok(p)=>p,Err(e)=>return e};
+    let path = match get_str(args, "path") {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
     match crate::PdfDocument::open(std::path::Path::new(&path)) {
         Ok(d) => match d.list_images() {
             Ok(imgs) => to_json(&serde_json::json!({
@@ -506,16 +615,25 @@ async fn tool_doc_images(args: &serde_json::Value) -> String {
                     "page":i.page,"index":i.index,"name":i.name,"width":i.width,"height":i.height
                 })).collect::<Vec<_>>()
             })),
-            Err(e)=>e.to_string()
+            Err(e) => e.to_string(),
         },
-        Err(e)=>e.to_string()
+        Err(e) => e.to_string(),
     }
 }
 
 async fn tool_doc_extract_image(args: &serde_json::Value) -> String {
-    let path = match get_str(args,"path"){Ok(p)=>p,Err(e)=>return e};
-    let page = match get_u64(args,"page"){Ok(p)=>p as usize,Err(e)=>return e};
-    let index = match get_u64(args,"index"){Ok(i)=>i as usize,Err(e)=>return e};
+    let path = match get_str(args, "path") {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    let page = match get_u64(args, "page") {
+        Ok(p) => p as usize,
+        Err(e) => return e,
+    };
+    let index = match get_u64(args, "index") {
+        Ok(i) => i as usize,
+        Err(e) => return e,
+    };
     match crate::PdfDocument::open(std::path::Path::new(&path)) {
         Ok(d) => match d.extract_image(page, index) {
             Ok(data) => {
@@ -526,78 +644,107 @@ async fn tool_doc_extract_image(args: &serde_json::Value) -> String {
                     "format": if data.starts_with(&[0xff,0xd8]){"jpeg"}else{"unknown"},
                 }))
             }
-            Err(e)=>e.to_string()
+            Err(e) => e.to_string(),
         },
-        Err(e)=>e.to_string()
+        Err(e) => e.to_string(),
     }
 }
 
 async fn tool_epub_open(args: &serde_json::Value) -> String {
-    let path = match get_str(args,"path"){Ok(p)=>p,Err(e)=>return e};
+    let path = match get_str(args, "path") {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
     match crate::EpubDocument::open(std::path::Path::new(&path)) {
         Ok(d) => to_json(&serde_json::json!({
             "path":path,"title":d.title(),"author":d.author(),
             "chapter_count":d.chapter_count(),"toc":toc_to_json(d.toc()),
         })),
-        Err(e)=>e.to_string()
+        Err(e) => e.to_string(),
     }
 }
 
 async fn tool_epub_read_chapter(args: &serde_json::Value) -> String {
-    let path = match get_str(args,"path"){Ok(p)=>p,Err(e)=>return e};
-    let ch = match get_u64(args,"chapter"){Ok(c)=>c as usize,Err(e)=>return e};
+    let path = match get_str(args, "path") {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    let ch = match get_u64(args, "chapter") {
+        Ok(c) => c as usize,
+        Err(e) => return e,
+    };
     match crate::EpubDocument::open(std::path::Path::new(&path)) {
-        Ok(d)=>d.read_chapter(ch).unwrap_or_else(|e|e.to_string()),
-        Err(e)=>e.to_string()
+        Ok(d) => d.read_chapter(ch).unwrap_or_else(|e| e.to_string()),
+        Err(e) => e.to_string(),
     }
 }
 
 async fn tool_epub_toc(args: &serde_json::Value) -> String {
-    let path = match get_str(args,"path"){Ok(p)=>p,Err(e)=>return e};
+    let path = match get_str(args, "path") {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
     match crate::EpubDocument::open(std::path::Path::new(&path)) {
-        Ok(d)=>to_json(&serde_json::json!({"toc":toc_to_json(d.toc())})),
-        Err(e)=>e.to_string()
+        Ok(d) => to_json(&serde_json::json!({"toc":toc_to_json(d.toc())})),
+        Err(e) => e.to_string(),
     }
 }
 
 async fn tool_epub_read_section(args: &serde_json::Value) -> String {
-    let path = match get_str(args,"path"){Ok(p)=>p,Err(e)=>return e};
-    let title = match get_str(args,"title"){Ok(t)=>t,Err(e)=>return e};
+    let path = match get_str(args, "path") {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    let title = match get_str(args, "title") {
+        Ok(t) => t,
+        Err(e) => return e,
+    };
     match crate::EpubDocument::open(std::path::Path::new(&path)) {
         Ok(d) => {
             if let Some(entry) = find_toc(d.toc(), &title) {
-                d.read_toc_entry(entry).unwrap_or_else(|e|e.to_string())
-            } else { format!("Section '{title}' not found") }
-        },
-        Err(e)=>e.to_string()
+                d.read_toc_entry(entry).unwrap_or_else(|e| e.to_string())
+            } else {
+                format!("Section '{title}' not found")
+            }
+        }
+        Err(e) => e.to_string(),
     }
 }
 
 async fn tool_quota_status() -> String {
-    let config = crate::AppConfig::load(&std::path::PathBuf::from("config.toml")).unwrap_or_default();
+    let config =
+        crate::AppConfig::load(&std::path::PathBuf::from("config.toml")).unwrap_or_default();
     let orch = match crate::quota::QuotaOrchestrator::new(&config.quota) {
-        Ok(o)=>o, Err(e)=>return e.to_string(),
+        Ok(o) => o,
+        Err(e) => return e.to_string(),
     };
     let r = orch.fetch_all().await;
     let mut json = serde_json::json!({});
-    if let Some(Ok(s))=&r.minimax{json["minimax"]=serde_json::json!({
+    if let Some(Ok(s)) = &r.minimax {
+        json["minimax"] = serde_json::json!({
         "models":s.models.iter().map(|m|serde_json::json!({
             "name":m.name,"interval_remaining":m.interval_total-m.interval_usage,
             "interval_total":m.interval_total,"weekly_remaining":m.weekly_total-m.weekly_usage,"weekly_total":m.weekly_total
         })).collect::<Vec<_>>()});
     }
-    if let Some(Ok(s))=&r.deepseek{json["deepseek"]=serde_json::json!({
-        "balance_cny":s.total_balance_cny,"balance_usd":s.total_balance_usd
-    });}
-    if let Some(Ok(s))=&r.zai{json["zai"]=serde_json::json!({
-        "token_5h_pct":s.token_5h_pct,"token_week_pct":s.token_week_pct,"mcp_month_pct":s.mcp_month_pct
-    });}
-    if let Some(Ok(s))=&r.claude{json["claude"]=serde_json::json!({
-        "five_h_pct":s.five_h_pct,"seven_d_pct":s.seven_d_pct,
-        "extra":s.extra.iter().map(|l|serde_json::json!({
-            "label":l.label,"pct":l.pct
-        })).collect::<Vec<_>>()
-    });}
+    if let Some(Ok(s)) = &r.deepseek {
+        json["deepseek"] = serde_json::json!({
+            "balance_cny":s.total_balance_cny,"balance_usd":s.total_balance_usd
+        });
+    }
+    if let Some(Ok(s)) = &r.zai {
+        json["zai"] = serde_json::json!({
+            "token_5h_pct":s.token_5h_pct,"token_week_pct":s.token_week_pct,"mcp_month_pct":s.mcp_month_pct
+        });
+    }
+    if let Some(Ok(s)) = &r.claude {
+        json["claude"] = serde_json::json!({
+            "five_h_pct":s.five_h_pct,"seven_d_pct":s.seven_d_pct,
+            "extra":s.extra.iter().map(|l|serde_json::json!({
+                "label":l.label,"pct":l.pct
+            })).collect::<Vec<_>>()
+        });
+    }
     to_json(&json)
 }
 
@@ -611,8 +758,14 @@ fn toc_to_json(toc: &[crate::TocEntry]) -> serde_json::Value {
     }).collect()
 }
 
-fn find_toc<'a>(toc:&'a [crate::TocEntry], title:&str) -> Option<&'a crate::TocEntry> {
-    for e in toc { if e.title.contains(title)||title.contains(&e.title){return Some(e);}
-        if let Some(f)=find_toc(&e.children,title){return Some(f);}
-    } None
+fn find_toc<'a>(toc: &'a [crate::TocEntry], title: &str) -> Option<&'a crate::TocEntry> {
+    for e in toc {
+        if e.title.contains(title) || title.contains(&e.title) {
+            return Some(e);
+        }
+        if let Some(f) = find_toc(&e.children, title) {
+            return Some(f);
+        }
+    }
+    None
 }

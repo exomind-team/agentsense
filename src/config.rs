@@ -114,9 +114,8 @@ impl QuotaConfig {
         if matches!(cfg.and_then(|c| c.enabled), Some(false)) {
             return None;
         }
-        let path = crate::quota::claude::credentials_path(
-            &cfg.and_then(|c| c.credentials_path.clone()),
-        );
+        let path =
+            crate::quota::claude::credentials_path(&cfg.and_then(|c| c.credentials_path.clone()));
         path.exists().then_some(path)
     }
 }
@@ -156,14 +155,26 @@ pub struct CostConfig {
 }
 
 #[cfg(feature = "psu")]
-fn default_baud() -> u32 { 115200 }
+fn default_baud() -> u32 {
+    115200
+}
 #[cfg(feature = "psu")]
-fn default_mode() -> String { "active".to_string() }
+fn default_mode() -> String {
+    "active".to_string()
+}
 #[cfg(feature = "psu")]
-fn default_sample_interval() -> u64 { 300 }
+fn default_sample_interval() -> u64 {
+    300
+}
 #[cfg(feature = "psu")]
-fn default_profile() -> String { "segotep_dm".to_string() }
+fn default_profile() -> String {
+    "segotep_dm".to_string()
+}
 #[cfg(feature = "psu")]
-fn default_price() -> f64 { 0.56 }
+fn default_price() -> f64 {
+    0.56
+}
 #[cfg(feature = "psu")]
-fn default_currency() -> String { "CNY".to_string() }
+fn default_currency() -> String {
+    "CNY".to_string()
+}

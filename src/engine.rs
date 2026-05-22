@@ -39,6 +39,8 @@ pub(crate) enum EngineData {
         page_texts: std::sync::Mutex<Option<Vec<String>>>,
     },
     #[cfg(feature = "poppler")]
+    #[allow(dead_code)]
+    // Reserved poppler-engine variant; not yet constructed but kept for future use.
     Poppler,
 }
 
