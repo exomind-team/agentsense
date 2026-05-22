@@ -5,6 +5,15 @@ use std::path::PathBuf;
 pub struct AppConfig {
     #[serde(default)]
     pub quota: QuotaConfig,
+    #[cfg(feature = "psu")]
+    #[serde(default)]
+    pub serial: Option<SerialConfig>,
+    #[cfg(feature = "psu")]
+    #[serde(default)]
+    pub device: DeviceConfig,
+    #[cfg(feature = "psu")]
+    #[serde(default)]
+    pub cost: CostConfig,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -117,3 +126,44 @@ fn resolve_key(direct: &Option<String>, env_var: &Option<String>) -> Option<Stri
         .clone()
         .or_else(|| env_var.as_ref().and_then(|var| std::env::var(var).ok()))
 }
+
+#[cfg(feature = "psu")]
+#[derive(Debug, Deserialize, Serialize, Default)]
+pub struct SerialConfig {
+    pub port: String,
+    #[serde(default = "default_baud")]
+    pub baud: u32,
+    #[serde(default = "default_mode")]
+    pub mode: String,
+    #[serde(default = "default_sample_interval")]
+    pub sample_interval_ms: u64,
+}
+
+#[cfg(feature = "psu")]
+#[derive(Debug, Deserialize, Serialize, Default)]
+pub struct DeviceConfig {
+    #[serde(default = "default_profile")]
+    pub profile: String,
+}
+
+#[cfg(feature = "psu")]
+#[derive(Debug, Deserialize, Serialize, Default)]
+pub struct CostConfig {
+    #[serde(default = "default_price")]
+    pub price_per_kwh: f64,
+    #[serde(default = "default_currency")]
+    pub currency: String,
+}
+
+#[cfg(feature = "psu")]
+fn default_baud() -> u32 { 115200 }
+#[cfg(feature = "psu")]
+fn default_mode() -> String { "active".to_string() }
+#[cfg(feature = "psu")]
+fn default_sample_interval() -> u64 { 300 }
+#[cfg(feature = "psu")]
+fn default_profile() -> String { "segotep_dm".to_string() }
+#[cfg(feature = "psu")]
+fn default_price() -> f64 { 0.56 }
+#[cfg(feature = "psu")]
+fn default_currency() -> String { "CNY".to_string() }

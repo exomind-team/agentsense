@@ -37,6 +37,7 @@ tower-http = { version = "0.6", features = ["cors", "fs"] }
 base64 = "0.22"
 
 epub = "2"
+wattson = { path = "../wattson", default-features = false, optional = true }
 
 [dev-dependencies]
 tempfile = "3"
@@ -47,8 +48,9 @@ http = "1"
 # poppler-rs = { version = "0.4", optional = true }
 
 [features]
-default = ["pure-rust"]
+default = ["pure-rust", "psu"]
 pure-rust = []
+psu = ["wattson"]
 # Enable poppler-rs engine (requires poppler-glib C library: choco install poppler)
 # Not enabled by default — pure Rust engines work everywhere.
 poppler = []

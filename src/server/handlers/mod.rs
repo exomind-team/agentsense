@@ -275,22 +275,34 @@ pub async fn api_config_put(
     let ds = state.deepseek_key.read().await;
     let zai = state.zai_token.read().await;
 
-    let config = crate::config::AppConfig {
-        quota: crate::config::QuotaConfig {
-            minimax: Some(crate::config::KeyConfig {
-                api_key: mmx.clone(),
-                api_key_env: None,
-            }),
-            deepseek: Some(crate::config::KeyConfig {
-                api_key: ds.clone(),
-                api_key_env: None,
-            }),
-            zai: Some(crate::config::ZaiKeyConfig {
-                auth_token: zai.clone(),
-                auth_token_env: None,
-            }),
-            ..Default::default()
-        },
+    let config = {
+        #[cfg(feature = "psu")]
+        let psu_fields = {
+            (None, Default::default(), Default::default())
+        };
+        crate::config::AppConfig {
+            quota: crate::config::QuotaConfig {
+                minimax: Some(crate::config::KeyConfig {
+                    api_key: mmx.clone(),
+                    api_key_env: None,
+                }),
+                deepseek: Some(crate::config::KeyConfig {
+                    api_key: ds.clone(),
+                    api_key_env: None,
+                }),
+                zai: Some(crate::config::ZaiKeyConfig {
+                    auth_token: zai.clone(),
+                    auth_token_env: None,
+                }),
+                ..Default::default()
+            },
+            #[cfg(feature = "psu")]
+            serial: psu_fields.0,
+            #[cfg(feature = "psu")]
+            device: psu_fields.1,
+            #[cfg(feature = "psu")]
+            cost: psu_fields.2,
+        }
     };
 
     let toml_str = toml::to_string_pretty(&config).unwrap_or_default();

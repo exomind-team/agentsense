@@ -10,6 +10,8 @@ pub enum AgentSenseError {
     Http(String),
     Config(String),
     Database(String),
+    #[cfg(feature = "psu")]
+    Serial(String),
 }
 
 impl fmt::Display for AgentSenseError {
@@ -23,6 +25,8 @@ impl fmt::Display for AgentSenseError {
             Self::Http(msg) => write!(f, "HTTP error: {msg}"),
             Self::Config(msg) => write!(f, "config error: {msg}"),
             Self::Database(msg) => write!(f, "database error: {msg}"),
+            #[cfg(feature = "psu")]
+            Self::Serial(msg) => write!(f, "serial error: {msg}"),
         }
     }
 }
