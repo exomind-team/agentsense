@@ -29,6 +29,7 @@ pub struct QuotaConfig {
     #[serde(rename = "mimo")]
     pub mimo: Option<MimoConfig>,
     pub claude: Option<ClaudeConfig>,
+    pub deepseek_platform: Option<DeepSeekPlatformConfig>,
 }
 
 impl Default for QuotaConfig {
@@ -42,6 +43,7 @@ impl Default for QuotaConfig {
             zai: None,
             mimo: None,
             claude: None,
+            deepseek_platform: None,
         }
     }
 }
@@ -52,6 +54,14 @@ impl Default for QuotaConfig {
 pub struct ClaudeConfig {
     pub enabled: Option<bool>,
     pub credentials_path: Option<PathBuf>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Default)]
+pub struct DeepSeekPlatformConfig {
+    pub bearer_token: Option<String>,
+    pub bearer_token_env: Option<String>,
+    pub cookies: Option<String>,
+    pub cookies_env: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -132,6 +142,17 @@ impl QuotaConfig {
             .as_ref()
             .and_then(|c| c.cookie.clone())
             .filter(|s| !s.is_empty())
+    }
+
+    pub fn deepseek_platform_creds(&self) -> Option<(String, String)> {
+        let cfg = self.deepseek_platform.as_ref()?;
+        let token = resolve_key(&cfg.bearer_token, &cfg.bearer_token_env)?;
+        let cookies = cfg.cookies.clone().or_else(|| {
+            cfg.cookies_env
+                .as_ref()
+                .and_then(|var| std::env::var(var).ok())
+        })?;
+        Some((token, cookies))
     }
 }
 

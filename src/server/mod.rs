@@ -22,6 +22,8 @@ pub struct AppState {
     pub zai_token: Arc<tokio::sync::RwLock<Option<String>>>,
     pub mimo_cookie: Arc<tokio::sync::RwLock<Option<String>>>,
     pub claude_creds: Arc<tokio::sync::RwLock<Option<PathBuf>>>,
+    pub deepseek_platform_token: Arc<tokio::sync::RwLock<Option<String>>>,
+    pub deepseek_platform_cookies: Arc<tokio::sync::RwLock<Option<String>>>,
     pub next_poll: Arc<AtomicI64>,
     pub last_claude_poll: Arc<AtomicI64>,
     pub poll_interval_secs: u64,
@@ -49,6 +51,10 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
         .route("/api/consumption", get(handlers::api_consumption))
         .route("/api/deepseek", get(handlers::api_deepseek))
         .route("/api/deepseek/history", get(handlers::api_deepseek_history))
+        .route(
+            "/api/deepseek/platform",
+            get(handlers::api_deepseek_platform_usage),
+        )
         .route("/api/zai", get(handlers::api_zai))
         .route("/api/zai/history", get(handlers::api_zai_history))
         .route("/api/zai/models", get(handlers::api_zai_models))
@@ -100,6 +106,11 @@ pub async fn serve(
     let client = builder.build()?;
 
     let db = QuotaDb::open(&config.quota.db_path())?;
+    let (ds_platform_token, ds_platform_cookies) = config
+        .quota
+        .deepseek_platform_creds()
+        .map(|(t, c)| (Some(t), Some(c)))
+        .unwrap_or((None, None));
     let state = Arc::new(AppState {
         db: Arc::new(tokio::sync::Mutex::new(db)),
         client,
@@ -108,6 +119,8 @@ pub async fn serve(
         zai_token: Arc::new(tokio::sync::RwLock::new(config.quota.zai_token())),
         mimo_cookie: Arc::new(tokio::sync::RwLock::new(config.quota.mimo_cookie())),
         claude_creds: Arc::new(tokio::sync::RwLock::new(config.quota.claude_creds_path())),
+        deepseek_platform_token: Arc::new(tokio::sync::RwLock::new(ds_platform_token)),
+        deepseek_platform_cookies: Arc::new(tokio::sync::RwLock::new(ds_platform_cookies)),
         next_poll: Arc::new(AtomicI64::new(0)),
         last_claude_poll: Arc::new(AtomicI64::new(0)),
         poll_interval_secs: config.quota.poll_interval_secs,
@@ -307,6 +320,26 @@ pub async fn do_poll(state: Arc<AppState>) {
         None
     };
 
+    let ds_platform_token = state.deepseek_platform_token.read().await.clone();
+    let ds_platform_cookies = state.deepseek_platform_cookies.read().await.clone();
+    let ds_platform = if let (Some(token), Some(cookies)) = (ds_platform_token, ds_platform_cookies)
+    {
+        let client = state.client.clone();
+        Some(
+            tokio::spawn(async move {
+                crate::quota::deepseek_platform::fetch(&client, &token, &cookies).await
+            })
+            .await
+            .unwrap_or_else(|e| {
+                Err(AgentSenseError::Http(format!(
+                    "DeepSeek Platform task panicked: {e}"
+                )))
+            }),
+        )
+    } else {
+        None
+    };
+
     let db = state.db.lock().await;
     if let Some(Ok(ref snap)) = mmx {
         let _ = db.insert_minimax(snap);
@@ -322,6 +355,9 @@ pub async fn do_poll(state: Arc<AppState>) {
     }
     if let Some(Ok(ref snap)) = mimo {
         let _ = db.insert_mimo(snap);
+    }
+    if let Some(Ok(ref snap)) = ds_platform {
+        let _ = db.insert_deepseek_platform(snap);
     }
     drop(db);
 

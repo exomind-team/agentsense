@@ -76,11 +76,16 @@ pub async fn api_all(State(state): State<Arc<AppState>>) -> axum::Json<serde_jso
         }));
     }
 
-    drop(db);
+    // Reuse the db guard acquired at the top of this fn — locking state.db a second
+    // time here while the first guard is still alive deadlocks the task.
+    let ds_platform_today = db.deepseek_platform_today().unwrap_or_default();
+
+    let ds_platform_configured = state.deepseek_platform_token.read().await.is_some();
 
     axum::Json(serde_json::json!({
         "minimax": { "models": mmx_models_json, "status": mmx_status },
         "deepseek": { "balance": ds_balance, "status": ds_status },
+        "deepseek_platform": { "today": ds_platform_today, "configured": ds_platform_configured },
         "zai": { "quota": zai_quota, "status": zai_status },
         "claude": { "quota": claude_quota, "status": claude_status },
         "mimo": { "quota": mimo_quota, "status": mimo_status },
@@ -194,6 +199,25 @@ pub async fn api_deepseek_history(
     axum::Json(serde_json::json!(history))
 }
 
+#[derive(Deserialize)]
+pub struct DaysQuery {
+    pub days: Option<u32>,
+}
+
+pub async fn api_deepseek_platform_usage(
+    State(state): State<Arc<AppState>>,
+    Query(q): Query<DaysQuery>,
+) -> axum::Json<serde_json::Value> {
+    let days = q.days.unwrap_or(30);
+    let db = state.db.lock().await;
+    let usage = db.deepseek_platform_summary(days).unwrap_or_default();
+    drop(db);
+    axum::Json(serde_json::json!({
+        "usage": usage,
+        "configured": state.deepseek_platform_token.read().await.is_some(),
+    }))
+}
+
 pub async fn api_zai(State(state): State<Arc<AppState>>) -> axum::Json<serde_json::Value> {
     let db = state.db.lock().await;
     let quota = db.latest_zai().unwrap_or_default();
@@ -303,16 +327,21 @@ pub async fn api_config_get(State(state): State<Arc<AppState>>) -> axum::Json<se
     let zai = state.zai_token.read().await;
     let mimo = state.mimo_cookie.read().await;
     let claude = state.claude_creds.read().await;
+    let dsp_token = state.deepseek_platform_token.read().await;
+    let dsp_cookies = state.deepseek_platform_cookies.read().await;
 
     axum::Json(serde_json::json!({
         "minimax_api_key": mask(&mmx),
         "deepseek_api_key": mask(&ds),
         "zai_auth_token": mask(&zai),
         "mimo_cookie": mask(&mimo),
+        "deepseek_platform_token": mask(&dsp_token),
+        "deepseek_platform_cookies": mask(&dsp_cookies),
         "minimax_configured": mmx.is_some(),
         "deepseek_configured": ds.is_some(),
         "zai_configured": zai.is_some(),
         "mimo_configured": mimo.is_some(),
+        "deepseek_platform_configured": dsp_token.is_some() && dsp_cookies.is_some(),
         "claude_configured": claude.is_some(),
         "claude_creds_path": claude.as_ref().map(|p| p.display().to_string()),
     }))
@@ -324,6 +353,8 @@ pub struct ConfigBody {
     pub deepseek_api_key: Option<String>,
     pub zai_auth_token: Option<String>,
     pub mimo_cookie: Option<String>,
+    pub deepseek_platform_token: Option<String>,
+    pub deepseek_platform_cookies: Option<String>,
 }
 
 pub async fn api_config_put(
@@ -352,11 +383,23 @@ pub async fn api_config_put(
             *state.mimo_cookie.write().await = Some(cookie.clone());
         }
     }
+    if let Some(ref token) = body.deepseek_platform_token {
+        if !token.starts_with(masked_prefix) && !token.is_empty() {
+            *state.deepseek_platform_token.write().await = Some(token.clone());
+        }
+    }
+    if let Some(ref cookies) = body.deepseek_platform_cookies {
+        if !cookies.starts_with(masked_prefix) && !cookies.is_empty() {
+            *state.deepseek_platform_cookies.write().await = Some(cookies.clone());
+        }
+    }
 
     let mmx = state.minimax_key.read().await;
     let ds = state.deepseek_key.read().await;
     let zai = state.zai_token.read().await;
     let mimo = state.mimo_cookie.read().await;
+    let dsp_token = state.deepseek_platform_token.read().await;
+    let dsp_cookies = state.deepseek_platform_cookies.read().await;
 
     let mut config = crate::AppConfig::load(&state.config_path).unwrap_or_default();
 
@@ -374,6 +417,12 @@ pub async fn api_config_put(
     });
     config.quota.mimo = Some(crate::config::MimoConfig {
         cookie: mimo.clone(),
+    });
+    config.quota.deepseek_platform = Some(crate::config::DeepSeekPlatformConfig {
+        bearer_token: dsp_token.clone(),
+        bearer_token_env: None,
+        cookies: dsp_cookies.clone(),
+        cookies_env: None,
     });
 
     let toml_str = toml::to_string_pretty(&config).unwrap_or_default();

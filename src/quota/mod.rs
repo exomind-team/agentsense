@@ -1,6 +1,7 @@
 pub mod claude;
 pub mod db;
 pub mod deepseek;
+pub mod deepseek_platform;
 pub mod mimo;
 pub mod minimax;
 pub mod zai;
@@ -20,6 +21,7 @@ pub struct QuotaOrchestrator {
     zai_token: Option<String>,
     claude_creds: Option<PathBuf>,
     mimo_cookie: Option<String>,
+    deepseek_platform_creds: Option<(String, String)>,
 }
 
 pub struct FetchResult {
@@ -28,6 +30,8 @@ pub struct FetchResult {
     pub zai: Option<Result<zai::ZaiSnapshot, AgentSenseError>>,
     pub claude: Option<Result<claude::ClaudeSnapshot, AgentSenseError>>,
     pub mimo: Option<Result<mimo::MimoSnapshot, AgentSenseError>>,
+    pub deepseek_platform:
+        Option<Result<deepseek_platform::DeepSeekPlatformSnapshot, AgentSenseError>>,
 }
 
 impl QuotaOrchestrator {
@@ -51,6 +55,7 @@ impl QuotaOrchestrator {
             zai_token: config.zai_token(),
             claude_creds: config.claude_creds_path(),
             mimo_cookie: config.mimo_cookie(),
+            deepseek_platform_creds: config.deepseek_platform_creds(),
         })
     }
 
@@ -127,6 +132,25 @@ impl QuotaOrchestrator {
             None
         };
 
+        let ds_platform = if let Some((ref token, ref cookies)) = self.deepseek_platform_creds {
+            let token = token.clone();
+            let cookies = cookies.clone();
+            let client = self.client.clone();
+            Some(
+                tokio::spawn(
+                    async move { deepseek_platform::fetch(&client, &token, &cookies).await },
+                )
+                .await
+                .unwrap_or_else(|e| {
+                    Err(AgentSenseError::Http(format!(
+                        "DeepSeek Platform task panicked: {e}"
+                    )))
+                }),
+            )
+        } else {
+            None
+        };
+
         // Persist to DB
         if let Some(Ok(ref snap)) = mmx {
             let _ = self.db.insert_minimax(snap);
@@ -143,6 +167,9 @@ impl QuotaOrchestrator {
         if let Some(Ok(ref snap)) = mimo {
             let _ = self.db.insert_mimo(snap);
         }
+        if let Some(Ok(ref snap)) = ds_platform {
+            let _ = self.db.insert_deepseek_platform(snap);
+        }
 
         FetchResult {
             minimax: mmx,
@@ -150,6 +177,7 @@ impl QuotaOrchestrator {
             zai,
             claude,
             mimo,
+            deepseek_platform: ds_platform,
         }
     }
 

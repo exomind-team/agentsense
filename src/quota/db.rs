@@ -3,6 +3,7 @@ use std::path::Path;
 
 use super::claude::{ClaudeLimit, ClaudeSnapshot};
 use super::deepseek::DeepSeekSnapshot;
+use super::deepseek_platform::{DayUsage, DeepSeekPlatformSnapshot};
 use super::mimo::MimoSnapshot;
 use super::minimax::MinimaxSnapshot;
 use super::zai::ZaiSnapshot;
@@ -93,6 +94,24 @@ impl QuotaDb {
                 month_percent   REAL NOT NULL
             );
             CREATE INDEX IF NOT EXISTS idx_mimo_ts ON mimo_quota_log(ts);
+
+            CREATE TABLE IF NOT EXISTS deepseek_platform_usage (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts              INTEGER NOT NULL,
+                date            TEXT NOT NULL,
+                model           TEXT NOT NULL,
+                cost_cache_hit  REAL NOT NULL,
+                cost_cache_miss REAL NOT NULL,
+                cost_response   REAL NOT NULL,
+                cost_total      REAL NOT NULL,
+                tokens_cache_hit  INTEGER NOT NULL,
+                tokens_cache_miss INTEGER NOT NULL,
+                tokens_response   INTEGER NOT NULL,
+                requests          INTEGER NOT NULL,
+                UNIQUE(date, model)
+            );
+            CREATE INDEX IF NOT EXISTS idx_dsp_ts ON deepseek_platform_usage(ts);
+            CREATE INDEX IF NOT EXISTS idx_dsp_date ON deepseek_platform_usage(date, model);
             ",
         )?;
 
@@ -191,6 +210,90 @@ impl QuotaDb {
             ],
         )?;
         Ok(())
+    }
+
+    pub fn insert_deepseek_platform(
+        &self,
+        snap: &DeepSeekPlatformSnapshot,
+    ) -> Result<(), AgentSenseError> {
+        let tx = self.conn.unchecked_transaction()?;
+        for day in &snap.days {
+            tx.execute(
+                "INSERT OR REPLACE INTO deepseek_platform_usage \
+                 (ts, date, model, cost_cache_hit, cost_cache_miss, cost_response, cost_total, \
+                  tokens_cache_hit, tokens_cache_miss, tokens_response, requests) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                params![
+                    snap.timestamp,
+                    day.date,
+                    day.model,
+                    day.cost_cache_hit,
+                    day.cost_cache_miss,
+                    day.cost_response,
+                    day.cost_total,
+                    day.tokens_cache_hit,
+                    day.tokens_cache_miss,
+                    day.tokens_response,
+                    day.requests,
+                ],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn deepseek_platform_today(&self) -> Result<Vec<DayUsage>, AgentSenseError> {
+        let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+        let mut stmt = self.conn.prepare(
+            "SELECT date, model, cost_cache_hit, cost_cache_miss, cost_response, cost_total,
+                    tokens_cache_hit, tokens_cache_miss, tokens_response, requests
+             FROM deepseek_platform_usage WHERE date = ?1 ORDER BY cost_total DESC",
+        )?;
+        let rows = stmt
+            .query_map(params![today], |row| {
+                Ok(DayUsage {
+                    date: row.get(0)?,
+                    model: row.get(1)?,
+                    cost_cache_hit: row.get(2)?,
+                    cost_cache_miss: row.get(3)?,
+                    cost_response: row.get(4)?,
+                    cost_total: row.get(5)?,
+                    tokens_cache_hit: row.get(6)?,
+                    tokens_cache_miss: row.get(7)?,
+                    tokens_response: row.get(8)?,
+                    requests: row.get(9)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    pub fn deepseek_platform_summary(&self, days: u32) -> Result<Vec<DayUsage>, AgentSenseError> {
+        let cutoff_date = (chrono::Utc::now() - chrono::Duration::days(days as i64))
+            .format("%Y-%m-%d")
+            .to_string();
+        let mut stmt = self.conn.prepare(
+            "SELECT date, model, cost_cache_hit, cost_cache_miss, cost_response, cost_total,
+                    tokens_cache_hit, tokens_cache_miss, tokens_response, requests
+             FROM deepseek_platform_usage WHERE date >= ?1 ORDER BY date DESC, cost_total DESC",
+        )?;
+        let rows = stmt
+            .query_map(params![cutoff_date], |row| {
+                Ok(DayUsage {
+                    date: row.get(0)?,
+                    model: row.get(1)?,
+                    cost_cache_hit: row.get(2)?,
+                    cost_cache_miss: row.get(3)?,
+                    cost_response: row.get(4)?,
+                    cost_total: row.get(5)?,
+                    tokens_cache_hit: row.get(6)?,
+                    tokens_cache_miss: row.get(7)?,
+                    tokens_response: row.get(8)?,
+                    requests: row.get(9)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
     }
 
     fn row_to_claude(row: &rusqlite::Row) -> rusqlite::Result<ClaudeSnapshot> {

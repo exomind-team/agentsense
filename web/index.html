@@ -695,6 +695,10 @@
     </div>
     <div class="ov-value" id="ov-deepseek-value">--</div>
     <div class="ov-sub" id="ov-deepseek-sub">余额</div>
+    <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border)">
+      <div class="ov-value" id="ov-deepseek-daily" style="font-size:14px">--</div>
+      <div class="ov-sub" id="ov-deepseek-daily-sub">今日消耗</div>
+    </div>
   </div>
   <div class="overview-card" id="ov-zai">
     <div class="ov-header">
@@ -751,6 +755,7 @@
 <div class="service-tabs">
   <button class="service-tab active" data-service="minimax">MiniMax 🌐</button>
   <button class="service-tab" data-service="deepseek">DeepSeek</button>
+  <button class="service-tab" data-service="deepseek_platform">DS 用量</button>
   <button class="service-tab" data-service="zai">GLM</button>
   <button class="service-tab" data-service="claude">Claude</button>
   <button class="service-tab" data-service="mimo">MiMo</button>
@@ -827,6 +832,42 @@
   </div>
   <div class="no-key-msg" id="ds-no-key" style="display:none">
     DeepSeek API Key 未配置。<a onclick="document.getElementById('settings-btn').click()">前往设置</a>
+  </div>
+</div>
+
+<!-- ═══════ DeepSeek Platform Section ═══════ -->
+<div class="service-section" id="sec-deepseek_platform">
+  <div id="deepseek-platform-content">
+    <div class="consumption-summary">
+      <div class="consumption-card">
+        <div class="card-label">今日消耗</div>
+        <div class="card-value" id="ds-daily-cost">--</div>
+        <div class="card-sub" id="ds-daily-cost-sub">CNY</div>
+      </div>
+      <div class="consumption-card">
+        <div class="card-label">V4 Pro</div>
+        <div class="card-value" id="ds-v4pro-cost">--</div>
+        <div class="card-sub" id="ds-v4pro-cost-sub">今日</div>
+      </div>
+      <div class="consumption-card">
+        <div class="card-label">V4 Flash</div>
+        <div class="card-value" id="ds-v4flash-cost">--</div>
+        <div class="card-sub" id="ds-v4flash-cost-sub">今日</div>
+      </div>
+      <div class="consumption-card">
+        <div class="card-label">缓存命中率</div>
+        <div class="card-value" id="ds-cache-hit-rate">--</div>
+        <div class="card-sub" id="ds-cache-hit-rate-sub">V4 Pro</div>
+      </div>
+    </div>
+
+    <div class="chart-container">
+      <div class="chart-title">每日消耗趋势（30天）</div>
+      <div id="ds-usage-chart" class="chart" role="img" aria-label="DeepSeek每日消耗趋势"></div>
+    </div>
+  </div>
+  <div class="no-key-msg" id="dsp-no-key" style="display:none">
+    DeepSeek Platform 凭证未配置。<a onclick="document.getElementById('settings-btn').click()">前往设置</a>
   </div>
 </div>
 
@@ -1037,6 +1078,17 @@
       <input type="password" id="cfg-mimo-cookie" placeholder="api-platform_serviceToken=..." autocomplete="off" />
       <div class="form-hint">从 platform.xiaomimimo.com 控制台复制 Cookie。Cookie 会过期，需定期更新</div>
     </div>
+    <hr style="border-color:var(--border);margin:16px 0" />
+    <div class="form-group">
+      <label for="cfg-dsp-token">DeepSeek 平台 Bearer Token</label>
+      <input type="password" id="cfg-dsp-token" placeholder="+aULJx+x/GS62Wb..." autocomplete="off" />
+      <div class="form-hint">从 platform.deepseek.com 抓包获取（Authorization header）</div>
+    </div>
+    <div class="form-group">
+      <label for="cfg-dsp-cookies">DeepSeek 平台 Cookies</label>
+      <textarea id="cfg-dsp-cookies" rows="3" placeholder="ds_cookie_preference=...; HWWAFSESID=...; ..." style="font-family:monospace;font-size:11px"></textarea>
+      <div class="form-hint">从浏览器 DevTools 复制完整 cookie 字符串</div>
+    </div>
     <div class="modal-actions">
       <button class="modal-close" id="modal-cancel">取消</button>
       <button id="config-save">保存</button>
@@ -1084,6 +1136,7 @@ let activeService = 'minimax';
 let chart = null;
 let weeklyBarChart = null;
 let dsHistoryChart = null;
+let dsUsageChart = null;
 let zaiHistoryChart = null;
 let zaiHourlyChart = null;
 let zaiModelBar = null;
@@ -1121,6 +1174,7 @@ function init() {
     chart?.resize();
     weeklyBarChart?.resize();
     dsHistoryChart?.resize();
+    dsUsageChart?.resize();
     zaiHistoryChart?.resize();
     zaiHourlyChart?.resize();
     zaiModelBar?.resize();
@@ -1177,6 +1231,7 @@ function bindServiceTabs() {
         chart?.resize();
         weeklyBarChart?.resize();
         dsHistoryChart?.resize();
+        dsUsageChart?.resize();
         zaiHistoryChart?.resize();
         zaiHourlyChart?.resize();
         zaiModelBar?.resize();
@@ -1215,6 +1270,8 @@ async function loadConfigToForm() {
     document.getElementById('cfg-ds-key').value = cfg.deepseek_api_key || '';
     document.getElementById('cfg-zai-token').value = cfg.zai_auth_token || '';
     document.getElementById('cfg-mimo-cookie').value = cfg.mimo_cookie || '';
+    document.getElementById('cfg-dsp-token').value = cfg.deepseek_platform_token || '';
+    document.getElementById('cfg-dsp-cookies').value = cfg.deepseek_platform_cookies || '';
   } catch {}
 }
 
@@ -1223,6 +1280,8 @@ async function saveConfigFromForm() {
   const dsKey = document.getElementById('cfg-ds-key').value.trim();
   const zaiToken = document.getElementById('cfg-zai-token').value.trim();
   const mimoCookie = document.getElementById('cfg-mimo-cookie').value.trim();
+  const dspToken = document.getElementById('cfg-dsp-token').value.trim();
+  const dspCookies = document.getElementById('cfg-dsp-cookies').value.trim();
 
   try {
     await fetch(`${API_BASE}/api/config`, {
@@ -1233,6 +1292,8 @@ async function saveConfigFromForm() {
         deepseek_api_key: dsKey,
         zai_auth_token: zaiToken,
         mimo_cookie: mimoCookie,
+        deepseek_platform_token: dspToken,
+        deepseek_platform_cookies: dspCookies,
       }),
     });
     document.getElementById('settings-modal').classList.remove('active');
@@ -1625,6 +1686,7 @@ async function fetchAll() {
     fetchOverview(),
     fetchMiniMaxDetail(),
     fetchDeepSeekDetail(),
+    fetchDeepSeekPlatformDetail(),
     fetchZaiDetail(),
     fetchClaudeDetail(),
     fetchMimoDetail(),
@@ -1707,6 +1769,16 @@ async function fetchDeepSeekDetail() {
     renderDeepSeek(balanceData, historyData);
   } catch (err) {
     console.error('fetchDeepSeekDetail error:', err);
+  }
+}
+
+async function fetchDeepSeekPlatformDetail() {
+  try {
+    const res = await fetch(`${API_BASE}/api/deepseek/platform?days=30`);
+    const data = await res.json();
+    renderDeepSeekPlatform(data);
+  } catch (err) {
+    console.error('fetchDeepSeekPlatformDetail error:', err);
   }
 }
 
@@ -1810,6 +1882,18 @@ function renderOverview(data) {
       document.getElementById('ov-deepseek-sub').textContent =
         '赠送 ¥' + dsBal.granted_cny.toFixed(2) + ' + 充值 ¥' + dsBal.topped_up_cny.toFixed(2);
     }
+  }
+
+  // DeepSeek Platform daily usage (overview card sub-display)
+  const dspToday = data.deepseek_platform?.today || [];
+  const dspConfigured = data.deepseek_platform?.configured;
+  if (dspToday.length > 0) {
+    const totalCost = dspToday.reduce((sum, u) => sum + u.cost_total, 0);
+    document.getElementById('ov-deepseek-daily').textContent = '¥' + totalCost.toFixed(2);
+    document.getElementById('ov-deepseek-daily-sub').textContent = '今日消耗';
+  } else {
+    document.getElementById('ov-deepseek-daily').textContent = dspConfigured ? '¥0.00' : '--';
+    document.getElementById('ov-deepseek-daily-sub').textContent = '今日消耗';
   }
 
   // Z.AI
@@ -1931,6 +2015,109 @@ function renderDeepSeek(data, history) {
       ]}},
       data: history.map(h => [h.ts, h.total_balance_cny]),
     }],
+  }, { notMerge: true });
+}
+
+// ── Render DeepSeek Platform (daily usage) ──────────────────────────────────
+
+function renderDeepSeekPlatform(data) {
+  const noKey = document.getElementById('dsp-no-key');
+  const content = document.getElementById('deepseek-platform-content');
+
+  if (!data.configured) {
+    noKey.style.display = 'block';
+    content.style.display = 'none';
+    return;
+  }
+  noKey.style.display = 'none';
+  content.style.display = 'block';
+
+  const usage = data.usage || [];
+  const today = new Date().toISOString().split('T')[0];
+  const todayUsage = usage.filter(u => u.date === today);
+  const todayTotal = todayUsage.reduce((sum, u) => sum + u.cost_total, 0);
+  const todayV4Pro = todayUsage.filter(u => u.model === 'deepseek-v4-pro').reduce((sum, u) => sum + u.cost_total, 0);
+  const todayV4Flash = todayUsage.filter(u => u.model === 'deepseek-v4-flash').reduce((sum, u) => sum + u.cost_total, 0);
+
+  document.getElementById('ds-daily-cost').textContent = '¥' + todayTotal.toFixed(2);
+  document.getElementById('ds-v4pro-cost').textContent = '¥' + todayV4Pro.toFixed(2);
+  document.getElementById('ds-v4flash-cost').textContent = '¥' + todayV4Flash.toFixed(2);
+
+  // Cache hit rate for V4 Pro
+  const v4ProRows = todayUsage.filter(u => u.model === 'deepseek-v4-pro');
+  const totalCacheHit = v4ProRows.reduce((sum, u) => sum + u.tokens_cache_hit, 0);
+  const totalCacheMiss = v4ProRows.reduce((sum, u) => sum + u.tokens_cache_miss, 0);
+  const cacheHitRate = (totalCacheHit + totalCacheMiss) > 0
+    ? (totalCacheHit / (totalCacheHit + totalCacheMiss) * 100)
+    : 0;
+  document.getElementById('ds-cache-hit-rate').textContent = cacheHitRate.toFixed(1) + '%';
+
+  if (usage.length === 0) return;
+
+  // Usage chart
+  if (!dsUsageChart) {
+    dsUsageChart = echarts.init(document.getElementById('ds-usage-chart'), null, { renderer: 'canvas' });
+  }
+
+  // Aggregate by date
+  const dailyMap = {};
+  for (const u of usage) {
+    if (!dailyMap[u.date]) dailyMap[u.date] = { v4pro: 0, v4flash: 0, total: 0 };
+    if (u.model === 'deepseek-v4-pro') dailyMap[u.date].v4pro += u.cost_total;
+    else if (u.model === 'deepseek-v4-flash') dailyMap[u.date].v4flash += u.cost_total;
+    dailyMap[u.date].total += u.cost_total;
+  }
+
+  const dates = Object.keys(dailyMap).sort();
+  const v4proData = dates.map(d => [d, dailyMap[d].v4pro]);
+  const v4flashData = dates.map(d => [d, dailyMap[d].v4flash]);
+  const totalData = dates.map(d => [d, dailyMap[d].total]);
+
+  const isDark = document.documentElement.getAttribute('data-theme') !== 'light';
+  const textColor = isDark ? '#8b949e' : '#656d76';
+  const splitColor = isDark ? '#21262d' : '#eaeef2';
+
+  dsUsageChart.setOption({
+    backgroundColor: 'transparent',
+    textStyle: { color: textColor, fontFamily: 'Cascadia Code, Consolas, monospace' },
+    tooltip: {
+      trigger: 'axis',
+      backgroundColor: isDark ? '#21262d' : '#f6f8fa',
+      borderColor: isDark ? '#30363d' : '#d0d7de',
+      textStyle: { color: isDark ? '#e6edf3' : '#1f2328', fontSize: 12 },
+      formatter: params => {
+        let html = `<div style="font-weight:600;margin-bottom:4px">${params[0].value[0]}</div>`;
+        for (const p of params) {
+          html += `<div>${p.marker} ${p.seriesName}: ¥${Number(p.value[1]).toFixed(2)}</div>`;
+        }
+        return html;
+      },
+    },
+    legend: {
+      data: ['V4 Pro', 'V4 Flash', '总计'],
+      textStyle: { color: textColor, fontSize: 11 },
+      top: 0,
+    },
+    grid: { left: 60, right: 20, top: 30, bottom: 30 },
+    xAxis: {
+      type: 'category', data: dates,
+      axisLine: { lineStyle: { color: splitColor } },
+      axisLabel: { color: textColor, fontSize: 10, rotate: 45 },
+      splitLine: { show: false },
+    },
+    yAxis: {
+      type: 'value', name: 'CNY',
+      nameTextStyle: { color: textColor, fontSize: 10 },
+      axisLine: { show: false },
+      axisLabel: { color: textColor, fontSize: 10 },
+      splitLine: { lineStyle: { color: splitColor } },
+    },
+    series: [
+      { name: 'V4 Pro',   type: 'bar',  stack: 'cost', data: v4proData,   itemStyle: { color: '#4f8ff7' } },
+      { name: 'V4 Flash', type: 'bar',  stack: 'cost', data: v4flashData, itemStyle: { color: '#22d3ee' } },
+      { name: '总计',     type: 'line', data: totalData,
+        lineStyle: { color: '#f85149', width: 2 }, symbol: 'circle', symbolSize: 6, itemStyle: { color: '#f85149' } },
+    ],
   }, { notMerge: true });
 }
 
@@ -2649,7 +2836,11 @@ function updateFooter(data) {
 
 // ── Boot ─────────────────────────────────────────────────────────────────────
 
-init();
+try {
+  init();
+} catch (err) {
+  document.body.innerHTML = '<pre style="color:red;padding:20px">Init error: ' + err.message + '\n' + err.stack + '</pre>';
+}
 </script>
 </body>
 </html>
