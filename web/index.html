@@ -914,7 +914,7 @@
       <div class="consumption-card" style="text-align:center;"><div class="card-label">主板温度</div><div class="card-value" style="font-size:20px" id="psu-temp-main">--</div></div>
       <div class="consumption-card" style="text-align:center;"><div class="card-label">进风温度 1</div><div class="card-value" style="font-size:20px" id="psu-temp-air">--</div></div>
       <div class="consumption-card" style="text-align:center;"><div class="card-label">进风温度 2</div><div class="card-value" style="font-size:20px" id="psu-temp-air2">--</div></div>
-      <div class="consumption-card" style="text-align:center;"><div class="card-label">风扇转速</div><div class="card-value" style="font-size:20px" id="psu-fan-rpm">--</div><div style="font-size:11px;color:var(--muted)" id="psu-fan-pwm">PWM --</div></div>
+      <div class="consumption-card" style="text-align:center;"><div class="card-label">风扇转速</div><div class="card-value" style="font-size:20px" id="psu-fan-rpm">--</div></div>
     </div>
     <div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;overflow:hidden;">
       <div style="padding:12px 14px;border-bottom:1px solid var(--border);">
@@ -1161,11 +1161,40 @@ async function saveConfigFromForm() {
 
 // ── PSU Power ──────────────────────────────────────────────────────────────────
 
+// FIX 3: safe numeric formatter — guards null/undefined/NaN before .toFixed()
+function fmtNum(x, digits) {
+  if (digits === undefined) digits = 0;
+  return (x === null || x === undefined || isNaN(x)) ? '--' : Number(x).toFixed(digits);
+}
+
+// FIX 8b: throttled localStorage write for power buffer (persist every ~5s)
+let _powerLsWriteCounter = 0;
+function maybePersistPowerBuffer() {
+  _powerLsWriteCounter++;
+  if (_powerLsWriteCounter >= 5) {
+    _powerLsWriteCounter = 0;
+    try { localStorage.setItem(POWER_LS_KEY, JSON.stringify(powerLocalStorage)); } catch(e) {}
+  }
+}
+
 function startPowerPolling() {
   if (powerPollInterval) return;
   fetchPowerHistory('30m');
+  let powerPollTick = 0;
   powerPollInterval = setInterval(async () => {
     await fetchPowerOverview();
+    // Fan RPM / PWM / temperatures change continuously and are a cheap cached read
+    // on the backend (no DB), so refresh them live every second too. Without this
+    // the thermal card was fetched only once at page load and never updated.
+    fetchThermal();
+    // Cost is a DB aggregation that changes slowly — refresh every ~5s, not every tick.
+    if (powerPollTick % 5 === 0) fetchPsuCost();
+    powerPollTick++;
+    // FIX 2: re-render live trend from in-memory buffer every second
+    const activeRange = document.querySelector('#power-range-btns .filter-tab.active');
+    if (activeRange && activeRange.dataset.range === '30m' && powerLocalStorage.length > 0) {
+      renderPowerTrend(powerLocalStorage.map(p => ({ ts: p.ts, ac_w: p.ac_w })));
+    }
   }, 1000);
 }
 
@@ -1186,26 +1215,41 @@ async function fetchPowerOverview() {
       el('ov-power-kwh').textContent = '--';
       el('ov-power-cost').textContent = '--';
       el('psu-current-w').textContent = '--';
+      // FIX 4: show no-key / hide content when disconnected
+      document.getElementById('power-no-key').style.display = 'block';
+      document.getElementById('power-content').style.display = 'none';
       return;
     }
+    // FIX 4: show content / hide no-key when connected
+    document.getElementById('power-no-key').style.display = 'none';
+    document.getElementById('power-content').style.display = 'block';
+
     el('ov-power-status').textContent = '已连接';
-    el('ov-power-status').className = 'ov-status green';
-    el('ov-power-value').textContent = d.ac_input_w.toFixed(0) + 'W';
+    el('ov-power-status').className = 'ov-status ok';
+    // FIX 3: use fmtNum for all numeric fields
+    el('ov-power-value').textContent = fmtNum(d.ac_input_w, 0) + 'W';
     el('ov-power-sub').textContent = 'AC 输入功率';
-    el('psu-current-w').textContent = d.ac_input_w.toFixed(0) + 'W';
-    el('psu-peak-w').textContent = d.today_peak_w.toFixed(0) + 'W';
-    el('psu-avg-w').textContent = d.today_avg_w.toFixed(0) + 'W';
-    el('psu-dc-w').textContent = '~' + d.dc_output_est_w.toFixed(0) + 'W';
-    // Store in localStorage buffer
-    powerLocalStorage.push({ ts: Date.now(), ac_w: d.ac_input_w });
-    if (powerLocalStorage.length > MAX_POWER_PTS) powerLocalStorage = powerLocalStorage.slice(-MAX_POWER_PTS);
-    try { localStorage.setItem(POWER_LS_KEY, JSON.stringify(powerLocalStorage)); } catch(e) {}
+    el('psu-current-w').textContent = fmtNum(d.ac_input_w, 0) + 'W';
+    el('psu-peak-w').textContent = fmtNum(d.today_peak_w, 0) + 'W';
+    el('psu-avg-w').textContent = fmtNum(d.today_avg_w, 0) + 'W';
+    el('psu-dc-w').textContent = '~' + fmtNum(d.dc_output_est_w, 0) + 'W';
+    // Store in in-memory buffer; persist to localStorage throttled (FIX 8b)
+    if (d.ac_input_w !== null && d.ac_input_w !== undefined) {
+      powerLocalStorage.push({ ts: Date.now(), ac_w: d.ac_input_w });
+      // FIX 7a: prune by age (keep only last 30 minutes)
+      const cutoff = Date.now() - 30 * 60 * 1000;
+      powerLocalStorage = powerLocalStorage.filter(p => p.ts >= cutoff);
+      // Also cap by count as safety net
+      if (powerLocalStorage.length > MAX_POWER_PTS) powerLocalStorage = powerLocalStorage.slice(-MAX_POWER_PTS);
+      maybePersistPowerBuffer();
+    }
   } catch(e) { console.error('fetchPowerOverview:', e); }
 }
 
 async function fetchPsuCost() {
   try {
     const res = await fetch(`${API_BASE}/api/psu-cost`);
+    if (!res.ok) return;
     const d = await res.json();
     const el = (id) => document.getElementById(id);
     if (!d.connected) {
@@ -1213,20 +1257,22 @@ async function fetchPsuCost() {
       el('ov-power-cost').textContent = '--';
       return;
     }
-    el('ov-power-kwh').textContent = d.day.kwh.toFixed(2) + ' kWh';
-    el('ov-power-cost').textContent = '¥' + d.day.cost.toFixed(2);
-    el('psu-day-cost').textContent = '¥' + d.day.cost.toFixed(2);
-    el('psu-day-kwh').textContent = d.day.kwh.toFixed(2) + ' kWh';
-    el('psu-week-cost').textContent = '¥' + d.week.cost.toFixed(2);
-    el('psu-week-kwh').textContent = d.week.kwh.toFixed(1) + ' kWh';
-    el('psu-month-cost').textContent = '¥' + d.month.cost.toFixed(2);
-    el('psu-month-kwh').textContent = d.month.kwh.toFixed(1) + ' kWh';
-    el('psu-day-proj').textContent = '¥' + d.projected.day.cost.toFixed(2) + ' · ' + d.projected.day.kwh.toFixed(1) + ' kWh';
-    el('psu-week-proj').textContent = '¥' + d.projected.week.cost.toFixed(2) + ' · ' + d.projected.week.kwh.toFixed(1) + ' kWh';
-    el('psu-month-proj').textContent = '¥' + d.projected.month.cost.toFixed(2) + ' · ' + d.projected.month.kwh.toFixed(0) + ' kWh';
-    el('psu-price').textContent = '¥' + d.price_per_kwh + '/kWh';
-    const h = Math.floor(d.monitoring_duration_s / 3600);
-    const m = Math.floor((d.monitoring_duration_s % 3600) / 60);
+    // FIX 3: guard all deep numeric fields with optional chaining + fmtNum
+    el('ov-power-kwh').textContent = fmtNum(d.day?.kwh, 2) + ' kWh';
+    el('ov-power-cost').textContent = '¥' + fmtNum(d.day?.cost, 2);
+    el('psu-day-cost').textContent = '¥' + fmtNum(d.day?.cost, 2);
+    el('psu-day-kwh').textContent = fmtNum(d.day?.kwh, 2) + ' kWh';
+    el('psu-week-cost').textContent = '¥' + fmtNum(d.week?.cost, 2);
+    el('psu-week-kwh').textContent = fmtNum(d.week?.kwh, 1) + ' kWh';
+    el('psu-month-cost').textContent = '¥' + fmtNum(d.month?.cost, 2);
+    el('psu-month-kwh').textContent = fmtNum(d.month?.kwh, 1) + ' kWh';
+    el('psu-day-proj').textContent = '¥' + fmtNum(d.projected?.day?.cost, 2) + ' · ' + fmtNum(d.projected?.day?.kwh, 1) + ' kWh';
+    el('psu-week-proj').textContent = '¥' + fmtNum(d.projected?.week?.cost, 2) + ' · ' + fmtNum(d.projected?.week?.kwh, 1) + ' kWh';
+    el('psu-month-proj').textContent = '¥' + fmtNum(d.projected?.month?.cost, 2) + ' · ' + fmtNum(d.projected?.month?.kwh, 0) + ' kWh';
+    el('psu-price').textContent = '¥' + (d.price_per_kwh ?? '--') + '/kWh';
+    const durS = d.monitoring_duration_s ?? 0;
+    const h = Math.floor(durS / 3600);
+    const m = Math.floor((durS % 3600) / 60);
     el('psu-duration').textContent = h + 'h ' + m + 'm';
   } catch(e) { console.error('fetchPsuCost:', e); }
 }
@@ -1234,32 +1280,47 @@ async function fetchPsuCost() {
 async function fetchThermal() {
   try {
     const res = await fetch(`${API_BASE}/api/thermal`);
+    if (!res.ok) return;
     const d = await res.json();
     const el = (id) => document.getElementById(id);
     if (!d.connected) return;
-    el('psu-temp-main').textContent = d.temp_main_c.toFixed(0) + '°C';
-    el('psu-temp-air').textContent = d.temp_air_c.toFixed(0) + '°C';
-    el('psu-temp-air2').textContent = d.temp_air2_c.toFixed(0) + '°C';
-    el('psu-fan-rpm').textContent = d.fan_rpm + ' RPM';
-    el('psu-fan-pwm').textContent = 'PWM ' + d.fan_pwm + '%';
+    // FIX 3: guard all numeric fields with fmtNum
+    el('psu-temp-main').textContent = fmtNum(d.temp_main_c, 0) + '°C';
+    el('psu-temp-air').textContent = fmtNum(d.temp_air_c, 0) + '°C';
+    el('psu-temp-air2').textContent = fmtNum(d.temp_air2_c, 0) + '°C';
+    // Fan RPM is a real protocol field; the PSU reports no actual PWM duty cycle
+    // (the old "PWM" was the raw 0x04 mode_byte, which is meaningless), so we show RPM only.
+    el('psu-fan-rpm').textContent = (d.fan_rpm !== null && d.fan_rpm !== undefined ? d.fan_rpm : '--') + ' RPM';
   } catch(e) { console.error('fetchThermal:', e); }
 }
 
 async function fetchPowerHistory(range) {
   try {
     const res = await fetch(`${API_BASE}/api/power/history?range=${range}`);
+    if (!res.ok) return;
     const d = await res.json();
     if (!d.connected) return;
-    let data = d.data;
-    // For 30m, merge with localStorage
-    if (range === '30m' && powerLocalStorage.length > 0) {
-      const serverStart = data.length > 0 ? data[0].ts : Date.now();
-      const localPts = powerLocalStorage.filter(p => p.ts >= serverStart);
-      data = data.concat(localPts.map(p => ({ ts: p.ts, ac_w: p.ac_w })));
-      // Deduplicate by ts (keep last)
-      const seen = new Map();
-      for (const p of data) seen.set(p.ts, p);
-      data = Array.from(seen.values()).sort((a, b) => a.ts - b.ts);
+    let data = d.data || [];
+    if (range === '30m') {
+      // FIX 7a: prune local buffer by age before merge
+      const cutoff = Date.now() - 30 * 60 * 1000;
+      powerLocalStorage = powerLocalStorage.filter(p => p.ts >= cutoff);
+
+      // FIX 7b: if server returned empty, fall back to local buffer directly
+      if (data.length === 0 && powerLocalStorage.length > 0) {
+        renderPowerTrend(powerLocalStorage.map(p => ({ ts: p.ts, ac_w: p.ac_w })));
+        return;
+      }
+
+      if (powerLocalStorage.length > 0) {
+        const serverStart = data.length > 0 ? data[0].ts : Date.now();
+        const localPts = powerLocalStorage.filter(p => p.ts >= serverStart);
+        data = data.concat(localPts.map(p => ({ ts: p.ts, ac_w: p.ac_w })));
+        // Deduplicate by ts (keep last)
+        const seen = new Map();
+        for (const p of data) seen.set(p.ts, p);
+        data = Array.from(seen.values()).sort((a, b) => a.ts - b.ts);
+      }
     }
     renderPowerTrend(data);
   } catch(e) { console.error('fetchPowerHistory:', e); }
@@ -1267,24 +1328,45 @@ async function fetchPowerHistory(range) {
 
 function renderPowerTrend(data) {
   if (!powerTrendChart || data.length === 0) return;
+  // FIX 1: resolve theme-aware hex colors — ECharts canvas cannot parse CSS vars
+  const isDark = document.documentElement.getAttribute('data-theme') !== 'light';
+  const textColor = isDark ? '#8b949e' : '#656d76';
+  const splitColor = isDark ? '#30363d' : '#d0d7de';
   const times = data.map(d => {
     const dt = new Date(d.ts);
-    return dt.getHours().toString().padStart(2,'0') + ':' + dt.getMinutes().toString().padStart(2,'0');
+    return dt.getHours().toString().padStart(2,'0') + ':' + dt.getMinutes().toString().padStart(2,'0') + ':' + dt.getSeconds().toString().padStart(2,'0');
   });
   const values = data.map(d => d.ac_w);
+  // FIX 8a: add notMerge:true so range switches don't leave stale series data
   powerTrendChart.setOption({
-    tooltip: { trigger: 'axis', valueFormatter: v => v?.toFixed(0) + 'W' },
+    backgroundColor: 'transparent',
+    tooltip: {
+      trigger: 'axis',
+      backgroundColor: isDark ? '#21262d' : '#f6f8fa',
+      borderColor: isDark ? '#30363d' : '#d0d7de',
+      textStyle: { color: isDark ? '#e6edf3' : '#1f2328', fontSize: 12 },
+      valueFormatter: v => (v !== null && v !== undefined ? v.toFixed(0) : '--') + 'W',
+    },
     grid: { left: 50, right: 16, top: 16, bottom: 30 },
-    xAxis: { type: 'category', data: times, axisLabel: { color: 'var(--muted)', fontSize: 10 }, axisLine: { lineStyle: { color: 'var(--border)' } } },
-    yAxis: { type: 'value', axisLabel: { color: 'var(--muted)', fontSize: 10, formatter: v => v + 'W' }, splitLine: { lineStyle: { color: 'var(--border)' } } },
+    xAxis: {
+      type: 'category', data: times,
+      axisLabel: { color: textColor, fontSize: 10 },
+      axisLine: { lineStyle: { color: splitColor } },
+    },
+    yAxis: {
+      type: 'value',
+      axisLabel: { color: textColor, fontSize: 10, formatter: v => v + 'W' },
+      splitLine: { lineStyle: { color: splitColor } },
+    },
     series: [{
-      type: 'line', data: values, smooth: true, symbol: 'none', lineStyle: { color: '#f59e0b', width: 2 },
+      type: 'line', data: values, smooth: true, symbol: 'none',
+      lineStyle: { color: '#f59e0b', width: 2 },
       areaStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
         { offset: 0, color: 'rgba(245,158,11,0.25)' },
         { offset: 1, color: 'rgba(245,158,11,0.02)' },
       ])},
     }],
-  });
+  }, { notMerge: true });
 }
 
 function initPowerRangeButtons() {
@@ -1298,17 +1380,36 @@ function initPowerRangeButtons() {
 }
 
 function initFanControls() {
-  // Fan mode buttons
+  // Fan mode buttons — FIX 5: await first, only set .active on success
   document.querySelectorAll('#fan-mode-btns .fan-mode-btn').forEach(btn => {
     btn.addEventListener('click', async () => {
+      // Record the previously-active button so we can revert on failure
+      const prevActive = document.querySelector('#fan-mode-btns .fan-mode-btn.active');
       document.querySelectorAll('#fan-mode-btns .fan-mode-btn').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
       try {
-        await fetch(`${API_BASE}/api/fan/mode`, {
+        const res = await fetch(`${API_BASE}/api/fan/mode`, {
           method: 'POST', headers: {'Content-Type':'application/json'},
           body: JSON.stringify({ mode: btn.dataset.mode }),
         });
-      } catch(e) { console.error('setFanMode:', e); }
+        if (!res.ok) {
+          // Revert to previous active state
+          if (prevActive) prevActive.classList.add('active');
+          let msg = 'setFanMode HTTP ' + res.status;
+          try { const errD = await res.json(); msg = errD.message || msg; } catch(_) {}
+          alert(msg);
+          return;
+        }
+        const d = await res.json();
+        if (!d.ok) {
+          if (prevActive) prevActive.classList.add('active');
+          alert(d.message || 'setFanMode failed');
+          return;
+        }
+        btn.classList.add('active');
+      } catch(e) {
+        if (prevActive) prevActive.classList.add('active');
+        console.error('setFanMode:', e);
+      }
     });
   });
   // PWM slider
@@ -1321,6 +1422,13 @@ function initFanControls() {
         method: 'POST', headers: {'Content-Type':'application/json'},
         body: JSON.stringify({ pwm: parseInt(slider.value) }),
       });
+      // FIX 5: guard res.ok before parsing JSON to avoid throwing on non-JSON error body
+      if (!res.ok) {
+        let msg = 'setFanSpeed HTTP ' + res.status;
+        try { const errD = await res.json(); msg = errD.message || msg; } catch(_) {}
+        alert(msg);
+        return;
+      }
       const d = await res.json();
       if (!d.ok) alert(d.message);
     } catch(e) { console.error('setFanSpeed:', e); }
@@ -1385,12 +1493,36 @@ function initFanCurveEditor() {
 
   document.getElementById('fan-curve-apply').addEventListener('click', async () => {
     try {
-      // wattson requires 3 or 5 points. We have 4, so add a midpoint
-      const pts3 = [points[0], points[Math.floor(points.length/2)], points[points.length-1]];
+      // FIX 6: sort 4 points by temperature ascending, enforce PWM>=20
+      const sorted = points.slice().sort((a, b) => a[0] - b[0]).map(([t, p]) => [t, Math.max(20, p)]);
+      // Reduce 4->3: keep first, last, and the TRUE middle (average of the two inner points)
+      // This avoids silently dropping a user-edited point.
+      // sorted = [p0, p1, p2, p3]; inner mid = avg of p1 and p2 temps/pwms
+      const midTemp = Math.round((sorted[1][0] + sorted[2][0]) / 2);
+      const midPwm  = Math.max(20, Math.round((sorted[1][1] + sorted[2][1]) / 2));
+      const pts3 = [sorted[0], [midTemp, midPwm], sorted[3]];
+      // Enforce strict temperature monotonicity across the 3 emitted points
+      // (should already hold after sort+avg, but clamp defensively)
+      pts3[1][0] = Math.max(pts3[0][0] + 1, Math.min(pts3[2][0] - 1, pts3[1][0]));
+      // Reject a degenerate (non-monotonic) curve: when all points are stacked at
+      // the same temperature the clamp above cannot produce a strictly increasing
+      // triple, which the backend would reject or mishandle. Ask the user to spread them.
+      if (!(pts3[0][0] < pts3[1][0] && pts3[1][0] < pts3[2][0])) {
+        alert('风扇曲线的温度点必须严格递增，请拉开各点的温度间距');
+        return;
+      }
+
       const res = await fetch(`${API_BASE}/api/fan/curve`, {
         method: 'POST', headers: {'Content-Type':'application/json'},
         body: JSON.stringify({ points: pts3.map(([t,p]) => [t,p]) }),
       });
+      // FIX 5: guard res.ok before parsing JSON
+      if (!res.ok) {
+        let msg = 'setFanCurve HTTP ' + res.status;
+        try { const errD = await res.json(); msg = errD.message || msg; } catch(_) {}
+        alert(msg);
+        return;
+      }
       const d = await res.json();
       if (!d.ok) alert(d.message);
     } catch(e) { console.error('setFanCurve:', e); }
