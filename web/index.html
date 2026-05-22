@@ -24,6 +24,7 @@
       --ds-color: #4f8ff7;
       --zai-color: #22d3ee;
       --claude-color: #d97757;
+      --psu-color: #f59e0b;
     }
 
     [data-theme="light"] {
@@ -44,6 +45,7 @@
       --ds-color: #1d4ed8;
       --zai-color: #0891b2;
       --claude-color: #bd5d3a;
+      --psu-color: #d97706;
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -490,6 +492,18 @@
     .pct-badge.low     { background: #4d3a1a; color: var(--yellow); }
     .pct-badge.very-low{ background: #4d1a1a; color: var(--red); }
 
+    /* ── PSU Power ── */
+    .psu-card { border-left: 3px solid var(--psu-color); }
+    .ov-dot.psu { background: var(--psu-color); }
+    .fan-mode-btn {
+      background: var(--bg2); border: 1px solid var(--border); border-radius: 5px;
+      padding: 5px 14px; color: var(--muted); font-family: inherit; font-size: 12px;
+      cursor: pointer; transition: all 0.2s;
+    }
+    .fan-mode-btn.active, .fan-mode-btn:hover {
+      border-color: var(--psu-color); color: var(--psu-color); font-weight: 600;
+    }
+
     /* ── Settings Modal ── */
     .modal-overlay {
       display: none;
@@ -680,6 +694,25 @@
     <div class="ov-sub" id="ov-claude-sub">5h 窗口</div>
     <div class="ov-bar-wrap"><div class="ov-bar" id="ov-claude-bar" style="width:0;background:var(--claude-color)"></div></div>
   </div>
+  <div class="overview-card psu-card" id="ov-power">
+    <div class="ov-header">
+      <span style="font-size:14px;">⚡</span>
+      <span class="ov-label">Power</span>
+      <span class="ov-status" id="ov-power-status">--</span>
+    </div>
+    <div class="ov-value" id="ov-power-value" style="color:var(--psu-color)">--</div>
+    <div class="ov-sub" id="ov-power-sub">AC 输入功率</div>
+    <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);display:flex;justify-content:space-between;">
+      <div>
+        <div style="font-size:14px;font-weight:700;color:var(--text)" id="ov-power-kwh">--</div>
+        <div style="font-size:11px;color:var(--muted)">今日用电</div>
+      </div>
+      <div style="text-align:right;">
+        <div style="font-size:14px;font-weight:700;color:var(--text)" id="ov-power-cost">--</div>
+        <div style="font-size:11px;color:var(--muted)">今日电费</div>
+      </div>
+    </div>
+  </div>
 </div>
 
 <!-- Service tabs -->
@@ -688,6 +721,7 @@
   <button class="service-tab" data-service="deepseek">DeepSeek</button>
   <button class="service-tab" data-service="zai">Z.AI</button>
   <button class="service-tab" data-service="claude">Claude</button>
+  <button class="service-tab" data-service="power">⚡ Power</button>
 </div>
 
 <!-- ═══════ MiniMax Section ═══════ -->
@@ -816,6 +850,106 @@
   </div>
 </div>
 
+<!-- ═══════ Power Section ═══════ -->
+<div class="service-section" id="sec-power">
+  <div id="power-content">
+    <!-- Segment 1: Power trend -->
+    <div class="chart-container">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+        <div class="chart-title" style="margin:0">功率趋势</div>
+        <div style="display:flex;gap:6px;" id="power-range-btns">
+          <button class="filter-tab active" data-range="30m">30m</button>
+          <button class="filter-tab" data-range="1d">1天</button>
+          <button class="filter-tab" data-range="1w">1周</button>
+          <button class="filter-tab" data-range="1m">1月</button>
+        </div>
+      </div>
+      <div id="power-trend-chart" class="chart" role="img" aria-label="功率趋势图"></div>
+      <div style="display:flex;justify-content:space-between;margin-top:8px;font-size:12px;">
+        <span><span style="color:var(--muted)">当前</span> <span style="color:var(--psu-color);font-weight:600" id="psu-current-w">--</span></span>
+        <span><span style="color:var(--muted)">峰值</span> <span style="font-weight:600" id="psu-peak-w">--</span></span>
+        <span><span style="color:var(--muted)">均值</span> <span style="font-weight:600" id="psu-avg-w">--</span></span>
+        <span><span style="color:var(--muted)">DC</span> <span style="font-weight:600" id="psu-dc-w">--</span></span>
+      </div>
+    </div>
+
+    <!-- Segment 2: Electricity cost -->
+    <div class="consumption-summary" style="grid-template-columns:1fr 1fr 1fr;margin-top:14px;">
+      <div class="consumption-card">
+        <div class="card-label">今日</div>
+        <div class="card-value" id="psu-day-cost">--</div>
+        <div class="card-sub" id="psu-day-kwh">--</div>
+        <div style="margin-top:6px;padding-top:6px;border-top:1px solid var(--border);">
+          <div style="font-size:11px;color:var(--psu-color)">预测今日</div>
+          <div style="font-size:14px;font-weight:600;color:var(--psu-color)" id="psu-day-proj">--</div>
+        </div>
+      </div>
+      <div class="consumption-card">
+        <div class="card-label">本周</div>
+        <div class="card-value" id="psu-week-cost">--</div>
+        <div class="card-sub" id="psu-week-kwh">--</div>
+        <div style="margin-top:6px;padding-top:6px;border-top:1px solid var(--border);">
+          <div style="font-size:11px;color:var(--psu-color)">预测本周</div>
+          <div style="font-size:14px;font-weight:600;color:var(--psu-color)" id="psu-week-proj">--</div>
+        </div>
+      </div>
+      <div class="consumption-card">
+        <div class="card-label">本月</div>
+        <div class="card-value" id="psu-month-cost">--</div>
+        <div class="card-sub" id="psu-month-kwh">--</div>
+        <div style="margin-top:6px;padding-top:6px;border-top:1px solid var(--border);">
+          <div style="font-size:11px;color:var(--psu-color)">预测本月</div>
+          <div style="font-size:14px;font-weight:600;color:var(--psu-color)" id="psu-month-proj">--</div>
+        </div>
+      </div>
+    </div>
+    <div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:8px 14px;display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;font-size:12px;">
+      <span><span style="color:var(--muted)">电价</span> <span style="font-weight:600" id="psu-price">--</span></span>
+      <span><span style="color:var(--muted)">电源</span> <span style="font-weight:600" id="psu-device">Segotep DM</span></span>
+      <span><span style="color:var(--muted)">监控</span> <span style="font-weight:600" id="psu-duration">--</span></span>
+    </div>
+
+    <!-- Segment 3: Thermal + Fan -->
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:10px;margin-bottom:14px;">
+      <div class="consumption-card" style="text-align:center;"><div class="card-label">主板温度</div><div class="card-value" style="font-size:20px" id="psu-temp-main">--</div></div>
+      <div class="consumption-card" style="text-align:center;"><div class="card-label">进风温度 1</div><div class="card-value" style="font-size:20px" id="psu-temp-air">--</div></div>
+      <div class="consumption-card" style="text-align:center;"><div class="card-label">进风温度 2</div><div class="card-value" style="font-size:20px" id="psu-temp-air2">--</div></div>
+      <div class="consumption-card" style="text-align:center;"><div class="card-label">风扇转速</div><div class="card-value" style="font-size:20px" id="psu-fan-rpm">--</div><div style="font-size:11px;color:var(--muted)" id="psu-fan-pwm">PWM --</div></div>
+    </div>
+    <div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;overflow:hidden;">
+      <div style="padding:12px 14px;border-bottom:1px solid var(--border);">
+        <div style="font-size:12px;color:var(--muted);margin-bottom:8px;">风扇模式</div>
+        <div style="display:flex;gap:6px;" id="fan-mode-btns">
+          <button class="fan-mode-btn" data-mode="auto">Auto</button>
+          <button class="fan-mode-btn" data-mode="silent">Silent</button>
+          <button class="fan-mode-btn" data-mode="performance">Performance</button>
+          <button class="fan-mode-btn active" data-mode="custom">Custom</button>
+          <button class="fan-mode-btn" data-mode="clean">Clean</button>
+        </div>
+      </div>
+      <div style="padding:12px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;">
+        <span style="font-size:12px;color:var(--muted);white-space:nowrap;">固定 PWM</span>
+        <input type="range" min="20" max="100" value="45" id="fan-pwm-slider" style="flex:1;accent-color:var(--psu-color);">
+        <span style="font-size:14px;font-weight:600;color:var(--psu-color);width:40px;text-align:right;" id="fan-pwm-value">45%</span>
+        <button id="fan-pwm-apply" style="background:var(--bg3);border:1px solid var(--border);border-radius:5px;padding:4px 12px;color:var(--text);font-family:inherit;font-size:12px;cursor:pointer;">应用</button>
+      </div>
+      <div style="padding:12px 14px;">
+        <div style="font-size:12px;color:var(--muted);margin-bottom:8px;">自定义风扇曲线</div>
+        <div style="height:180px;position:relative;" id="fan-curve-canvas">
+          <svg width="100%" height="180" id="fan-curve-svg" viewBox="0 0 400 180"></svg>
+        </div>
+        <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:8px;">
+          <button id="fan-curve-reset" style="background:var(--bg3);border:1px solid var(--border);border-radius:5px;padding:5px 14px;color:var(--muted);font-family:inherit;font-size:12px;cursor:pointer;">重置默认</button>
+          <button id="fan-curve-apply" style="background:var(--psu-color);border:none;border-radius:5px;padding:5px 14px;color:#000;font-family:inherit;font-size:12px;cursor:pointer;font-weight:600;">应用曲线</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="no-key-msg" id="power-no-key" style="display:none">
+    PSU 未连接。检查 <code>config.toml</code> 中的 <code>[serial]</code> 配置。
+  </div>
+</div>
+
 <!-- Settings Modal -->
 <div class="modal-overlay" id="settings-modal">
   <div class="modal">
@@ -885,6 +1019,11 @@ let dsHistoryChart = null;
 let zaiHistoryChart = null;
 let claudeHistoryChart = null;
 let countdownSec = 60;
+let powerTrendChart = null;
+let powerPollInterval = null;
+let powerLocalStorage = []; // 30m buffer: {ts, ac_w}
+const POWER_LS_KEY = 'power_local_30m';
+const MAX_POWER_PTS = 1800;
 
 // ── Init ─────────────────────────────────────────────────────────────────────
 
@@ -894,6 +1033,8 @@ function init() {
   dsHistoryChart = echarts.init(document.getElementById('ds-history-chart'), null, { renderer: 'canvas' });
   zaiHistoryChart = echarts.init(document.getElementById('zai-history-chart'), null, { renderer: 'canvas' });
   claudeHistoryChart = echarts.init(document.getElementById('claude-history-chart'), null, { renderer: 'canvas' });
+  powerTrendChart = echarts.init(document.getElementById('power-trend-chart'), null, { renderer: 'canvas' });
+  try { powerLocalStorage = JSON.parse(localStorage.getItem(POWER_LS_KEY) || '[]'); } catch(e) { powerLocalStorage = []; }
 
   initTheme();
   buildFilterTabs();
@@ -908,11 +1049,14 @@ function init() {
     dsHistoryChart?.resize();
     zaiHistoryChart?.resize();
     claudeHistoryChart?.resize();
+    powerTrendChart?.resize();
   });
 
   fetchAll();
   startCountdown();
   setInterval(fetchAll, 60_000);
+  initPowerRangeButtons();
+  initFanControls();
 }
 
 // ── Theme ───────────────────────────────────────────────────────────────────
@@ -958,7 +1102,14 @@ function bindServiceTabs() {
         dsHistoryChart?.resize();
         zaiHistoryChart?.resize();
         claudeHistoryChart?.resize();
+        powerTrendChart?.resize();
       }, 50);
+      // Power tab: start 1s polling
+      if (activeService === 'power') {
+        startPowerPolling();
+      } else {
+        stopPowerPolling();
+      }
     });
   });
 }
@@ -1008,6 +1159,250 @@ async function saveConfigFromForm() {
   }
 }
 
+// ── PSU Power ──────────────────────────────────────────────────────────────────
+
+function startPowerPolling() {
+  if (powerPollInterval) return;
+  fetchPowerHistory('30m');
+  powerPollInterval = setInterval(async () => {
+    await fetchPowerOverview();
+  }, 1000);
+}
+
+function stopPowerPolling() {
+  if (powerPollInterval) { clearInterval(powerPollInterval); powerPollInterval = null; }
+}
+
+async function fetchPowerOverview() {
+  try {
+    const res = await fetch(`${API_BASE}/api/power`);
+    const d = await res.json();
+    const el = (id) => document.getElementById(id);
+    if (!d.connected) {
+      el('ov-power-status').textContent = '未连接';
+      el('ov-power-status').className = 'ov-status yellow';
+      el('ov-power-value').textContent = '--';
+      el('ov-power-sub').textContent = 'AC 输入功率';
+      el('ov-power-kwh').textContent = '--';
+      el('ov-power-cost').textContent = '--';
+      el('psu-current-w').textContent = '--';
+      return;
+    }
+    el('ov-power-status').textContent = '已连接';
+    el('ov-power-status').className = 'ov-status green';
+    el('ov-power-value').textContent = d.ac_input_w.toFixed(0) + 'W';
+    el('ov-power-sub').textContent = 'AC 输入功率';
+    el('psu-current-w').textContent = d.ac_input_w.toFixed(0) + 'W';
+    el('psu-peak-w').textContent = d.today_peak_w.toFixed(0) + 'W';
+    el('psu-avg-w').textContent = d.today_avg_w.toFixed(0) + 'W';
+    el('psu-dc-w').textContent = '~' + d.dc_output_est_w.toFixed(0) + 'W';
+    // Store in localStorage buffer
+    powerLocalStorage.push({ ts: Date.now(), ac_w: d.ac_input_w });
+    if (powerLocalStorage.length > MAX_POWER_PTS) powerLocalStorage = powerLocalStorage.slice(-MAX_POWER_PTS);
+    try { localStorage.setItem(POWER_LS_KEY, JSON.stringify(powerLocalStorage)); } catch(e) {}
+  } catch(e) { console.error('fetchPowerOverview:', e); }
+}
+
+async function fetchPsuCost() {
+  try {
+    const res = await fetch(`${API_BASE}/api/psu-cost`);
+    const d = await res.json();
+    const el = (id) => document.getElementById(id);
+    if (!d.connected) {
+      el('ov-power-kwh').textContent = '--';
+      el('ov-power-cost').textContent = '--';
+      return;
+    }
+    el('ov-power-kwh').textContent = d.day.kwh.toFixed(2) + ' kWh';
+    el('ov-power-cost').textContent = '¥' + d.day.cost.toFixed(2);
+    el('psu-day-cost').textContent = '¥' + d.day.cost.toFixed(2);
+    el('psu-day-kwh').textContent = d.day.kwh.toFixed(2) + ' kWh';
+    el('psu-week-cost').textContent = '¥' + d.week.cost.toFixed(2);
+    el('psu-week-kwh').textContent = d.week.kwh.toFixed(1) + ' kWh';
+    el('psu-month-cost').textContent = '¥' + d.month.cost.toFixed(2);
+    el('psu-month-kwh').textContent = d.month.kwh.toFixed(1) + ' kWh';
+    el('psu-day-proj').textContent = '¥' + d.projected.day.cost.toFixed(2) + ' · ' + d.projected.day.kwh.toFixed(1) + ' kWh';
+    el('psu-week-proj').textContent = '¥' + d.projected.week.cost.toFixed(2) + ' · ' + d.projected.week.kwh.toFixed(1) + ' kWh';
+    el('psu-month-proj').textContent = '¥' + d.projected.month.cost.toFixed(2) + ' · ' + d.projected.month.kwh.toFixed(0) + ' kWh';
+    el('psu-price').textContent = '¥' + d.price_per_kwh + '/kWh';
+    const h = Math.floor(d.monitoring_duration_s / 3600);
+    const m = Math.floor((d.monitoring_duration_s % 3600) / 60);
+    el('psu-duration').textContent = h + 'h ' + m + 'm';
+  } catch(e) { console.error('fetchPsuCost:', e); }
+}
+
+async function fetchThermal() {
+  try {
+    const res = await fetch(`${API_BASE}/api/thermal`);
+    const d = await res.json();
+    const el = (id) => document.getElementById(id);
+    if (!d.connected) return;
+    el('psu-temp-main').textContent = d.temp_main_c.toFixed(0) + '°C';
+    el('psu-temp-air').textContent = d.temp_air_c.toFixed(0) + '°C';
+    el('psu-temp-air2').textContent = d.temp_air2_c.toFixed(0) + '°C';
+    el('psu-fan-rpm').textContent = d.fan_rpm + ' RPM';
+    el('psu-fan-pwm').textContent = 'PWM ' + d.fan_pwm + '%';
+  } catch(e) { console.error('fetchThermal:', e); }
+}
+
+async function fetchPowerHistory(range) {
+  try {
+    const res = await fetch(`${API_BASE}/api/power/history?range=${range}`);
+    const d = await res.json();
+    if (!d.connected) return;
+    let data = d.data;
+    // For 30m, merge with localStorage
+    if (range === '30m' && powerLocalStorage.length > 0) {
+      const serverStart = data.length > 0 ? data[0].ts : Date.now();
+      const localPts = powerLocalStorage.filter(p => p.ts >= serverStart);
+      data = data.concat(localPts.map(p => ({ ts: p.ts, ac_w: p.ac_w })));
+      // Deduplicate by ts (keep last)
+      const seen = new Map();
+      for (const p of data) seen.set(p.ts, p);
+      data = Array.from(seen.values()).sort((a, b) => a.ts - b.ts);
+    }
+    renderPowerTrend(data);
+  } catch(e) { console.error('fetchPowerHistory:', e); }
+}
+
+function renderPowerTrend(data) {
+  if (!powerTrendChart || data.length === 0) return;
+  const times = data.map(d => {
+    const dt = new Date(d.ts);
+    return dt.getHours().toString().padStart(2,'0') + ':' + dt.getMinutes().toString().padStart(2,'0');
+  });
+  const values = data.map(d => d.ac_w);
+  powerTrendChart.setOption({
+    tooltip: { trigger: 'axis', valueFormatter: v => v?.toFixed(0) + 'W' },
+    grid: { left: 50, right: 16, top: 16, bottom: 30 },
+    xAxis: { type: 'category', data: times, axisLabel: { color: 'var(--muted)', fontSize: 10 }, axisLine: { lineStyle: { color: 'var(--border)' } } },
+    yAxis: { type: 'value', axisLabel: { color: 'var(--muted)', fontSize: 10, formatter: v => v + 'W' }, splitLine: { lineStyle: { color: 'var(--border)' } } },
+    series: [{
+      type: 'line', data: values, smooth: true, symbol: 'none', lineStyle: { color: '#f59e0b', width: 2 },
+      areaStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+        { offset: 0, color: 'rgba(245,158,11,0.25)' },
+        { offset: 1, color: 'rgba(245,158,11,0.02)' },
+      ])},
+    }],
+  });
+}
+
+function initPowerRangeButtons() {
+  document.querySelectorAll('#power-range-btns .filter-tab').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#power-range-btns .filter-tab').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      fetchPowerHistory(btn.dataset.range);
+    });
+  });
+}
+
+function initFanControls() {
+  // Fan mode buttons
+  document.querySelectorAll('#fan-mode-btns .fan-mode-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      document.querySelectorAll('#fan-mode-btns .fan-mode-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      try {
+        await fetch(`${API_BASE}/api/fan/mode`, {
+          method: 'POST', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ mode: btn.dataset.mode }),
+        });
+      } catch(e) { console.error('setFanMode:', e); }
+    });
+  });
+  // PWM slider
+  const slider = document.getElementById('fan-pwm-slider');
+  const display = document.getElementById('fan-pwm-value');
+  slider.addEventListener('input', () => { display.textContent = slider.value + '%'; });
+  document.getElementById('fan-pwm-apply').addEventListener('click', async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/fan/speed`, {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ pwm: parseInt(slider.value) }),
+      });
+      const d = await res.json();
+      if (!d.ok) alert(d.message);
+    } catch(e) { console.error('setFanSpeed:', e); }
+  });
+  // Fan curve (simple SVG editor with 4 draggable points)
+  initFanCurveEditor();
+}
+
+function initFanCurveEditor() {
+  const svg = document.getElementById('fan-curve-svg');
+  let points = [[30,25],[45,40],[60,70],[80,90]];
+  let dragging = -1;
+
+  function render() {
+    const w = 400, h = 180, pad = 30;
+    let html = '';
+    // Grid
+    for (let i = 0; i <= 3; i++) {
+      const y = pad + (h - 2*pad) * i / 3;
+      html += `<line x1="${pad}" y1="${y}" x2="${w-pad}" y2="${y}" stroke="var(--border)" stroke-width="1"/>`;
+    }
+    for (let i = 0; i <= 4; i++) {
+      const x = pad + (w - 2*pad) * i / 4;
+      html += `<line x1="${x}" y1="${pad}" x2="${x}" y2="${h-pad}" stroke="var(--border)" stroke-width="1"/>`;
+    }
+    // Lines between points
+    for (let i = 1; i < points.length; i++) {
+      const [t1, p1] = points[i-1];
+      const [t2, p2] = points[i];
+      const x1 = pad + (t1/100) * (w-2*pad);
+      const y1 = (h-pad) - (p1/100) * (h-2*pad);
+      const x2 = pad + (t2/100) * (w-2*pad);
+      const y2 = (h-pad) - (p2/100) * (h-2*pad);
+      html += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="#f59e0b" stroke-width="2"/>`;
+    }
+    // Control points
+    points.forEach(([t, p], i) => {
+      const x = pad + (t/100) * (w-2*pad);
+      const y = (h-pad) - (p/100) * (h-2*pad);
+      html += `<circle cx="${x}" cy="${y}" r="6" fill="#f59e0b" stroke="var(--bg)" stroke-width="2" style="cursor:grab" data-idx="${i}"/>`;
+      html += `<text x="${x+8}" y="${y-8}" fill="#f59e0b" font-size="9" font-weight="600">${t}°C→${p}%</text>`;
+    });
+    svg.innerHTML = html;
+  }
+
+  svg.addEventListener('mousedown', e => {
+    const c = e.target.closest('circle');
+    if (c) { dragging = parseInt(c.dataset.idx); e.preventDefault(); }
+  });
+  svg.addEventListener('mousemove', e => {
+    if (dragging < 0) return;
+    const rect = svg.getBoundingClientRect();
+    const w = 400, h = 180, pad = 30;
+    const mx = (e.clientX - rect.left) / rect.width * w;
+    const my = (e.clientY - rect.top) / rect.height * h;
+    const temp = Math.round(Math.max(20, Math.min(100, ((mx - pad) / (w - 2*pad)) * 100)));
+    const pwm = Math.round(Math.max(20, Math.min(100, (1 - (my - pad) / (h - 2*pad)) * 100)));
+    points[dragging] = [temp, pwm];
+    render();
+  });
+  window.addEventListener('mouseup', () => { dragging = -1; });
+
+  document.getElementById('fan-curve-apply').addEventListener('click', async () => {
+    try {
+      // wattson requires 3 or 5 points. We have 4, so add a midpoint
+      const pts3 = [points[0], points[Math.floor(points.length/2)], points[points.length-1]];
+      const res = await fetch(`${API_BASE}/api/fan/curve`, {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ points: pts3.map(([t,p]) => [t,p]) }),
+      });
+      const d = await res.json();
+      if (!d.ok) alert(d.message);
+    } catch(e) { console.error('setFanCurve:', e); }
+  });
+  document.getElementById('fan-curve-reset').addEventListener('click', () => {
+    points = [[30,25],[45,40],[60,70],[80,90]];
+    render();
+  });
+
+  render();
+}
+
 // ── Fetch ────────────────────────────────────────────────────────────────────
 
 async function fetchAll() {
@@ -1017,6 +1412,9 @@ async function fetchAll() {
     fetchDeepSeekDetail(),
     fetchZaiDetail(),
     fetchClaudeDetail(),
+    fetchPowerOverview(),
+    fetchPsuCost(),
+    fetchThermal(),
   ]);
 }
 
