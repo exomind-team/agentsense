@@ -70,6 +70,16 @@ impl QuotaDb {
                 extra_json      TEXT NOT NULL DEFAULT '[]'
             );
             CREATE INDEX IF NOT EXISTS idx_claude_ts ON claude_quota_log(ts);
+
+            CREATE TABLE IF NOT EXISTS power_samples (
+                id      INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts      INTEGER NOT NULL,
+                ac_w    REAL NOT NULL,
+                dc_w    REAL,
+                temp_c  REAL,
+                fan_rpm INTEGER
+            );
+            CREATE INDEX IF NOT EXISTS idx_power_ts ON power_samples(ts);
             ",
         )?;
         Ok(())
@@ -426,5 +436,143 @@ impl QuotaDb {
             }));
         }
         result
+    }
+
+    // ── PSU Power Samples ──
+
+    #[cfg(feature = "psu")]
+    pub fn insert_power_batch(&self, samples: &[(i64, f64, Option<f64>, Option<f64>, Option<u32>)]) -> Result<(), AgentSenseError> {
+        if samples.is_empty() { return Ok(()); }
+        let tx = self.conn.unchecked_transaction()?;
+        {
+            let mut stmt = tx.prepare(
+                "INSERT INTO power_samples (ts, ac_w, dc_w, temp_c, fan_rpm) VALUES (?1, ?2, ?3, ?4, ?5)"
+            )?;
+            for (ts, ac_w, dc_w, temp_c, fan_rpm) in samples {
+                stmt.execute(params![ts, ac_w, dc_w, temp_c, fan_rpm])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    #[cfg(feature = "psu")]
+    pub fn query_power_history(&self, since_ts: i64) -> Result<Vec<(i64, f64, Option<f64>, Option<f64>, Option<u32>)>, AgentSenseError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT ts, ac_w, dc_w, temp_c, fan_rpm FROM power_samples WHERE ts >= ?1 ORDER BY ts ASC"
+        )?;
+        let rows = stmt.query_map(params![since_ts], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get::<_, Option<u32>>(4)?))
+        })?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(|e| AgentSenseError::Database(e.to_string()))
+    }
+
+    #[cfg(feature = "psu")]
+    pub fn query_power_stats(&self, since_ts: i64) -> Result<Option<(f64, f64)>, AgentSenseError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT MAX(ac_w), AVG(ac_w) FROM power_samples WHERE ts >= ?1"
+        )?;
+        let result = stmt.query_row(params![since_ts], |row| {
+            let peak: f64 = row.get(0)?;
+            let avg: f64 = row.get(1)?;
+            Ok((peak, avg))
+        });
+        match result {
+            Ok(stats) => Ok(Some(stats)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(AgentSenseError::Database(e.to_string())),
+        }
+    }
+
+    #[cfg(feature = "psu")]
+    pub fn compute_energy_kwh(&self, since_ts: i64) -> Result<f64, AgentSenseError> {
+        let samples = self.query_power_history(since_ts)?;
+        if samples.len() < 2 { return Ok(0.0); }
+        let mut wh = 0.0;
+        for i in 1..samples.len() {
+            let (ts_prev, ac_prev, ..) = samples[i - 1];
+            let (ts_curr, ac_curr, ..) = samples[i];
+            let dt_h = (ts_curr - ts_prev) as f64 / 3_600_000.0;
+            wh += (ac_prev + ac_curr) / 2.0 * dt_h;
+        }
+        Ok(wh / 1000.0)
+    }
+
+    #[cfg(feature = "psu")]
+    pub fn cleanup_old_samples(&self, older_than_ts: i64) -> Result<(), AgentSenseError> {
+        self.conn.execute(
+            "DELETE FROM power_samples WHERE ts < ?1",
+            params![older_than_ts],
+        )?;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod power_tests {
+    use super::*;
+
+    fn test_db() -> QuotaDb {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test_quota.db");
+        QuotaDb::open(&path).unwrap()
+    }
+
+    #[test]
+    fn test_insert_and_query_power() {
+        let db = test_db();
+        let now = chrono::Utc::now().timestamp_millis();
+        let samples = vec![
+            (now - 1000, 285.0, Some(260.0), Some(62.0), Some(1200)),
+            (now, 290.0, Some(265.0), Some(63.0), Some(1250)),
+        ];
+        db.insert_power_batch(&samples).unwrap();
+        let history = db.query_power_history(now - 2000).unwrap();
+        assert_eq!(history.len(), 2);
+        assert_eq!(history[0].0, now - 1000);
+    }
+
+    #[test]
+    fn test_compute_energy_kwh() {
+        let db = test_db();
+        let now = chrono::Utc::now().timestamp_millis();
+        // 1 hour of 300W = 0.3 kWh
+        let samples = vec![
+            (now - 3_600_000, 300.0, None, None, None),
+            (now, 300.0, None, None, None),
+        ];
+        db.insert_power_batch(&samples).unwrap();
+        let kwh = db.compute_energy_kwh(now - 3_600_001).unwrap();
+        assert!((kwh - 0.3).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_power_stats() {
+        let db = test_db();
+        let now = chrono::Utc::now().timestamp_millis();
+        let samples = vec![
+            (now - 2000, 200.0, None, None, None),
+            (now - 1000, 400.0, None, None, None),
+            (now, 300.0, None, None, None),
+        ];
+        db.insert_power_batch(&samples).unwrap();
+        let (peak, avg) = db.query_power_stats(now - 3000).unwrap().unwrap();
+        assert_eq!(peak, 400.0);
+        assert!((avg - 300.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_cleanup_old_samples() {
+        let db = test_db();
+        let now = chrono::Utc::now().timestamp_millis();
+        let samples = vec![
+            (now - 200_000, 100.0, None, None, None),
+            (now - 100_000, 200.0, None, None, None),
+            (now, 300.0, None, None, None),
+        ];
+        db.insert_power_batch(&samples).unwrap();
+        db.cleanup_old_samples(now - 150_000).unwrap();
+        let history = db.query_power_history(0).unwrap();
+        assert_eq!(history.len(), 2);
     }
 }
