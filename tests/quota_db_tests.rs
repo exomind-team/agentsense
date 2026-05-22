@@ -1,5 +1,5 @@
-use agentsense::quota::minimax::{MinimaxSnapshot, ModelQuota};
 use agentsense::quota::db::QuotaDb;
+use agentsense::quota::minimax::{MinimaxSnapshot, ModelQuota};
 
 fn make_db() -> QuotaDb {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -44,16 +44,25 @@ fn latest_minimax_with_ts_returns_timestamp_and_models() {
     db.insert_minimax(&snap).unwrap();
 
     let (ts, models) = db.latest_minimax_with_ts().unwrap();
-    assert_eq!(ts, 1716000000000_i64, "timestamp should match inserted snapshot");
+    assert_eq!(
+        ts, 1716000000000_i64,
+        "timestamp should match inserted snapshot"
+    );
     assert_eq!(models.len(), 2, "should return 2 models");
 
-    let ma = models.iter().find(|m| m.name == "model-a").expect("model-a");
+    let ma = models
+        .iter()
+        .find(|m| m.name == "model-a")
+        .expect("model-a");
     assert_eq!(ma.interval_usage, 10);
     assert_eq!(ma.interval_total, 100);
     assert_eq!(ma.weekly_usage, 50);
     assert_eq!(ma.weekly_total, 500);
 
-    let mb = models.iter().find(|m| m.name == "model-b").expect("model-b");
+    let mb = models
+        .iter()
+        .find(|m| m.name == "model-b")
+        .expect("model-b");
     assert_eq!(mb.interval_usage, 20);
     assert_eq!(mb.interval_total, 200);
     assert_eq!(mb.weekly_usage, 80);
@@ -74,7 +83,8 @@ fn latest_minimax_with_ts_returns_latest_of_multiple() {
             weekly_usage: 5,
             weekly_total: 50,
         }],
-    }).unwrap();
+    })
+    .unwrap();
 
     // Insert newer snapshot
     db.insert_minimax(&MinimaxSnapshot {
@@ -86,7 +96,8 @@ fn latest_minimax_with_ts_returns_latest_of_multiple() {
             weekly_usage: 10,
             weekly_total: 100,
         }],
-    }).unwrap();
+    })
+    .unwrap();
 
     let (ts, models) = db.latest_minimax_with_ts().unwrap();
     assert_eq!(ts, 2000, "should return the latest timestamp");

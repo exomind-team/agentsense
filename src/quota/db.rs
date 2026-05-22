@@ -7,6 +7,10 @@ use super::minimax::MinimaxSnapshot;
 use super::zai::ZaiSnapshot;
 use crate::error::AgentSenseError;
 
+/// A single PSU power sample row: (ts_ms, ac_watts, dc_watts, temp_celsius, fan_rpm).
+#[cfg(feature = "psu")]
+pub type PowerSampleRow = (i64, f64, Option<f64>, Option<f64>, Option<u32>);
+
 pub struct QuotaDb {
     conn: Connection,
 }
@@ -70,7 +74,13 @@ impl QuotaDb {
                 extra_json      TEXT NOT NULL DEFAULT '[]'
             );
             CREATE INDEX IF NOT EXISTS idx_claude_ts ON claude_quota_log(ts);
+            ",
+        )?;
 
+        // power_samples table is only needed when PSU monitoring is compiled in.
+        #[cfg(feature = "psu")]
+        self.conn.execute_batch(
+            "
             CREATE TABLE IF NOT EXISTS power_samples (
                 id      INTEGER PRIMARY KEY AUTOINCREMENT,
                 ts      INTEGER NOT NULL,
@@ -82,6 +92,7 @@ impl QuotaDb {
             CREATE INDEX IF NOT EXISTS idx_power_ts ON power_samples(ts);
             ",
         )?;
+
         Ok(())
     }
 
@@ -223,9 +234,11 @@ impl QuotaDb {
     pub fn latest_minimax_with_ts(
         &self,
     ) -> Result<(i64, Vec<super::minimax::ModelQuota>), AgentSenseError> {
-        let max_ts: Option<i64> = self
-            .conn
-            .query_row("SELECT MAX(ts) FROM minimax_quota_log", [], |row| row.get(0))?;
+        let max_ts: Option<i64> =
+            self.conn
+                .query_row("SELECT MAX(ts) FROM minimax_quota_log", [], |row| {
+                    row.get(0)
+                })?;
         match max_ts {
             None => Ok((0, vec![])),
             Some(ts) => {
@@ -282,10 +295,7 @@ impl QuotaDb {
         Ok(rows)
     }
 
-    pub fn deepseek_history(
-        &self,
-        hours: u64,
-    ) -> Result<Vec<DeepSeekSnapshot>, AgentSenseError> {
+    pub fn deepseek_history(&self, hours: u64) -> Result<Vec<DeepSeekSnapshot>, AgentSenseError> {
         let now = chrono::Utc::now().timestamp_millis();
         let cutoff = now - (hours as i64) * 60 * 60 * 1000;
         let mut stmt = self.conn.prepare(
@@ -337,28 +347,35 @@ impl QuotaDb {
         let naive = chrono::DateTime::from_timestamp(secs, 0)
             .map(|dt| dt.naive_utc())
             .unwrap_or_default();
-        let local: chrono::DateTime<chrono::Local> = chrono::TimeZone::from_local_datetime(
-            &chrono::Local, &naive
-        ).single().unwrap_or_default();
+        let local: chrono::DateTime<chrono::Local> =
+            chrono::TimeZone::from_local_datetime(&chrono::Local, &naive)
+                .single()
+                .unwrap_or_default();
         local.format("%Y-%m-%d").to_string()
     }
 
     pub fn compute_daily_consumption(&self, model_name: &str, date_str: &str) -> Option<i64> {
-        let first: Option<i64> = self.conn.query_row(
-            "SELECT weekly_usage FROM minimax_quota_log
+        let first: Option<i64> = self
+            .conn
+            .query_row(
+                "SELECT weekly_usage FROM minimax_quota_log
              WHERE date(ts/1000, 'unixepoch', 'localtime') = ?1 AND model_name = ?2
              ORDER BY ts ASC LIMIT 1",
-            params![date_str, model_name],
-            |row| row.get(0),
-        ).ok()?;
+                params![date_str, model_name],
+                |row| row.get(0),
+            )
+            .ok()?;
 
-        let last: i64 = self.conn.query_row(
-            "SELECT weekly_usage FROM minimax_quota_log
+        let last: i64 = self
+            .conn
+            .query_row(
+                "SELECT weekly_usage FROM minimax_quota_log
              WHERE date(ts/1000, 'unixepoch', 'localtime') = ?1 AND model_name = ?2
              ORDER BY ts DESC LIMIT 1",
-            params![date_str, model_name],
-            |row| row.get(0),
-        ).ok()?;
+                params![date_str, model_name],
+                |row| row.get(0),
+            )
+            .ok()?;
 
         let delta = last - first.unwrap_or(0);
         Some(if delta < 0 { last } else { delta })
@@ -380,7 +397,7 @@ impl QuotaDb {
 
         let mut weekly_bar = Vec::new();
         for i in 0..7i64 {
-            let day_ts = now_ms - i * 86400_000;
+            let day_ts = now_ms - i * 86_400_000;
             let day_str = Self::local_date_str(day_ts);
             let consumption = self.compute_daily_consumption("MiniMax-M*", &day_str);
             weekly_bar.push(serde_json::json!({
@@ -401,17 +418,20 @@ impl QuotaDb {
     }
 
     fn weekly_refresh_info(&self, now_ms: i64) -> Option<serde_json::Value> {
-        let since = now_ms - 8 * 86400_000;
-        let min_row: (i64, i64) = self.conn.query_row(
-            "SELECT ts, weekly_usage FROM minimax_quota_log
+        let since = now_ms - 8 * 86_400_000;
+        let min_row: (i64, i64) = self
+            .conn
+            .query_row(
+                "SELECT ts, weekly_usage FROM minimax_quota_log
              WHERE ts >= ?1 AND model_name = 'coding-plan-search'
              ORDER BY weekly_usage ASC LIMIT 1",
-            params![since],
-            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
-        ).ok()?;
+                params![since],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+            )
+            .ok()?;
 
         let (current_reset_ts, _) = min_row;
-        let next_reset_ts = current_reset_ts + 7 * 86400_000;
+        let next_reset_ts = current_reset_ts + 7 * 86_400_000;
         let remaining_ms: i64 = (next_reset_ts - now_ms).max(0);
 
         Some(serde_json::json!({
@@ -426,7 +446,7 @@ impl QuotaDb {
         let now_ms = chrono::Utc::now().timestamp_millis();
         let mut result = Vec::new();
         for i in 0..7i64 {
-            let day_ts = now_ms - i * 86400_000;
+            let day_ts = now_ms - i * 86_400_000;
             let day_str = Self::local_date_str(day_ts);
             let consumption = self.compute_daily_consumption(model_name, &day_str);
             result.push(serde_json::json!({
@@ -441,8 +461,10 @@ impl QuotaDb {
     // ── PSU Power Samples ──
 
     #[cfg(feature = "psu")]
-    pub fn insert_power_batch(&self, samples: &[(i64, f64, Option<f64>, Option<f64>, Option<u32>)]) -> Result<(), AgentSenseError> {
-        if samples.is_empty() { return Ok(()); }
+    pub fn insert_power_batch(&self, samples: &[PowerSampleRow]) -> Result<(), AgentSenseError> {
+        if samples.is_empty() {
+            return Ok(());
+        }
         let tx = self.conn.unchecked_transaction()?;
         {
             let mut stmt = tx.prepare(
@@ -457,28 +479,40 @@ impl QuotaDb {
     }
 
     #[cfg(feature = "psu")]
-    pub fn query_power_history(&self, since_ts: i64) -> Result<Vec<(i64, f64, Option<f64>, Option<f64>, Option<u32>)>, AgentSenseError> {
+    pub fn query_power_history(
+        &self,
+        since_ts: i64,
+    ) -> Result<Vec<PowerSampleRow>, AgentSenseError> {
         let mut stmt = self.conn.prepare(
             "SELECT ts, ac_w, dc_w, temp_c, fan_rpm FROM power_samples WHERE ts >= ?1 ORDER BY ts ASC"
         )?;
         let rows = stmt.query_map(params![since_ts], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get::<_, Option<u32>>(4)?))
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get::<_, Option<u32>>(4)?,
+            ))
         })?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(|e| AgentSenseError::Database(e.to_string()))
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| AgentSenseError::Database(e.to_string()))
     }
 
     #[cfg(feature = "psu")]
     pub fn query_power_stats(&self, since_ts: i64) -> Result<Option<(f64, f64)>, AgentSenseError> {
-        let mut stmt = self.conn.prepare(
-            "SELECT MAX(ac_w), AVG(ac_w) FROM power_samples WHERE ts >= ?1"
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT MAX(ac_w), AVG(ac_w) FROM power_samples WHERE ts >= ?1")?;
+        // Fix G: bare aggregate always returns one row of (NULL, NULL) on an empty
+        // window.  Read as Option<f64> so we get None instead of a type error.
         let result = stmt.query_row(params![since_ts], |row| {
-            let peak: f64 = row.get(0)?;
-            let avg: f64 = row.get(1)?;
-            Ok((peak, avg))
+            let peak: Option<f64> = row.get(0)?;
+            let avg: Option<f64> = row.get(1)?;
+            Ok(peak.zip(avg))
         });
         match result {
-            Ok(stats) => Ok(Some(stats)),
+            Ok(opt) => Ok(opt),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
             Err(e) => Err(AgentSenseError::Database(e.to_string())),
         }
@@ -487,12 +521,20 @@ impl QuotaDb {
     #[cfg(feature = "psu")]
     pub fn compute_energy_kwh(&self, since_ts: i64) -> Result<f64, AgentSenseError> {
         let samples = self.query_power_history(since_ts)?;
-        if samples.len() < 2 { return Ok(0.0); }
+        if samples.len() < 2 {
+            return Ok(0.0);
+        }
+        // Fix H: skip trapezoid pairs that span disconnect gaps or are non-monotonic.
+        const MAX_GAP_MS: i64 = 30_000;
         let mut wh = 0.0;
         for i in 1..samples.len() {
             let (ts_prev, ac_prev, ..) = samples[i - 1];
             let (ts_curr, ac_curr, ..) = samples[i];
-            let dt_h = (ts_curr - ts_prev) as f64 / 3_600_000.0;
+            let dt_ms = ts_curr - ts_prev;
+            if dt_ms <= 0 || dt_ms > MAX_GAP_MS {
+                continue;
+            }
+            let dt_h = dt_ms as f64 / 3_600_000.0;
             wh += (ac_prev + ac_curr) / 2.0 * dt_h;
         }
         Ok(wh / 1000.0)
@@ -536,14 +578,17 @@ mod power_tests {
     fn test_compute_energy_kwh() {
         let db = test_db();
         let now = chrono::Utc::now().timestamp_millis();
-        // 1 hour of 300W = 0.3 kWh
-        let samples = vec![
-            (now - 3_600_000, 300.0, None, None, None),
-            (now, 300.0, None, None, None),
-        ];
+        // Simulate 1 hour of 300W using 10-second intervals (within MAX_GAP_MS).
+        // 360 intervals × 10s × 300W = 1_080_000 Wms = 0.3 kWh
+        let step_ms: i64 = 10_000; // 10 s, well within MAX_GAP_MS = 30_000
+        let n = 361i64; // 360 intervals
+        let start = now - (n - 1) * step_ms;
+        let samples: Vec<_> = (0..n)
+            .map(|i| (start + i * step_ms, 300.0, None, None, None))
+            .collect();
         db.insert_power_batch(&samples).unwrap();
-        let kwh = db.compute_energy_kwh(now - 3_600_001).unwrap();
-        assert!((kwh - 0.3).abs() < 0.01);
+        let kwh = db.compute_energy_kwh(start - 1).unwrap();
+        assert!((kwh - 0.3).abs() < 0.01, "expected ~0.3 kWh, got {kwh}");
     }
 
     #[test]
@@ -574,5 +619,82 @@ mod power_tests {
         db.cleanup_old_samples(now - 150_000).unwrap();
         let history = db.query_power_history(0).unwrap();
         assert_eq!(history.len(), 2);
+    }
+
+    // ── Fix J: boundary tests ──────────────────────────────────────────────
+
+    /// Fix G regression: query_power_stats on an empty table (or future since_ts)
+    /// must return Ok(None), not an error.
+    #[test]
+    fn test_power_stats_empty_table_returns_none() {
+        let db = test_db();
+        // Empty table — no samples at all.
+        let result = db.query_power_stats(0);
+        assert!(result.is_ok(), "expected Ok, got {result:?}");
+        assert_eq!(result.unwrap(), None, "empty table should yield None");
+    }
+
+    /// query_power_stats with a since_ts far in the future (no matching rows)
+    /// must also return Ok(None).
+    #[test]
+    fn test_power_stats_future_since_returns_none() {
+        let db = test_db();
+        let now = chrono::Utc::now().timestamp_millis();
+        let samples = vec![
+            (now - 1000, 100.0, None, None, None),
+            (now, 200.0, None, None, None),
+        ];
+        db.insert_power_batch(&samples).unwrap();
+        // since_ts is in the future — no matching rows.
+        let result = db.query_power_stats(now + 10_000);
+        assert!(result.is_ok(), "expected Ok, got {result:?}");
+        assert_eq!(result.unwrap(), None, "future window should yield None");
+    }
+
+    /// Fix H regression: a single sample has len() < 2, so energy must be 0.0.
+    #[test]
+    fn test_compute_energy_single_sample_returns_zero() {
+        let db = test_db();
+        let now = chrono::Utc::now().timestamp_millis();
+        db.insert_power_batch(&[(now, 300.0, None, None, None)])
+            .unwrap();
+        let kwh = db.compute_energy_kwh(now - 1000).unwrap();
+        assert_eq!(kwh, 0.0, "single sample must return 0 kWh");
+    }
+
+    /// Fix H regression: two samples separated by > MAX_GAP_MS (30s) must NOT
+    /// integrate across the gap — energy should be approximately 0.
+    #[test]
+    fn test_compute_energy_large_gap_skipped() {
+        let db = test_db();
+        let now = chrono::Utc::now().timestamp_millis();
+        // 5-minute gap (300_000 ms) — far exceeds MAX_GAP_MS = 30_000.
+        let samples = vec![
+            (now - 300_000, 300.0, None, None, None),
+            (now, 300.0, None, None, None),
+        ];
+        db.insert_power_batch(&samples).unwrap();
+        let kwh = db.compute_energy_kwh(now - 300_001).unwrap();
+        // The gap pair is skipped, so no energy is integrated.
+        assert_eq!(kwh, 0.0, "large gap must be skipped; got {kwh} kWh");
+    }
+
+    /// Fix H regression: duplicate or non-monotonic timestamps must not produce
+    /// negative or non-finite energy.
+    #[test]
+    fn test_compute_energy_non_monotonic_timestamps() {
+        let db = test_db();
+        let now = chrono::Utc::now().timestamp_millis();
+        // Insert samples out of order / with duplicates.  The DB query returns
+        // them ORDER BY ts ASC, so we end up with dt_ms == 0 for the duplicate.
+        let samples = vec![
+            (now - 1000, 300.0, None, None, None),
+            (now - 1000, 300.0, None, None, None), // duplicate timestamp
+            (now, 300.0, None, None, None),
+        ];
+        db.insert_power_batch(&samples).unwrap();
+        let kwh = db.compute_energy_kwh(now - 2000).unwrap();
+        assert!(kwh >= 0.0, "energy must be non-negative; got {kwh}");
+        assert!(kwh.is_finite(), "energy must be finite; got {kwh}");
     }
 }
