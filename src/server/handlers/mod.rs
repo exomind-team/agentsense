@@ -42,24 +42,48 @@ pub async fn api_all(State(state): State<Arc<AppState>>) -> axum::Json<serde_jso
         claude_quota.as_ref().map(|s| s.timestamp),
     );
 
-    drop(db);
+    let mimo_quota = db.latest_mimo().unwrap_or_default();
+    let mimo_status = provider_status(
+        state.mimo_cookie.read().await.is_some(),
+        mimo_quota.as_ref().map(|s| s.timestamp),
+    );
 
     let mut mmx_models_json = Vec::new();
+    let now_ms = chrono::Utc::now().timestamp_millis();
     for m in &mmx_models {
+        let interval_remains = m
+            .interval_end
+            .map(|t| (t - now_ms).max(0))
+            .filter(|t| *t > 0)
+            .unwrap_or_else(|| db.interval_reset_info(&m.name).map(|(_, r)| r).unwrap_or(0));
+        let weekly_remains = m
+            .weekly_end
+            .map(|t| (t - now_ms).max(0))
+            .filter(|t| *t > 0)
+            .unwrap_or_else(|| {
+                db.weekly_model_reset_info(&m.name)
+                    .map(|(_, r)| r)
+                    .unwrap_or(0)
+            });
         mmx_models_json.push(serde_json::json!({
             "model_name": m.name,
             "current_interval_usage_count": m.interval_usage,
             "current_interval_total_count": m.interval_total,
             "current_weekly_usage_count": m.weekly_usage,
             "current_weekly_total_count": m.weekly_total,
+            "remains_time": interval_remains,
+            "weekly_remains_time": weekly_remains,
         }));
     }
+
+    drop(db);
 
     axum::Json(serde_json::json!({
         "minimax": { "models": mmx_models_json, "status": mmx_status },
         "deepseek": { "balance": ds_balance, "status": ds_status },
         "zai": { "quota": zai_quota, "status": zai_status },
         "claude": { "quota": claude_quota, "status": claude_status },
+        "mimo": { "quota": mimo_quota, "status": mimo_status },
         "_nextPoll": state.next_poll.load(std::sync::atomic::Ordering::Relaxed),
     }))
 }
@@ -67,18 +91,35 @@ pub async fn api_all(State(state): State<Arc<AppState>>) -> axum::Json<serde_jso
 pub async fn api_quota(State(state): State<Arc<AppState>>) -> axum::Json<serde_json::Value> {
     let db = state.db.lock().await;
     let (_, models) = db.latest_minimax_with_ts().unwrap_or((0, vec![]));
-    drop(db);
 
     let mut remains = Vec::new();
+    let now_ms = chrono::Utc::now().timestamp_millis();
     for m in &models {
+        let interval_remains = m
+            .interval_end
+            .map(|t| (t - now_ms).max(0))
+            .filter(|t| *t > 0)
+            .unwrap_or_else(|| db.interval_reset_info(&m.name).map(|(_, r)| r).unwrap_or(0));
+        let weekly_remains = m
+            .weekly_end
+            .map(|t| (t - now_ms).max(0))
+            .filter(|t| *t > 0)
+            .unwrap_or_else(|| {
+                db.weekly_model_reset_info(&m.name)
+                    .map(|(_, r)| r)
+                    .unwrap_or(0)
+            });
         remains.push(serde_json::json!({
             "model_name": m.name,
             "current_interval_usage_count": m.interval_usage,
             "current_interval_total_count": m.interval_total,
             "current_weekly_usage_count": m.weekly_usage,
             "current_weekly_total_count": m.weekly_total,
+            "remains_time": interval_remains,
+            "weekly_remains_time": weekly_remains,
         }));
     }
+    drop(db);
 
     axum::Json(serde_json::json!({
         "model_remains": remains,
@@ -180,6 +221,18 @@ pub async fn api_zai_history(
     axum::Json(serde_json::json!(history))
 }
 
+pub async fn api_zai_models(State(state): State<Arc<AppState>>) -> axum::Json<serde_json::Value> {
+    let token = state.zai_token.read().await;
+    let Some(token) = token.clone() else {
+        return axum::Json(serde_json::json!({"error": "no_token"}));
+    };
+
+    match crate::quota::zai::fetch_model_usage(&state.client, &token).await {
+        Ok(data) => axum::Json(serde_json::json!(data)),
+        Err(e) => axum::Json(serde_json::json!({"error": e.to_string()})),
+    }
+}
+
 pub async fn api_claude(State(state): State<Arc<AppState>>) -> axum::Json<serde_json::Value> {
     let db = state.db.lock().await;
     let quota = db.latest_claude().unwrap_or_default();
@@ -207,6 +260,33 @@ pub async fn api_claude_history(
     axum::Json(serde_json::json!(history))
 }
 
+pub async fn api_mimo(State(state): State<Arc<AppState>>) -> axum::Json<serde_json::Value> {
+    let db = state.db.lock().await;
+    let quota = db.latest_mimo().unwrap_or_default();
+    drop(db);
+
+    let status = provider_status(
+        state.mimo_cookie.read().await.is_some(),
+        quota.as_ref().map(|s| s.timestamp),
+    );
+
+    axum::Json(serde_json::json!({
+        "quota": quota,
+        "status": status,
+    }))
+}
+
+pub async fn api_mimo_history(
+    State(state): State<Arc<AppState>>,
+    Query(q): Query<HoursQuery>,
+) -> axum::Json<serde_json::Value> {
+    let hours = q.hours.unwrap_or(24);
+    let db = state.db.lock().await;
+    let history = db.mimo_history(hours).unwrap_or_default();
+    drop(db);
+    axum::Json(serde_json::json!(history))
+}
+
 pub async fn api_config_get(State(state): State<Arc<AppState>>) -> axum::Json<serde_json::Value> {
     let mask = |key: &Option<String>| -> String {
         match key {
@@ -221,15 +301,18 @@ pub async fn api_config_get(State(state): State<Arc<AppState>>) -> axum::Json<se
     let mmx = state.minimax_key.read().await;
     let ds = state.deepseek_key.read().await;
     let zai = state.zai_token.read().await;
+    let mimo = state.mimo_cookie.read().await;
     let claude = state.claude_creds.read().await;
 
     axum::Json(serde_json::json!({
         "minimax_api_key": mask(&mmx),
         "deepseek_api_key": mask(&ds),
         "zai_auth_token": mask(&zai),
+        "mimo_cookie": mask(&mimo),
         "minimax_configured": mmx.is_some(),
         "deepseek_configured": ds.is_some(),
         "zai_configured": zai.is_some(),
+        "mimo_configured": mimo.is_some(),
         "claude_configured": claude.is_some(),
         "claude_creds_path": claude.as_ref().map(|p| p.display().to_string()),
     }))
@@ -240,6 +323,7 @@ pub struct ConfigBody {
     pub minimax_api_key: Option<String>,
     pub deepseek_api_key: Option<String>,
     pub zai_auth_token: Option<String>,
+    pub mimo_cookie: Option<String>,
 }
 
 pub async fn api_config_put(
@@ -263,38 +347,34 @@ pub async fn api_config_put(
             *state.zai_token.write().await = Some(token.clone());
         }
     }
+    if let Some(ref cookie) = body.mimo_cookie {
+        if !cookie.starts_with(masked_prefix) && !cookie.is_empty() {
+            *state.mimo_cookie.write().await = Some(cookie.clone());
+        }
+    }
 
     let mmx = state.minimax_key.read().await;
     let ds = state.deepseek_key.read().await;
     let zai = state.zai_token.read().await;
+    let mimo = state.mimo_cookie.read().await;
 
-    let config = {
-        #[cfg(feature = "psu")]
-        let psu_fields = { (None, Default::default(), Default::default()) };
-        crate::config::AppConfig {
-            quota: crate::config::QuotaConfig {
-                minimax: Some(crate::config::KeyConfig {
-                    api_key: mmx.clone(),
-                    api_key_env: None,
-                }),
-                deepseek: Some(crate::config::KeyConfig {
-                    api_key: ds.clone(),
-                    api_key_env: None,
-                }),
-                zai: Some(crate::config::ZaiKeyConfig {
-                    auth_token: zai.clone(),
-                    auth_token_env: None,
-                }),
-                ..Default::default()
-            },
-            #[cfg(feature = "psu")]
-            serial: psu_fields.0,
-            #[cfg(feature = "psu")]
-            device: psu_fields.1,
-            #[cfg(feature = "psu")]
-            cost: psu_fields.2,
-        }
-    };
+    let mut config = crate::AppConfig::load(&state.config_path).unwrap_or_default();
+
+    config.quota.minimax = Some(crate::config::KeyConfig {
+        api_key: mmx.clone(),
+        api_key_env: None,
+    });
+    config.quota.deepseek = Some(crate::config::KeyConfig {
+        api_key: ds.clone(),
+        api_key_env: None,
+    });
+    config.quota.zai = Some(crate::config::ZaiKeyConfig {
+        auth_token: zai.clone(),
+        auth_token_env: None,
+    });
+    config.quota.mimo = Some(crate::config::MimoConfig {
+        cookie: mimo.clone(),
+    });
 
     let toml_str = toml::to_string_pretty(&config).unwrap_or_default();
     let _ = std::fs::write(&state.config_path, toml_str);
@@ -712,39 +792,52 @@ async fn tool_epub_read_section(args: &serde_json::Value) -> String {
 }
 
 async fn tool_quota_status() -> String {
-    let config =
-        crate::AppConfig::load(&std::path::PathBuf::from("config.toml")).unwrap_or_default();
-    let orch = match crate::quota::QuotaOrchestrator::new(&config.quota) {
-        Ok(o) => o,
-        Err(e) => return e.to_string(),
+    let db_path = std::path::Path::new("quota.db");
+    let db = match crate::quota::db::QuotaDb::open(db_path) {
+        Ok(d) => d,
+        Err(e) => return format!("quota db error: {e}"),
     };
-    let r = orch.fetch_all().await;
+
     let mut json = serde_json::json!({});
-    if let Some(Ok(s)) = &r.minimax {
+
+    if let Ok((_, models)) = db.latest_minimax_with_ts() {
         json["minimax"] = serde_json::json!({
-        "models":s.models.iter().map(|m|serde_json::json!({
-            "name":m.name,"interval_remaining":m.interval_total-m.interval_usage,
-            "interval_total":m.interval_total,"weekly_remaining":m.weekly_total-m.weekly_usage,"weekly_total":m.weekly_total
-        })).collect::<Vec<_>>()});
-    }
-    if let Some(Ok(s)) = &r.deepseek {
-        json["deepseek"] = serde_json::json!({
-            "balance_cny":s.total_balance_cny,"balance_usd":s.total_balance_usd
-        });
-    }
-    if let Some(Ok(s)) = &r.zai {
-        json["zai"] = serde_json::json!({
-            "token_5h_pct":s.token_5h_pct,"token_week_pct":s.token_week_pct,"mcp_month_pct":s.mcp_month_pct
-        });
-    }
-    if let Some(Ok(s)) = &r.claude {
-        json["claude"] = serde_json::json!({
-            "five_h_pct":s.five_h_pct,"seven_d_pct":s.seven_d_pct,
-            "extra":s.extra.iter().map(|l|serde_json::json!({
-                "label":l.label,"pct":l.pct
+            "models": models.iter().map(|m| serde_json::json!({
+                "name": m.name,
+                "interval_remaining": m.interval_total - m.interval_usage,
+                "interval_total": m.interval_total,
+                "weekly_remaining": m.weekly_total - m.weekly_usage,
+                "weekly_total": m.weekly_total,
             })).collect::<Vec<_>>()
         });
     }
+
+    if let Ok(Some(s)) = db.latest_deepseek() {
+        json["deepseek"] = serde_json::json!({
+            "balance_cny": s.total_balance_cny,
+            "balance_usd": s.total_balance_usd,
+        });
+    }
+
+    if let Ok(Some(s)) = db.latest_zai() {
+        json["zai"] = serde_json::json!({
+            "token_5h_pct": s.token_5h_pct,
+            "token_week_pct": s.token_week_pct,
+            "mcp_month_pct": s.mcp_month_pct,
+        });
+    }
+
+    if let Ok(Some(s)) = db.latest_claude() {
+        json["claude"] = serde_json::json!({
+            "five_h_pct": s.five_h_pct,
+            "seven_d_pct": s.seven_d_pct,
+            "extra": s.extra.iter().map(|l| serde_json::json!({
+                "label": l.label,
+                "pct": l.pct,
+            })).collect::<Vec<_>>(),
+        });
+    }
+
     to_json(&json)
 }
 

@@ -30,6 +30,8 @@ fn latest_minimax_with_ts_returns_timestamp_and_models() {
                 interval_total: 100,
                 weekly_usage: 50,
                 weekly_total: 500,
+                interval_end: None,
+                weekly_end: None,
             },
             ModelQuota {
                 name: "model-b".into(),
@@ -37,6 +39,8 @@ fn latest_minimax_with_ts_returns_timestamp_and_models() {
                 interval_total: 200,
                 weekly_usage: 80,
                 weekly_total: 800,
+                interval_end: None,
+                weekly_end: None,
             },
         ],
     };
@@ -82,6 +86,8 @@ fn latest_minimax_with_ts_returns_latest_of_multiple() {
             interval_total: 10,
             weekly_usage: 5,
             weekly_total: 50,
+            interval_end: None,
+            weekly_end: None,
         }],
     })
     .unwrap();
@@ -95,6 +101,8 @@ fn latest_minimax_with_ts_returns_latest_of_multiple() {
             interval_total: 20,
             weekly_usage: 10,
             weekly_total: 100,
+            interval_end: None,
+            weekly_end: None,
         }],
     })
     .unwrap();

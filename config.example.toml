@@ -17,6 +17,10 @@ api_key = "sk-xxxx"             # DeepSeek API Key
 auth_token = "xxxx"             # Z.AI Auth Token
 # auth_token_env = "ZAI_AUTH_TOKEN"
 
+[quota.mimo]
+# cookie = "api-platform_serviceToken=xxxx"  # MiMo Cookie
+# cookie_env = "MIMO_COOKIE"
+
 # ── PSU Power Monitoring ──────────────────────────
 # Requires the `psu` feature (enabled by default).
 # Remove or comment out [serial] to disable PSU monitoring.

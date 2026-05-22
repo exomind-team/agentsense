@@ -25,6 +25,7 @@
       --zai-color: #22d3ee;
       --claude-color: #d97757;
       --psu-color: #f59e0b;
+      --mimo-color: #818cf8;
     }
 
     [data-theme="light"] {
@@ -46,6 +47,7 @@
       --zai-color: #0891b2;
       --claude-color: #bd5d3a;
       --psu-color: #d97706;
+      --mimo-color: #6366f1;
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -119,7 +121,7 @@
     /* ── Overview Cards (3 columns) ── */
     .overview-grid {
       display: grid;
-      grid-template-columns: 1fr 1fr 1fr;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
       gap: 10px;
       margin-bottom: 14px;
     }
@@ -139,17 +141,37 @@
       margin-bottom: 10px;
     }
 
-    .ov-dot {
-      width: 8px;
-      height: 8px;
+    .ov-avatar {
+      width: 22px;
+      height: 22px;
       border-radius: 50%;
       flex-shrink: 0;
+      background-size: 14px 14px;
+      background-repeat: no-repeat;
+      background-position: center;
     }
 
-    .ov-dot.mmx { background: var(--mmx-color); }
-    .ov-dot.ds  { background: var(--ds-color); }
-    .ov-dot.zai { background: var(--zai-color); }
-    .ov-dot.claude { background: var(--claude-color); }
+    .ov-avatar.mmx {
+      background-color: var(--mmx-color);
+      background-image: url("data:image/svg+xml;base64,PHN2ZyBmaWxsPSIjZmZmZmZmIiByb2xlPSJpbWciIHZpZXdCb3g9IjAgMCAyNCAyNCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48dGl0bGU+TWluaU1heDwvdGl0bGU+PHBhdGggZD0iTTExLjQzIDMuOTJhLjg2Ljg2IDAgMSAwLTEuNzE4IDB2MTQuMjM2YTEuOTk5IDEuOTk5IDAgMCAxLTMuOTk3IDBWOS4wMjJhLjg2Ljg2IDAgMSAwLTEuNzE4IDB2My44N2ExLjk5OSAxLjk5OSAwIDAgMS0zLjk5NyAwVjExLjQ5YS41Ny41NyAwIDAgMSAxLjEzOSAwdjEuNDA0YS44Ni44NiAwIDAgMCAxLjcxOSAwVjkuMDIyYTEuOTk5IDEuOTk5IDAgMCAxIDMuOTk3IDB2OS4xMzRhLjg2Ljg2IDAgMCAwIDEuNzE5IDBWMy45MmExLjk5OCAxLjk5OCAwIDEgMSAzLjk5NiAwdjExLjc4OGEuNTcuNTcgMCAxIDEtMS4xMzkgMHptMTAuNTcyIDMuMTA1YTIgMiAwIDAgMC0xLjk5OSAxLjk5N3Y3LjYzYS44Ni44NiAwIDAgMS0xLjcxOCAwVjMuOTIzYTEuOTk5IDEuOTk5IDAgMCAwLTMuOTk3IDB2MTYuMTZhLjg2Ljg2IDAgMCAxLTEuNzE5IDBWMTguMDhhLjU3LjU3IDAgMSAwLTEuMTM4IDB2MmExLjk5OCAxLjk5OCAwIDAgMCAzLjk5NiAwVjMuOTJhLjg2Ljg2IDAgMCAwIDEuNzE5IDB2MTIuNzNhMS45OTkgMS45OTkgMCAwIDAgMy45OTYgMFY5LjAyM2EuODYuODYgMCAxIDEgMS43MiAwdjYuNjg2YS41Ny41NyAwIDAgMCAxLjEzOCAwVjkuMDIyYTIgMiAwIDAgMC0xLjk5OC0xLjk5NyIvPjwvc3ZnPg==");
+    }
+    .ov-avatar.ds {
+      background-color: var(--ds-color);
+      background-image: url("data:image/svg+xml;base64,PHN2ZyBmaWxsPSIjZmZmZmZmIiByb2xlPSJpbWciIHZpZXdCb3g9IjAgMCAyNCAyNCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48dGl0bGU+RGVlcFNlZWs8L3RpdGxlPjxwYXRoIGQ9Ik0yMy43NDggNC42NTFjLS4yNTQtLjEyNC0uMzY0LjExMy0uNTEyLjIzMy0uMDUxLjA0LS4wOTQuMDktLjEzNy4xMzctLjM3Mi4zOTctLjgwNi42NTctMS4zNzMuNjI2LS44MjktLjA0Ni0xLjUzNy4yMTQtMi4xNjMuODQ4LS4xMzMtLjc4Mi0uNTc1LTEuMjQ4LTEuMjQ3LTEuNTQ4LS4zNTItLjE1NS0uNzA4LS4zMTEtLjk1NS0uNjUtLjE3Mi0uMjQtLjIxOS0uNTA5LS4zMDUtLjc3NC0uMDU1LS4xNi0uMTEtLjMyMy0uMjkzLS4zNS0uMi0uMDMxLS4yNzguMTM2LS4zNTYuMjc2LS4zMTMuNTcyLS40MzQgMS4yMDItLjQyMiAxLjg0LjAyNyAxLjQzNi42MzMgMi41OCAxLjgzOCAzLjM5My4xMzcuMDk0LjE3Mi4xODcuMTI5LjMyMy0uMDgyLjI4LS4xOC41NTMtLjI2Ni44MzMtLjA1NS4xNzktLjEzNy4yMTgtLjMyOC4xNGE1LjUgNS41IDAgMCAxLTEuNzM3LTEuMTc5Yy0uODU3LS44MjgtMS42MzEtMS43NDMtMi41OTctMi40NmExMiAxMiAwIDAgMC0uNjg5LS40N2MtLjk4NS0uOTU3LjEzLTEuNzQzLjM4Ny0xLjgzNi4yNy0uMDk4LjA5NC0uNDMzLS43NzgtLjQyOC0uODcyLjAwMy0xLjY3LjI5NS0yLjY4Ny42ODVhMyAzIDAgMCAxLS40NjUuMTM2IDkuNiA5LjYgMCAwIDAtMi44ODMtLjEwMWMtMS44ODUuMjEtMy4zOSAxLjEtNC40OTcgMi42MjJDLjA4MiA4Ljc3Ni0uMjMxIDEwLjg1NC4xNTIgMTMuMDJjLjQwMyAyLjI4NCAxLjU2OCA0LjE3NSAzLjM2IDUuNjUzIDEuODU3IDEuNTMzIDMuOTk3IDIuMjg0IDYuNDM4IDIuMTQgMS40ODItLjA4NSAzLjEzMi0uMjg0IDQuOTk0LTEuODYuNDcuMjM0Ljk2Mi4zMjggMS43OC4zOTguNjI5LjA1OCAxLjIzNS0uMDMxIDEuNzA1LS4xMjkuNzM1LS4xNTUuNjg0LS44MzYuNDE4LS45NjEtMi4xNTUtMS4wMDQtMS42ODItLjU5NS0yLjExMi0uOTI2IDEuMDk1LTEuMjk1IDIuNzY4LTMuNTk4IDMuMjg0LTYuNzMzLjA1LS4zNDYuMTE1LS44MzQuMTA4LTEuMTE0LS4wMDQtLjE3MS4wMzUtLjIzOC4yMy0uMjU3YTQuMiA0LjIgMCAwIDAgMS41NDUtLjQ3NWMxLjM5Ny0uNzYzIDEuOTYtMi4wMTYgMi4wOTMtMy41MTcuMDItLjIzLS4wMDQtLjQ2Ny0uMjQ3LS41ODhNMTEuNTggMTguMTY4Yy0yLjA4OC0xLjY0Mi0zLjEwMS0yLjE4My0zLjUyLTIuMTYtLjM5LjAyNC0uMzIuNDcyLS4yMzQuNzYzLjA5LjI4OC4yMDcuNDg3LjM3MS43NC4xMTQuMTY3LjE5Mi40MTYtLjExMy42MDMtLjY3My40MTYtMS44NDItLjE0LTEuODk3LS4xNjgtMS4zNjEtLjgwMS0yLjUtMS44Ni0zLjMwMS0zLjMwNi0uNzc1LTEuMzkzLTEuMjI1LTIuODg4LTEuMjk5LTQuNDgyLS4wMi0uMzg1LjA5NC0uNTIyLjQ3Ny0uNTkyYTQuNyA0LjcgMCAwIDEgMS41My0uMDM4YzIuMTMxLjMxMSAzLjk0NiAxLjI2NCA1LjQ2NyAyLjc3NC44NjguODYgMS41MjUgMS44ODcgMi4yMDIgMi44OS43MiAxLjA2NiAxLjQ5NCAyLjA4MiAyLjQ4IDIuOTE1LjM0OC4yOTEuNjI2LjUxMy44OTIuNjc3LS44MDIuMDktMi4xNC4xMDktMy4wNTUtLjYxNXptMS4wMDEtNi40NGEuMzA2LjMwNiAwIDAgMSAuNDE1LS4yODcuMy4zIDAgMCAxIC4xMTMuMDc0LjMuMyAwIDAgMSAuMDg2LjIxNGMwIC4xNy0uMTM2LjMwNy0uMzA4LjMwN2EuMzAzLjMwMyAwIDAgMS0uMzA2LS4zMDdtMy4xMSAxLjU5NmMtLjIuMDgxLS40LjE1MS0uNTkxLjE2YTEuMjUgMS4yNSAwIDAgMS0uNzk4LS4yNTRjLS4yNzQtLjIzLS40Ny0uMzU4LS41NTEtLjc1OGExLjcgMS43IDAgMCAxIC4wMTUtLjU4OGMuMDctLjMyNy0uMDA3LS41MzctLjIzOC0uNzI3LS4xODgtLjE1Ni0uNDI2LS4xOTktLjY4OS0uMTk5YS42LjYgMCAwIDEtLjI1NC0uMDc4LjI1My4yNTMgMCAwIDEtLjExNC0uMzU4IDEgMSAwIDAgMSAuMTkyLS4yMWMuMzU2LS4yMDIuNzY3LS4xMzYgMS4xNDYuMDE2LjM1Mi4xNDQuNjE4LjQwOCAxLjAwMS43ODIuMzkyLjQ1MS40NjIuNTc2LjY4NS45MTUuMTc2LjI2NC4zMzYuNTM2LjQ0Ni44NDguMDY2LjE5NC0uMDIuMzUzLS4yNS40NSIvPjwvc3ZnPg==");
+    }
+    .ov-avatar.zai {
+      background-color: var(--zai-color);
+      background-image: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAMAAABEpIrGAAABXFBMVEUbT/8AAAAbTv8ZT/8QSv8RSv8yWv9ib/4qVf9qdP5kcP1ocvz///8lVP8eUf8cT/9gb/8iUv8ZTv/7+/8RS//3+P8+X/86Xf8oVf/09P/X2v/M0f9kcP81W/8sV/8WTf/Q0/9ncv8xWf8pVv8HRv/w8P9EYv88Xv84XP8tWP/f4f9CYf8gUf8UTP8LSP/HzP9abP9GY/8OSf8jU/7s7f/c3v9dbf9cbf9Wav9NZv9AYP/U1//Eyf8YTv/S1v/Kz/9RaP9PZ/9IZP80Wv++xf+gr/9sdP9pc/9Uaf9LZf/l5v9ZeP9ib/9bbP9JZP8wWP9CYf7p6//Z3P/U2f+6wf9shf9Mbf9Ya/9Fav+otP+aqf92iv9ngv9eeP9Xc/8+Zv8TS/8bT/7h4/+Xo/+MoP97jv9ufv9hfv9Taf8zYf82YP8gUf7Axf+tuP+Uov+Hm/9Vbf85Y/+xvP9ddf7a3UVTAAAADHRSTlP+AG9g38/f38/PcGD1VwHWAAACkklEQVQ4yzWQh1faUBTGL45Ok5C0DShLggYwWEnZKMowLbIEZS/FvUf7/5/Te/PCj0Pee+f7ne++BGwLH0IOWVMbmcJdOpqy291uv//Pb8bnrzZYDCseEopHhXwZjSQzTPx+/xf4REIw29SPMvm7dC+atNtrqDDc7o/g9B6XQkFZ01lFr45TUGHU7HbgUMAZZgUal5d1nEJOrUZLCrgAzsAKukXm+nRlJX5ZTyKUJlOpKMQCXsWsUPUJxsTaTR1rkql6KhrtAee0KrqGmbbosXcTJXq9dBpi5gyPw1hludUyuEkj5XIeRA7fQxlXVhiHA2vTeimX7/L5AkRiOKP7bc7kbXO+vc4XCpkM8FTR/2HRLjaM+X6E8VEDaEagv8rYmur626l1GGHcKIKAFYH+psnJVGuq+r8EO40axaKugkQz+vFWPB4fFGX8oqqqD+NER9dVVQOJKs4qlZ2rasgRDGY1rdlUp1cHW60Oxtks5Ezh4uLCZXTRwI6slnlZr1QqY03LyjL4qOJsizjohKhEnrjM41iWg0EHbPsEPvJ+giQSiZEn5HBU9xMmtxg7QnBOFe+na4ypJ9Tds/a3GHs88H3bJ/H3+4zd55JnuGsxwbhUIiEn3LuIdaTaX59TLZUU5Rh+UYVwf3Vg4hq+uhiDqoJx2As/0cjhNW7/7hCHBls6yrESDoe9AVPwkSF2nveQNv2vHyj0egMBJ2ygce7LzYB/fHg9RJ6ehmeYmamT40hgHTM+Ij4Y7bbRdSIs5WIibFAFXRQEAZXqmJtDsRhBwTJyAGSIYiwW4/BHKc8LsIQCM3yShCV8BKXHRzESMeNlWNiwjHN8W2mGLRaCIIAgLYJtcXluYAk6GMwEAFwkaWnB9h8ow60D6cw0zQAAAABJRU5ErkJggg==");
+      background-size: cover;
+    }
+    .ov-avatar.claude {
+      background-color: var(--claude-color);
+      background-image: url("data:image/svg+xml;base64,PHN2ZyBmaWxsPSIjZmZmZmZmIiByb2xlPSJpbWciIHZpZXdCb3g9IjAgMCAyNCAyNCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48dGl0bGU+QW50aHJvcGljPC90aXRsZT48cGF0aCBkPSJNMTcuMzA0MSAzLjU0MWgtMy42NzE4bDYuNjk2IDE2LjkxOEgyNFPtLTEwLjYwODIgMEwwIDIwLjQ1OWgzLjc0NDJsMS4zNjkzLTMuNTUyN2g3LjAwNTJsMS4zNjkzIDMuNTUyOGgzLjc0NDJMMTAuNTM2MyAzLjU0MDlabS0uMzcxMiAxMC4yMjMyIDIuMjkxNC01Ljk0NTYgMi4yOTE0IDUuOTQ1NloiLz48L3N2Zz4=");
+    }
+    .ov-avatar.mimo {
+      background-color: var(--mimo-color);
+      background-image: url("data:image/svg+xml;base64,PHN2ZyBmaWxsPSIjZmZmZmZmIiByb2xlPSJpbWciIHZpZXdCb3g9IjAgMCAyNCAyNCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48dGl0bGU+TWlNbzwvdGl0bGU+PHBhdGggZD0iTTUgN2gxMnYxMEg1eiIvPjwvc3ZnPg==");
+    }
 
     .ov-label {
       font-size: 12px;
@@ -657,8 +679,8 @@
 <div class="overview-grid" id="overview">
   <div class="overview-card" id="ov-minimax">
     <div class="ov-header">
-      <span class="ov-dot mmx"></span>
-      <span class="ov-label">MiniMax</span>
+      <span class="ov-avatar mmx"></span>
+      <span class="ov-label">MiniMax 🌐</span>
       <span class="ov-status" id="ov-minimax-status">--</span>
     </div>
     <div class="ov-value" id="ov-minimax-value">--</div>
@@ -667,7 +689,7 @@
   </div>
   <div class="overview-card" id="ov-deepseek">
     <div class="ov-header">
-      <span class="ov-dot ds"></span>
+      <span class="ov-avatar ds"></span>
       <span class="ov-label">DeepSeek</span>
       <span class="ov-status" id="ov-deepseek-status">--</span>
     </div>
@@ -676,8 +698,8 @@
   </div>
   <div class="overview-card" id="ov-zai">
     <div class="ov-header">
-      <span class="ov-dot zai"></span>
-      <span class="ov-label">Z.AI (GLM)</span>
+      <span class="ov-avatar zai"></span>
+      <span class="ov-label">GLM</span>
       <span class="ov-status" id="ov-zai-status">--</span>
     </div>
     <div class="ov-value" id="ov-zai-value">--</div>
@@ -686,7 +708,7 @@
   </div>
   <div class="overview-card" id="ov-claude">
     <div class="ov-header">
-      <span class="ov-dot claude"></span>
+      <span class="ov-avatar claude"></span>
       <span class="ov-label">Claude</span>
       <span class="ov-status" id="ov-claude-status">--</span>
     </div>
@@ -714,13 +736,24 @@
     </div>
   </div>
 </div>
+  <div class="overview-card" id="ov-mimo">
+    <div class="ov-header">
+      <span class="ov-avatar mimo"></span>
+      <span class="ov-label">MiMo</span>
+      <span class="ov-status" id="ov-mimo-status">--</span>
+    </div>
+    <div class="ov-value" id="ov-mimo-value">--</div>
+    <div class="ov-sub" id="ov-mimo-sub">月额度</div>
+    <div class="ov-bar-wrap"><div class="ov-bar" id="ov-mimo-bar" style="width:0;background:var(--mimo-color)"></div></div>
+  </div>
 
 <!-- Service tabs -->
 <div class="service-tabs">
-  <button class="service-tab active" data-service="minimax">MiniMax</button>
+  <button class="service-tab active" data-service="minimax">MiniMax 🌐</button>
   <button class="service-tab" data-service="deepseek">DeepSeek</button>
-  <button class="service-tab" data-service="zai">Z.AI</button>
+  <button class="service-tab" data-service="zai">GLM</button>
   <button class="service-tab" data-service="claude">Claude</button>
+  <button class="service-tab" data-service="mimo">MiMo</button>
   <button class="service-tab" data-service="power">⚡ Power</button>
 </div>
 
@@ -801,14 +834,15 @@
 <div class="service-section" id="sec-zai">
   <div id="zai-content">
     <div class="chart-container">
-      <div class="chart-title">Z.AI (GLM) 配额</div>
+      <div class="chart-title">GLM 配额 <span id="zai-level" style="font-size:11px;color:var(--muted);font-weight:400"></span></div>
       <div class="zai-quotas" id="zai-quotas">
         <div class="zai-row">
           <span class="zai-label">5h 窗口</span>
           <div class="zai-bar-wrap"><div class="zai-bar" id="zai-bar-5h" style="width:0;background:var(--zai-color)"></div></div>
           <span class="zai-pct" id="zai-pct-5h">--%</span>
+          <span class="zai-extra" id="zai-reset-5h"></span>
         </div>
-        <div class="zai-row">
+        <div class="zai-row" id="zai-row-week" style="display:none">
           <span class="zai-label">周配额</span>
           <div class="zai-bar-wrap"><div class="zai-bar" id="zai-bar-week" style="width:0;background:var(--zai-color)"></div></div>
           <span class="zai-pct" id="zai-pct-week">--%</span>
@@ -819,16 +853,28 @@
           <span class="zai-pct" id="zai-pct-mcp">--%</span>
           <span class="zai-extra" id="zai-extra-mcp"></span>
         </div>
+        <div id="zai-mcp-details" style="padding:4px 0 0 80px;font-size:11px;color:var(--muted)"></div>
       </div>
     </div>
 
     <div class="chart-container">
+      <div class="chart-title">模型 Token 消耗 <span id="zai-model-summary" style="font-size:11px;color:var(--muted);font-weight:400"></span></div>
+      <div id="zai-model-highlight" style="display:flex;gap:12px;margin-bottom:4px"></div>
+      <div id="zai-model-bar" class="chart" style="height:300px" role="img" aria-label="GLM模型Token消耗"></div>
+    </div>
+
+    <div class="chart-container">
+      <div class="chart-title">历史消耗</div>
+      <div id="zai-hourly-chart" class="chart" role="img" aria-label="GLM历史Token消耗"></div>
+    </div>
+
+    <div class="chart-container">
       <div class="chart-title">配额变化趋势（24h）</div>
-      <div id="zai-history-chart" class="chart" role="img" aria-label="Z.AI配额变化趋势"></div>
+      <div id="zai-history-chart" class="chart" role="img" aria-label="GLM配额变化趋势"></div>
     </div>
   </div>
   <div class="no-key-msg" id="zai-no-key" style="display:none">
-    Z.AI Auth Token 未配置。<a onclick="document.getElementById('settings-btn').click()">前往设置</a>
+    GLM Auth Token 未配置。<a onclick="document.getElementById('settings-btn').click()">前往设置</a>
   </div>
 </div>
 
@@ -847,6 +893,23 @@
   </div>
   <div class="no-key-msg" id="claude-no-key" style="display:none">
     未找到 Claude Code 凭证（<code>~/.claude/.credentials.json</code>）。登录 Claude Code 后自动生效。
+  </div>
+</div>
+
+<!-- ═══════ MiMo Section ═══════ -->
+<div class="service-section" id="sec-mimo">
+  <div id="mimo-content">
+    <div class="chart-container">
+      <div class="chart-title">MiMo 套餐额度 <span id="mimo-plan-label" style="font-size:11px;color:var(--muted);font-weight:400"></span></div>
+      <div class="zai-quotas" id="mimo-quotas"></div>
+    </div>
+    <div class="chart-container">
+      <div class="chart-title">用量变化趋势</div>
+      <div id="mimo-history-chart" class="chart" style="height:200px" role="img" aria-label="MiMo用量变化趋势"></div>
+    </div>
+  </div>
+  <div class="no-key-msg" id="mimo-no-key" style="display:none">
+    MiMo Cookie 未配置。<a onclick="document.getElementById('settings-btn').click()">前往设置</a>
   </div>
 </div>
 
@@ -965,9 +1028,14 @@
       <div class="form-hint">从 platform.deepseek.com 获取</div>
     </div>
     <div class="form-group">
-      <label for="cfg-zai-token">Z.AI Auth Token</label>
+      <label for="cfg-zai-token">GLM Auth Token</label>
       <input type="password" id="cfg-zai-token" placeholder="Bearer token..." autocomplete="off" />
-      <div class="form-hint">Z.AI 开发者面板获取</div>
+      <div class="form-hint">智谱 BigModel 开发者面板获取</div>
+    </div>
+    <div class="form-group">
+      <label for="cfg-mimo-cookie">MiMo Cookie</label>
+      <input type="password" id="cfg-mimo-cookie" placeholder="api-platform_serviceToken=..." autocomplete="off" />
+      <div class="form-hint">从 platform.xiaomimimo.com 控制台复制 Cookie。Cookie 会过期，需定期更新</div>
     </div>
     <div class="modal-actions">
       <button class="modal-close" id="modal-cancel">取消</button>
@@ -1017,7 +1085,10 @@ let chart = null;
 let weeklyBarChart = null;
 let dsHistoryChart = null;
 let zaiHistoryChart = null;
+let zaiHourlyChart = null;
+let zaiModelBar = null;
 let claudeHistoryChart = null;
+let mimoHistoryChart = null;
 let countdownSec = 60;
 let powerTrendChart = null;
 let powerPollInterval = null;
@@ -1032,7 +1103,10 @@ function init() {
   weeklyBarChart = echarts.init(document.getElementById('weekly-bar-chart'), null, { renderer: 'canvas' });
   dsHistoryChart = echarts.init(document.getElementById('ds-history-chart'), null, { renderer: 'canvas' });
   zaiHistoryChart = echarts.init(document.getElementById('zai-history-chart'), null, { renderer: 'canvas' });
+  zaiHourlyChart = echarts.init(document.getElementById('zai-hourly-chart'), null, { renderer: 'canvas' });
+  zaiModelBar = echarts.init(document.getElementById('zai-model-bar'), null, { renderer: 'canvas' });
   claudeHistoryChart = echarts.init(document.getElementById('claude-history-chart'), null, { renderer: 'canvas' });
+  mimoHistoryChart = echarts.init(document.getElementById('mimo-history-chart'), null, { renderer: 'canvas' });
   powerTrendChart = echarts.init(document.getElementById('power-trend-chart'), null, { renderer: 'canvas' });
   try { powerLocalStorage = JSON.parse(localStorage.getItem(POWER_LS_KEY) || '[]'); } catch(e) { powerLocalStorage = []; }
 
@@ -1048,7 +1122,10 @@ function init() {
     weeklyBarChart?.resize();
     dsHistoryChart?.resize();
     zaiHistoryChart?.resize();
+    zaiHourlyChart?.resize();
+    zaiModelBar?.resize();
     claudeHistoryChart?.resize();
+    mimoHistoryChart?.resize();
     powerTrendChart?.resize();
   });
 
@@ -1101,9 +1178,12 @@ function bindServiceTabs() {
         weeklyBarChart?.resize();
         dsHistoryChart?.resize();
         zaiHistoryChart?.resize();
+        zaiHourlyChart?.resize();
+        zaiModelBar?.resize();
         claudeHistoryChart?.resize();
+        mimoHistoryChart?.resize();
         powerTrendChart?.resize();
-      }, 50);
+      }, 100);
       // Power tab: start 1s polling
       if (activeService === 'power') {
         startPowerPolling();
@@ -1134,6 +1214,7 @@ async function loadConfigToForm() {
     document.getElementById('cfg-mmx-key').value = cfg.minimax_api_key || '';
     document.getElementById('cfg-ds-key').value = cfg.deepseek_api_key || '';
     document.getElementById('cfg-zai-token').value = cfg.zai_auth_token || '';
+    document.getElementById('cfg-mimo-cookie').value = cfg.mimo_cookie || '';
   } catch {}
 }
 
@@ -1141,6 +1222,7 @@ async function saveConfigFromForm() {
   const mmxKey = document.getElementById('cfg-mmx-key').value.trim();
   const dsKey = document.getElementById('cfg-ds-key').value.trim();
   const zaiToken = document.getElementById('cfg-zai-token').value.trim();
+  const mimoCookie = document.getElementById('cfg-mimo-cookie').value.trim();
 
   try {
     await fetch(`${API_BASE}/api/config`, {
@@ -1150,6 +1232,7 @@ async function saveConfigFromForm() {
         minimax_api_key: mmxKey,
         deepseek_api_key: dsKey,
         zai_auth_token: zaiToken,
+        mimo_cookie: mimoCookie,
       }),
     });
     document.getElementById('settings-modal').classList.remove('active');
@@ -1544,6 +1627,7 @@ async function fetchAll() {
     fetchDeepSeekDetail(),
     fetchZaiDetail(),
     fetchClaudeDetail(),
+    fetchMimoDetail(),
     fetchPowerOverview(),
     fetchPsuCost(),
     fetchThermal(),
@@ -1628,13 +1712,15 @@ async function fetchDeepSeekDetail() {
 
 async function fetchZaiDetail() {
   try {
-    const [quotaRes, historyRes] = await Promise.all([
+    const [quotaRes, historyRes, modelsRes] = await Promise.all([
       fetch(`${API_BASE}/api/zai`),
       fetch(`${API_BASE}/api/zai/history`),
+      fetch(`${API_BASE}/api/zai/models`),
     ]);
     const quotaData = await quotaRes.json();
     const historyData = await historyRes.json();
-    renderZai(quotaData, historyData);
+    const modelsData = await modelsRes.json();
+    renderZai(quotaData, historyData, modelsData);
   } catch (err) {
     console.error('fetchZaiDetail error:', err);
   }
@@ -1649,6 +1735,18 @@ async function fetchClaudeDetail() {
     renderClaude(await quotaRes.json(), await historyRes.json());
   } catch (err) {
     console.error('fetchClaudeDetail error:', err);
+  }
+}
+
+async function fetchMimoDetail() {
+  try {
+    const [quotaRes, historyRes] = await Promise.all([
+      fetch(`${API_BASE}/api/mimo`),
+      fetch(`${API_BASE}/api/mimo/history`),
+    ]);
+    renderMimo(await quotaRes.json(), await historyRes.json());
+  } catch (err) {
+    console.error('fetchMimoDetail error:', err);
   }
 }
 
@@ -1683,7 +1781,11 @@ function renderOverview(data) {
   const mmxStatus = statusText(data.minimax?.status);
   document.getElementById('ov-minimax-status').textContent = mmxStatus.text;
   document.getElementById('ov-minimax-status').className = 'ov-status ' + mmxStatus.cls;
-  if (mmxM) {
+  if (mmxStatus.cls === 'no_key') {
+    document.getElementById('ov-minimax-value').textContent = '--';
+    document.getElementById('ov-minimax-sub').textContent = '未配置';
+    document.getElementById('ov-minimax-bar').style.width = '0%';
+  } else if (mmxM) {
     const intervalTotal = mmxM.current_interval_total_count;
     const intervalUsed = mmxM.current_interval_usage_count;
     const remainPct = intervalTotal > 0 ? ((1 - intervalUsed / intervalTotal) * 100) : 0;
@@ -1698,39 +1800,78 @@ function renderOverview(data) {
   const dsStatus = statusText(data.deepseek?.status);
   document.getElementById('ov-deepseek-status').textContent = dsStatus.text;
   document.getElementById('ov-deepseek-status').className = 'ov-status ' + dsStatus.cls;
-  const dsBal = data.deepseek?.balance;
-  if (dsBal) {
-    document.getElementById('ov-deepseek-value').textContent = '¥' + dsBal.total_balance_cny.toFixed(2);
-    document.getElementById('ov-deepseek-sub').textContent =
-      '赠送 ¥' + dsBal.granted_cny.toFixed(2) + ' + 充值 ¥' + dsBal.topped_up_cny.toFixed(2);
+  if (dsStatus.cls === 'no_key') {
+    document.getElementById('ov-deepseek-value').textContent = '--';
+    document.getElementById('ov-deepseek-sub').textContent = '未配置';
+  } else {
+    const dsBal = data.deepseek?.balance;
+    if (dsBal) {
+      document.getElementById('ov-deepseek-value').textContent = '¥' + dsBal.total_balance_cny.toFixed(2);
+      document.getElementById('ov-deepseek-sub').textContent =
+        '赠送 ¥' + dsBal.granted_cny.toFixed(2) + ' + 充值 ¥' + dsBal.topped_up_cny.toFixed(2);
+    }
   }
 
   // Z.AI
   const zaiStatus = statusText(data.zai?.status);
   document.getElementById('ov-zai-status').textContent = zaiStatus.text;
   document.getElementById('ov-zai-status').className = 'ov-status ' + zaiStatus.cls;
-  const zaiQ = data.zai?.quota;
-  if (zaiQ) {
-    const remain5h = 100 - zaiQ.token_5h_pct;
-    document.getElementById('ov-zai-value').textContent = remain5h + '%';
-    document.getElementById('ov-zai-sub').textContent = `5h 已用 ${zaiQ.token_5h_pct}% · 周 ${zaiQ.token_week_pct}%`;
-    document.getElementById('ov-zai-bar').style.width = Math.min(100, remain5h) + '%';
-    const color = remain5h < 20 ? 'var(--red)' : remain5h < 40 ? 'var(--yellow)' : 'var(--zai-color)';
-    document.getElementById('ov-zai-bar').style.background = color;
+  if (zaiStatus.cls === 'no_key') {
+    document.getElementById('ov-zai-value').textContent = '--';
+    document.getElementById('ov-zai-sub').textContent = '未配置';
+    document.getElementById('ov-zai-bar').style.width = '0%';
+  } else {
+    const zaiQ = data.zai?.quota;
+    if (zaiQ) {
+      const remain5h = 100 - zaiQ.token_5h_pct;
+      document.getElementById('ov-zai-value').textContent = remain5h + '%';
+      const weekPct = zaiQ.token_week_pct;
+      const weekStr = (weekPct >= 0) ? ` · 周 ${weekPct}%` : '';
+      document.getElementById('ov-zai-sub').textContent = `5h 已用 ${zaiQ.token_5h_pct}%${weekStr}`;
+      document.getElementById('ov-zai-bar').style.width = Math.min(100, remain5h) + '%';
+      const color = remain5h < 20 ? 'var(--red)' : remain5h < 40 ? 'var(--yellow)' : 'var(--zai-color)';
+      document.getElementById('ov-zai-bar').style.background = color;
+    }
   }
 
   // Claude
   const claudeStatus = statusText(data.claude?.status);
   document.getElementById('ov-claude-status').textContent = claudeStatus.text;
   document.getElementById('ov-claude-status').className = 'ov-status ' + claudeStatus.cls;
-  const cQ = data.claude?.quota;
-  if (cQ) {
-    const remain5h = 100 - cQ.five_h_pct;
-    document.getElementById('ov-claude-value').textContent = remain5h + '%';
-    document.getElementById('ov-claude-sub').textContent = `5h 已用 ${cQ.five_h_pct}% · 7d ${cQ.seven_d_pct}%`;
-    document.getElementById('ov-claude-bar').style.width = Math.min(100, remain5h) + '%';
-    const color = remain5h < 20 ? 'var(--red)' : remain5h < 40 ? 'var(--yellow)' : 'var(--claude-color)';
-    document.getElementById('ov-claude-bar').style.background = color;
+  if (claudeStatus.cls === 'no_key') {
+    document.getElementById('ov-claude-value').textContent = '--';
+    document.getElementById('ov-claude-sub').textContent = '未配置';
+    document.getElementById('ov-claude-bar').style.width = '0%';
+  } else {
+    const cQ = data.claude?.quota;
+    if (cQ) {
+      const remain5h = 100 - cQ.five_h_pct;
+      document.getElementById('ov-claude-value').textContent = remain5h + '%';
+      document.getElementById('ov-claude-sub').textContent = `5h 已用 ${cQ.five_h_pct}% · 7d ${cQ.seven_d_pct}%`;
+      document.getElementById('ov-claude-bar').style.width = Math.min(100, remain5h) + '%';
+      const color = remain5h < 20 ? 'var(--red)' : remain5h < 40 ? 'var(--yellow)' : 'var(--claude-color)';
+      document.getElementById('ov-claude-bar').style.background = color;
+    }
+  }
+  // MiMo
+  const mimoStatus = statusText(data.mimo?.status);
+  document.getElementById('ov-mimo-status').textContent = mimoStatus.text;
+  document.getElementById('ov-mimo-status').className = 'ov-status ' + mimoStatus.cls;
+  if (mimoStatus.cls === 'no_key') {
+    document.getElementById('ov-mimo-value').textContent = '--';
+    document.getElementById('ov-mimo-sub').textContent = '未配置';
+    document.getElementById('ov-mimo-bar').style.width = '0%';
+  } else {
+    const mQ = data.mimo?.quota;
+    if (mQ) {
+      const remainPct = (100 - mQ.month_percent * 100);
+      const fmtM = (v) => { const m = v / 1e6; return (m < 10 ? m.toFixed(2) : m.toFixed(1)) + 'M'; };
+      document.getElementById('ov-mimo-value').textContent = remainPct.toFixed(1) + '%';
+      document.getElementById('ov-mimo-sub').textContent = `${fmtM(mQ.month_limit - mQ.month_used)} 剩余 · ${mQ.plan_name}`;
+      document.getElementById('ov-mimo-bar').style.width = Math.min(100, remainPct) + '%';
+      const color = remainPct < 20 ? 'var(--red)' : remainPct < 40 ? 'var(--yellow)' : 'var(--mimo-color)';
+      document.getElementById('ov-mimo-bar').style.background = color;
+    }
   }
 
   updateFooter(data);
@@ -1795,7 +1936,13 @@ function renderDeepSeek(data, history) {
 
 // ── Render Z.AI Detail ──────────────────────────────────────────────────────
 
-function renderZai(data, history) {
+function fmtTokens(n) {
+  if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
+  if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';
+  return String(n);
+}
+
+function renderZai(data, history, modelsData) {
   const noKey = document.getElementById('zai-no-key');
   const content = document.getElementById('zai-content');
 
@@ -1809,20 +1956,86 @@ function renderZai(data, history) {
 
   const q = data.quota;
   if (q) {
+    // Level
+    document.getElementById('zai-level').textContent = q.level ? `Lv.${q.level}` : '';
+
+    // 5h bar
     updateZaiBar('5h', q.token_5h_pct);
-    updateZaiBar('week', q.token_week_pct);
-    updateZaiBar('mcp', q.mcp_month_pct);
-    if (q.mcp_total > 0) {
-      document.getElementById('zai-extra-mcp').textContent = `${q.mcp_used} / ${q.mcp_total}`;
+    document.getElementById('zai-reset-5h').textContent = fmtReset(q.token_5h_reset);
+
+    // Weekly quota - conditional
+    const weekRow = document.getElementById('zai-row-week');
+    if (q.token_week_pct >= 0) {
+      weekRow.style.display = 'flex';
+      updateZaiBar('week', q.token_week_pct);
+    } else {
+      weekRow.style.display = 'none';
     }
+
+    // MCP bar
+    updateZaiBar('mcp', q.mcp_month_pct);
+    const mcpExtra = document.getElementById('zai-extra-mcp');
+    if (q.mcp_total > 0) {
+      mcpExtra.textContent = `${q.mcp_used} / ${q.mcp_total}`;
+    }
+
+    // MCP usage details
+    const mcpDetailsEl = document.getElementById('zai-mcp-details');
+    try {
+      const details = JSON.parse(q.usage_details_json || '[]');
+      if (details.length > 0) {
+        mcpDetailsEl.textContent = details.map(d => `${d.modelCode}: ${d.usage}`).join(' · ');
+      } else {
+        mcpDetailsEl.textContent = '';
+      }
+    } catch { mcpDetailsEl.textContent = ''; }
   }
 
-  // History chart
+  // Model usage chart + highlight
+  const modelHighlightEl = document.getElementById('zai-model-highlight');
+  const modelSummaryEl = document.getElementById('zai-model-summary');
+  if (modelsData && !modelsData.error && modelsData.models) {
+    const total = modelsData.total_tokens || 0;
+    modelSummaryEl.textContent = `共 ${fmtTokens(total)} tokens · ${modelsData.total_calls || 0} calls`;
+
+    // GLM-5.1 highlight block (compact inline style)
+    const mainModel = modelsData.models.find(m => m.name === 'GLM-5.1');
+    if (mainModel) {
+      modelHighlightEl.innerHTML = `
+        <div style="flex:1;background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:4px 12px;display:flex;align-items:center;justify-content:center;gap:8px">
+          <span style="font-size:11px;color:var(--muted)">GLM-5.1</span>
+          <span style="font-size:16px;font-weight:bold;color:#22d3ee">${fmtTokens(mainModel.total_tokens)}</span>
+          <span style="font-size:10px;color:var(--muted)">tokens</span>
+        </div>
+      `;
+    }
+
+    // Hourly trend chart
+    renderZaiHourlyChart(modelsData);
+    // Model bar chart
+    renderZaiModelBar(modelsData);
+  } else {
+    modelSummaryEl.textContent = modelsData?.error ? '加载失败' : '';
+    modelHighlightEl.innerHTML = '';
+  }
+
+  // History chart (quota over time)
   if (!zaiHistoryChart || !history || history.length === 0) return;
 
   const isDark = document.documentElement.getAttribute('data-theme') !== 'light';
   const textColor = isDark ? '#8b949e' : '#656d76';
   const splitColor = isDark ? '#21262d' : '#eaeef2';
+
+  const series = [
+    { name: '5h', type: 'line', smooth: true, symbol: 'none', lineStyle: { width: 2 }, itemStyle: { color: '#22d3ee' }, data: history.map(h => [h.ts, h.token_5h_pct]) },
+  ];
+  const legendData = ['5h'];
+  if (history.some(h => h.token_week_pct >= 0)) {
+    series.push({ name: '周', type: 'line', smooth: true, symbol: 'none', lineStyle: { width: 2 }, itemStyle: { color: '#818cf8' }, data: history.map(h => [h.ts, h.token_week_pct]) });
+    legendData.push('周');
+  }
+  series.push({ name: 'MCP', type: 'line', smooth: true, symbol: 'none', lineStyle: { width: 2 }, itemStyle: { color: '#fb923c' }, data: history.map(h => [h.ts, h.mcp_month_pct]) });
+  legendData.push('MCP');
 
   zaiHistoryChart.setOption({
     backgroundColor: 'transparent',
@@ -1841,15 +2054,139 @@ function renderZai(data, history) {
         return s;
       },
     },
-    legend: { data: ['5h', '周', 'MCP'], textStyle: { color: textColor, fontSize: 10 }, top: 0 },
+    legend: { data: legendData, textStyle: { color: textColor, fontSize: 10 }, top: 0 },
     grid: { left: 50, right: 20, top: 30, bottom: 30 },
     xAxis: { type: 'time', axisLine: { lineStyle: { color: splitColor } }, axisLabel: { color: textColor, fontSize: 10 }, splitLine: { show: false } },
     yAxis: { type: 'value', name: '%', max: 100, nameTextStyle: { color: textColor, fontSize: 10 }, axisLine: { show: false }, axisLabel: { color: textColor, fontSize: 10 }, splitLine: { lineStyle: { color: splitColor } } },
-    series: [
-      { name: '5h', type: 'line', smooth: true, symbol: 'none', lineStyle: { width: 2 }, itemStyle: { color: '#22d3ee' }, data: history.map(h => [h.ts, h.token_5h_pct]) },
-      { name: '周', type: 'line', smooth: true, symbol: 'none', lineStyle: { width: 2 }, itemStyle: { color: '#818cf8' }, data: history.map(h => [h.ts, h.token_week_pct]) },
-      { name: 'MCP', type: 'line', smooth: true, symbol: 'none', lineStyle: { width: 2 }, itemStyle: { color: '#fb923c' }, data: history.map(h => [h.ts, h.mcp_month_pct]) },
-    ],
+    series,
+  }, { notMerge: true });
+}
+
+function renderZaiHourlyChart(modelsData) {
+  if (!zaiHourlyChart || !modelsData.hours || modelsData.hours.length === 0) return;
+
+  const isDark = document.documentElement.getAttribute('data-theme') !== 'light';
+  const textColor = isDark ? '#8b949e' : '#656d76';
+  const splitColor = isDark ? '#21262d' : '#eaeef2';
+
+  // Reverse so most recent hour is on the left
+  const xLabels = [...modelsData.hours].reverse()
+    .map(h => {
+      // "2026-05-19 16:00" → "19日 16:00"
+      const m = h.match(/\d{4}-(\d{2})-(\d{2})\s+(\d{2}:\d{2})/);
+      if (m) return parseInt(m[2]) + '日 ' + m[3];
+      return h.replace(/^\d{4}-/, '');
+    });
+
+  const colors = ['#22d3ee', '#818cf8', '#f472b6', '#fb923c', '#a3e635'];
+  const series = [];
+  if (modelsData.model_per_hour) {
+    modelsData.model_per_hour.forEach((m, i) => {
+      series.push({
+        name: m.name,
+        type: 'bar',
+        stack: 'tokens',
+        barMaxWidth: 16,
+        itemStyle: { color: colors[i % colors.length] },
+        data: [...(m.tokens_per_hour || [])].reverse(),
+      });
+    });
+  }
+
+  zaiHourlyChart.setOption({
+    backgroundColor: 'transparent',
+    textStyle: { color: textColor, fontFamily: 'Cascadia Code, Consolas, monospace' },
+    tooltip: {
+      trigger: 'axis',
+      backgroundColor: isDark ? '#21262d' : '#f6f8fa',
+      borderColor: isDark ? '#30363d' : '#d0d7de',
+      textStyle: { color: isDark ? '#e6edf3' : '#1f2328', fontSize: 11 },
+      formatter: params => {
+        let s = `<div style="color:${textColor};font-size:10px">${params[0].axisValue}</div>`;
+        let total = 0;
+        for (const p of params) {
+          if (p.value > 0) {
+            s += `${p.marker} ${p.seriesName}: <b>${fmtTokens(p.value)}</b><br/>`;
+            total += p.value;
+          }
+        }
+        if (total > 0) s += `<b>合计: ${fmtTokens(total)}</b>`;
+        return s;
+      },
+    },
+    legend: { textStyle: { color: textColor, fontSize: 10 }, top: 0, type: 'scroll' },
+    grid: { left: 60, right: 20, top: 30, bottom: 55 },
+    xAxis: { type: 'category', data: xLabels, axisLabel: { color: textColor, fontSize: 9, rotate: 30 }, axisLine: { lineStyle: { color: splitColor } } },
+    yAxis: { type: 'value', axisLabel: { color: textColor, fontSize: 10, formatter: v => fmtTokens(v) }, axisLine: { show: false }, splitLine: { lineStyle: { color: splitColor } } },
+    series,
+  }, { notMerge: true });
+}
+
+function renderZaiModelBar(modelsData) {
+  if (!zaiModelBar || !modelsData.models || modelsData.models.length === 0) return;
+  const isDark = document.documentElement.getAttribute('data-theme') !== 'light';
+  const textColor = isDark ? '#8b949e' : '#656d76';
+  const splitColor = isDark ? '#21262d' : '#eaeef2';
+  const colors = ['#818cf8', '#f472b6', '#fb923c', '#a3e635', '#38bdf8', '#22d3ee'];
+
+  // Exclude GLM-5.1 (shown in highlight block), sort by tokens desc
+  const models = modelsData.models
+    .filter(m => m.total_tokens > 0 && m.name !== 'GLM-5.1')
+    .sort((a, b) => b.total_tokens - a.total_tokens);
+  const names = models.map(m => m.name);
+  const values = models.map(m => m.total_tokens);
+
+  if (names.length === 0) { zaiModelBar.clear(); return; }
+
+  zaiModelBar.setOption({
+    backgroundColor: 'transparent',
+    textStyle: { color: textColor, fontFamily: 'Cascadia Code, Consolas, monospace' },
+    tooltip: {
+      trigger: 'axis',
+      backgroundColor: isDark ? '#21262d' : '#f6f8fa',
+      borderColor: isDark ? '#30363d' : '#d0d7de',
+      textStyle: { color: isDark ? '#e6edf3' : '#1f2328', fontSize: 11 },
+      formatter: params => {
+        const p = params[0];
+        return `${p.marker} ${p.name}: <b>${fmtTokens(p.value)}</b> tokens`;
+      },
+    },
+    grid: { left: 55, right: 20, top: 20, bottom: 65 },
+    xAxis: {
+      type: 'category',
+      data: names,
+      axisLabel: { color: textColor, fontSize: 9, rotate: 35, interval: 0 },
+      axisLine: { lineStyle: { color: splitColor } },
+      axisTick: { show: false },
+    },
+    yAxis: {
+      type: 'log',
+      logBase: 10,
+      min: 1,
+      axisLabel: { color: textColor, fontSize: 9, formatter: v => fmtTokens(v) },
+      axisLine: { show: false },
+      axisTick: { show: false },
+      splitLine: { lineStyle: { color: splitColor, type: 'dashed' } },
+    },
+    series: [{
+      type: 'bar',
+      barMaxWidth: 48,
+      barMinWidth: 16,
+      barMinHeight: 16,
+      itemStyle: { borderRadius: [4, 4, 0, 0] },
+      data: values.map((v, i) => ({ value: v, itemStyle: { color: colors[i % colors.length], borderRadius: [4, 4, 0, 0] } })),
+      label: {
+        show: true,
+        position: 'top',
+        fontSize: 9,
+        fontWeight: 'bold',
+        color: isDark ? '#e6edf3' : '#1f2328',
+        formatter: p => fmtTokens(p.value),
+      },
+      emphasis: {
+        itemStyle: { shadowBlur: 8, shadowColor: 'rgba(0,0,0,0.3)' },
+      },
+    }],
   }, { notMerge: true });
 }
 
@@ -1946,6 +2283,107 @@ function renderClaude(data, history) {
   }, { notMerge: true });
 }
 
+
+function renderMimo(data, history) {
+  const noKey = document.getElementById('mimo-no-key');
+  const content = document.getElementById('mimo-content');
+
+  if (data.status?.status === 'no_key') {
+    noKey.style.display = 'block';
+    content.style.display = 'none';
+    return;
+  }
+  noKey.style.display = 'none';
+  content.style.display = 'block';
+
+  const q = data.quota;
+  const box = document.getElementById('mimo-quotas');
+  const planLabel = document.getElementById('mimo-plan-label');
+  box.innerHTML = '';
+
+  if (q) {
+    const usedPct = q.month_percent * 100;
+    const remainPct = 100 - usedPct;
+    const fmtM = (v) => { const m = v / 1e6; return (m < 10 ? m.toFixed(2) : m.toFixed(1)) + 'M'; };
+
+    planLabel.textContent = `${q.plan_name} · 到期 ${q.period_end}`;
+
+    // Plan info row
+    const info = document.createElement('div');
+    info.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)';
+    info.innerHTML = `
+      <span style="color:var(--muted);font-size:12px">套餐</span>
+      <span style="font-weight:600;color:${q.expired ? 'var(--red)' : 'var(--fg)'}">${q.plan_name}${q.expired ? ' (已过期)' : ''}</span>
+    `;
+    box.appendChild(info);
+
+    // Usage bar
+    const usageRow = document.createElement('div');
+    usageRow.style.cssText = 'padding:8px 0;border-bottom:1px solid var(--border)';
+    usageRow.innerHTML = `
+      <div style="display:flex;justify-content:space-between;margin-bottom:6px">
+        <span style="color:var(--muted);font-size:12px">月用量</span>
+        <span style="font-weight:600">${fmtM(q.month_used)} / ${fmtM(q.month_limit)}</span>
+      </div>
+      <div style="background:var(--bg);border-radius:4px;height:8px;overflow:hidden">
+        <div style="height:100%;width:${Math.min(100, usedPct).toFixed(1)}%;background:${usedPct > 80 ? 'var(--red)' : usedPct > 50 ? 'var(--yellow)' : 'var(--mimo-color)'};border-radius:4px;transition:width 0.5s"></div>
+      </div>
+      <div style="display:flex;justify-content:space-between;margin-top:4px;font-size:10px;color:var(--muted)">
+        <span>已用 ${usedPct.toFixed(2)}%</span>
+        <span>剩余 ${fmtM(q.month_limit - q.month_used)}</span>
+      </div>
+    `;
+    box.appendChild(usageRow);
+
+    // Period end
+    const periodRow = document.createElement('div');
+    periodRow.style.cssText = 'display:flex;justify-content:space-between;padding:8px 0';
+    periodRow.innerHTML = `
+      <span style="color:var(--muted);font-size:12px">到期时间</span>
+      <span>${q.period_end}</span>
+    `;
+    box.appendChild(periodRow);
+  }
+
+  // History chart
+  if (!mimoHistoryChart || !history || history.length === 0) return;
+
+  const isDark = document.documentElement.getAttribute('data-theme') !== 'light';
+  const textColor = isDark ? '#8b949e' : '#656d76';
+  const splitColor = isDark ? '#21262d' : '#eaeef2';
+
+  mimoHistoryChart.setOption({
+    backgroundColor: 'transparent',
+    textStyle: { color: textColor, fontFamily: 'Cascadia Code, Consolas, monospace' },
+    tooltip: {
+      trigger: 'axis',
+      backgroundColor: isDark ? '#21262d' : '#f6f8fa',
+      borderColor: isDark ? '#30363d' : '#d0d7de',
+      textStyle: { color: isDark ? '#e6edf3' : '#1f2328', fontSize: 12 },
+      formatter: params => {
+        const t = new Date(params[0].value[0]).toLocaleString();
+        const fmtC = v => v >= 1e8 ? (v/1e8).toFixed(2)+'亿' : v >= 1e4 ? (v/1e4).toFixed(1)+'万' : v.toLocaleString();
+        return `<div style="color:${textColor};font-size:10px">${t}</div>` +
+          params.map(p => `${p.marker} ${p.seriesName}: <b>${fmtC(p.value[1])}</b>`).join('<br/>');
+      },
+    },
+    grid: { left: 65, right: 20, top: 20, bottom: 30 },
+    xAxis: { type: 'time', axisLine: { lineStyle: { color: splitColor } }, axisLabel: { color: textColor, fontSize: 10 }, splitLine: { show: false } },
+    yAxis: {
+      type: 'value',
+      axisLabel: { color: textColor, fontSize: 9, formatter: v => v >= 1e8 ? (v/1e8).toFixed(1)+'亿' : v >= 1e4 ? (v/1e4)+'万' : v },
+      axisLine: { show: false }, axisTick: { show: false },
+      splitLine: { lineStyle: { color: splitColor, type: 'dashed' } },
+    },
+    series: [{
+      name: '月用量', type: 'line', smooth: true, symbol: 'circle', symbolSize: 4,
+      lineStyle: { width: 2, color: '#818cf8' },
+      itemStyle: { color: '#818cf8' },
+      areaStyle: { color: { type: 'linear', x: 0, y: 0, x2: 0, y2: 1, colorStops: [{ offset: 0, color: 'rgba(129,140,248,0.3)' }, { offset: 1, color: 'rgba(129,140,248,0.02)' }] } },
+      data: history.map(h => [h.timestamp, h.month_used]),
+    }],
+  }, { notMerge: true });
+}
 // ── MiniMax Rendering (unchanged) ───────────────────────────────────────────
 
 function renderConsumption(data) {
@@ -2064,8 +2502,8 @@ function buildCardHTML(m, subtitle) {
 
   return `
     <div class="model-card">
-      <div class="model-name">${getDisplayName(m.model_name)}</div>
-      ${subtitle ? `<div class="shared-quota-hint">${subtitle}</div>` : ''}
+      <div class="model-name">${escapeHtml(getDisplayName(m.model_name))}</div>
+      ${subtitle ? `<div class="shared-quota-hint">${escapeHtml(subtitle)}</div>` : ''}
       <div class="quota-row">
         <span class="quota-label">5h窗口</span>
         <div class="progress-wrap">
@@ -2129,7 +2567,7 @@ function renderTable() {
     const badge = (pct) => `<span class="pct-badge ${pctColor(pct)}">${pct.toFixed(1)}%</span>`;
 
     return `<tr>
-      <td>${getDisplayName(m.model_name)}</td>
+      <td>${escapeHtml(getDisplayName(m.model_name))}</td>
       <td>${m.current_interval_usage_count.toLocaleString()}</td>
       <td>${intervalLeft.toLocaleString()}</td>
       <td>${formatDuration(m.remains_time)}</td>
@@ -2182,6 +2620,12 @@ function updateChart(history) {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
+function escapeHtml(str) {
+  const d = document.createElement('div');
+  d.textContent = str;
+  return d.innerHTML;
+}
+
 function formatDuration(ms) {
   if (!ms || ms <= 0) return '已重置';
   const s = Math.floor(ms / 1000);
@@ -2200,7 +2644,7 @@ function updateFooter(data) {
   const zaiTs = data?.zai?.status?.lastTs ? new Date(data.zai.status.lastTs).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : '--';
   const ccTs = data?.claude?.status?.lastTs ? new Date(data.claude.status.lastTs).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : '--';
   document.getElementById('footer').textContent =
-    `最后更新: ${now}  ·  MMX ${mmxTs}  ·  DS ${dsTs}  ·  ZAI ${zaiTs}  ·  CC ${ccTs}`;
+    `最后更新: ${now}  ·  MMX🌐 ${mmxTs}  ·  DS ${dsTs}  ·  GLM ${zaiTs}  ·  CC ${ccTs}`;
 }
 
 // ── Boot ─────────────────────────────────────────────────────────────────────

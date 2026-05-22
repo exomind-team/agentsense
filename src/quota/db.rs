@@ -3,6 +3,7 @@ use std::path::Path;
 
 use super::claude::{ClaudeLimit, ClaudeSnapshot};
 use super::deepseek::DeepSeekSnapshot;
+use super::mimo::MimoSnapshot;
 use super::minimax::MinimaxSnapshot;
 use super::zai::ZaiSnapshot;
 use crate::error::AgentSenseError;
@@ -57,10 +58,15 @@ impl QuotaDb {
                 id              INTEGER PRIMARY KEY AUTOINCREMENT,
                 ts              INTEGER NOT NULL,
                 token_5h_pct    INTEGER NOT NULL,
-                token_week_pct  INTEGER NOT NULL,
+                token_5h_reset  INTEGER NOT NULL DEFAULT 0,
+                token_week_pct  INTEGER NOT NULL DEFAULT -1,
+                token_week_reset INTEGER NOT NULL DEFAULT 0,
                 mcp_month_pct   INTEGER NOT NULL,
                 mcp_used        INTEGER NOT NULL DEFAULT 0,
-                mcp_total       INTEGER NOT NULL DEFAULT 0
+                mcp_total       INTEGER NOT NULL DEFAULT 0,
+                mcp_remaining   INTEGER NOT NULL DEFAULT 0,
+                level           TEXT NOT NULL DEFAULT '',
+                usage_details   TEXT NOT NULL DEFAULT '[]'
             );
             CREATE INDEX IF NOT EXISTS idx_zai_ts ON zai_quota_log(ts);
 
@@ -74,6 +80,19 @@ impl QuotaDb {
                 extra_json      TEXT NOT NULL DEFAULT '[]'
             );
             CREATE INDEX IF NOT EXISTS idx_claude_ts ON claude_quota_log(ts);
+
+            CREATE TABLE IF NOT EXISTS mimo_quota_log (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts              INTEGER NOT NULL,
+                plan_code       TEXT NOT NULL,
+                plan_name       TEXT NOT NULL,
+                period_end      TEXT NOT NULL DEFAULT '',
+                expired         INTEGER NOT NULL DEFAULT 0,
+                month_used      INTEGER NOT NULL,
+                month_limit     INTEGER NOT NULL,
+                month_percent   REAL NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_mimo_ts ON mimo_quota_log(ts);
             ",
         )?;
 
@@ -120,9 +139,21 @@ impl QuotaDb {
 
     pub fn insert_zai(&self, snap: &ZaiSnapshot) -> Result<(), AgentSenseError> {
         self.conn.execute(
-            "INSERT INTO zai_quota_log (ts, token_5h_pct, token_week_pct, mcp_month_pct, mcp_used, mcp_total)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![snap.timestamp, snap.token_5h_pct, snap.token_week_pct, snap.mcp_month_pct, snap.mcp_used, snap.mcp_total],
+            "INSERT INTO zai_quota_log (ts, token_5h_pct, token_5h_reset, token_week_pct, token_week_reset, mcp_month_pct, mcp_used, mcp_total, mcp_remaining, level, usage_details)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            params![
+                snap.timestamp,
+                snap.token_5h_pct,
+                snap.token_5h_reset,
+                snap.token_week_pct,
+                snap.token_week_reset,
+                snap.mcp_month_pct,
+                snap.mcp_used,
+                snap.mcp_total,
+                snap.mcp_remaining,
+                snap.level,
+                snap.usage_details_json,
+            ],
         )?;
         Ok(())
     }
@@ -139,6 +170,24 @@ impl QuotaDb {
                 snap.seven_d_pct,
                 snap.seven_d_reset,
                 extra_json
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn insert_mimo(&self, snap: &MimoSnapshot) -> Result<(), AgentSenseError> {
+        self.conn.execute(
+            "INSERT INTO mimo_quota_log (ts, plan_code, plan_name, period_end, expired, month_used, month_limit, month_percent)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                snap.timestamp,
+                snap.plan_code,
+                snap.plan_name,
+                snap.period_end,
+                snap.expired as i32,
+                snap.month_used,
+                snap.month_limit,
+                snap.month_percent,
             ],
         )?;
         Ok(())
@@ -206,17 +255,23 @@ impl QuotaDb {
 
     pub fn latest_zai(&self) -> Result<Option<ZaiSnapshot>, AgentSenseError> {
         let mut stmt = self.conn.prepare(
-            "SELECT ts, token_5h_pct, token_week_pct, mcp_month_pct, mcp_used, mcp_total
+            "SELECT ts, token_5h_pct, token_5h_reset, token_week_pct, token_week_reset,
+                    mcp_month_pct, mcp_used, mcp_total, mcp_remaining, level, usage_details
              FROM zai_quota_log ORDER BY ts DESC LIMIT 1",
         )?;
         let row = stmt.query_row([], |row| {
             Ok(ZaiSnapshot {
                 timestamp: row.get(0)?,
                 token_5h_pct: row.get(1)?,
-                token_week_pct: row.get(2)?,
-                mcp_month_pct: row.get(3)?,
-                mcp_used: row.get(4)?,
-                mcp_total: row.get(5)?,
+                token_5h_reset: row.get(2)?,
+                token_week_pct: row.get(3)?,
+                token_week_reset: row.get(4)?,
+                mcp_month_pct: row.get(5)?,
+                mcp_used: row.get(6)?,
+                mcp_total: row.get(7)?,
+                mcp_remaining: row.get(8)?,
+                level: row.get(9)?,
+                usage_details_json: row.get(10)?,
             })
         });
         match row {
@@ -224,6 +279,54 @@ impl QuotaDb {
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
             Err(e) => Err(AgentSenseError::Database(e.to_string())),
         }
+    }
+
+    pub fn latest_mimo(&self) -> Result<Option<MimoSnapshot>, AgentSenseError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT ts, plan_code, plan_name, period_end, expired, month_used, month_limit, month_percent
+             FROM mimo_quota_log ORDER BY ts DESC LIMIT 1",
+        )?;
+        let row = stmt.query_row([], |row| {
+            Ok(MimoSnapshot {
+                timestamp: row.get(0)?,
+                plan_code: row.get(1)?,
+                plan_name: row.get(2)?,
+                period_end: row.get(3)?,
+                expired: row.get::<_, i32>(4)? != 0,
+                month_used: row.get(5)?,
+                month_limit: row.get(6)?,
+                month_percent: row.get(7)?,
+            })
+        });
+        match row {
+            Ok(snap) => Ok(Some(snap)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(AgentSenseError::Database(e.to_string())),
+        }
+    }
+
+    pub fn mimo_history(&self, hours: u64) -> Result<Vec<MimoSnapshot>, AgentSenseError> {
+        let now = chrono::Utc::now().timestamp_millis();
+        let cutoff = now - (hours as i64) * 60 * 60 * 1000;
+        let mut stmt = self.conn.prepare(
+            "SELECT ts, plan_code, plan_name, period_end, expired, month_used, month_limit, month_percent
+             FROM mimo_quota_log WHERE ts >= ?1 ORDER BY ts",
+        )?;
+        let rows = stmt
+            .query_map(params![cutoff], |row| {
+                Ok(MimoSnapshot {
+                    timestamp: row.get(0)?,
+                    plan_code: row.get(1)?,
+                    plan_name: row.get(2)?,
+                    period_end: row.get(3)?,
+                    expired: row.get::<_, i32>(4)? != 0,
+                    month_used: row.get(5)?,
+                    month_limit: row.get(6)?,
+                    month_percent: row.get(7)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
     }
 
     pub fn latest_minimax(&self) -> Result<Vec<super::minimax::ModelQuota>, AgentSenseError> {
@@ -254,6 +357,8 @@ impl QuotaDb {
                             interval_total: row.get(2)?,
                             weekly_usage: row.get(3)?,
                             weekly_total: row.get(4)?,
+                            interval_end: None,
+                            weekly_end: None,
                         })
                     })?
                     .collect::<Result<Vec<_>, _>>()?;
@@ -322,7 +427,8 @@ impl QuotaDb {
         let now = chrono::Utc::now().timestamp_millis();
         let cutoff = now - (hours as i64) * 60 * 60 * 1000;
         let mut stmt = self.conn.prepare(
-            "SELECT ts, token_5h_pct, token_week_pct, mcp_month_pct, mcp_used, mcp_total
+            "SELECT ts, token_5h_pct, token_5h_reset, token_week_pct, token_week_reset,
+                    mcp_month_pct, mcp_used, mcp_total, mcp_remaining, level, usage_details
              FROM zai_quota_log
              WHERE ts >= ?1
              ORDER BY ts",
@@ -332,10 +438,15 @@ impl QuotaDb {
                 Ok(ZaiSnapshot {
                     timestamp: row.get(0)?,
                     token_5h_pct: row.get(1)?,
-                    token_week_pct: row.get(2)?,
-                    mcp_month_pct: row.get(3)?,
-                    mcp_used: row.get(4)?,
-                    mcp_total: row.get(5)?,
+                    token_5h_reset: row.get(2)?,
+                    token_week_pct: row.get(3)?,
+                    token_week_reset: row.get(4)?,
+                    mcp_month_pct: row.get(5)?,
+                    mcp_used: row.get(6)?,
+                    mcp_total: row.get(7)?,
+                    mcp_remaining: row.get(8)?,
+                    level: row.get(9)?,
+                    usage_details_json: row.get(10)?,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -440,6 +551,46 @@ impl QuotaDb {
             "remainingSeconds": remaining_ms / 1000,
             "remainingDays": (remaining_ms as f64 / 86400000.0 * 10.0).round() / 10.0,
         }))
+    }
+
+    pub fn interval_reset_info(&self, model_name: &str) -> Option<(i64, i64)> {
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        let since = now_ms - 6 * 3_600_000;
+        let min_row: (i64, i64) = self
+            .conn
+            .query_row(
+                "SELECT ts, interval_usage FROM minimax_quota_log
+             WHERE ts >= ?1 AND model_name = ?2
+             ORDER BY interval_usage ASC, ts DESC LIMIT 1",
+                params![since, model_name],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+            )
+            .ok()?;
+
+        let (min_ts, _) = min_row;
+        let next_reset_ts = min_ts + 5 * 3_600_000;
+        let remaining_ms: i64 = (next_reset_ts - now_ms).max(0);
+        Some((next_reset_ts, remaining_ms))
+    }
+
+    pub fn weekly_model_reset_info(&self, model_name: &str) -> Option<(i64, i64)> {
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        let since = now_ms - 8 * 86_400_000;
+        let min_row: (i64, i64) = self
+            .conn
+            .query_row(
+                "SELECT ts, weekly_usage FROM minimax_quota_log
+             WHERE ts >= ?1 AND model_name = ?2
+             ORDER BY weekly_usage ASC LIMIT 1",
+                params![since, model_name],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+            )
+            .ok()?;
+
+        let (min_ts, _) = min_row;
+        let next_reset_ts = min_ts + 7 * 86_400_000;
+        let remaining_ms: i64 = (next_reset_ts - now_ms).max(0);
+        Some((next_reset_ts, remaining_ms))
     }
 
     pub fn weekly_history(&self, model_name: &str) -> Vec<serde_json::Value> {

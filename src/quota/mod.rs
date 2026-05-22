@@ -1,6 +1,7 @@
 pub mod claude;
 pub mod db;
 pub mod deepseek;
+pub mod mimo;
 pub mod minimax;
 pub mod zai;
 
@@ -18,6 +19,7 @@ pub struct QuotaOrchestrator {
     deepseek_key: Option<String>,
     zai_token: Option<String>,
     claude_creds: Option<PathBuf>,
+    mimo_cookie: Option<String>,
 }
 
 pub struct FetchResult {
@@ -25,6 +27,7 @@ pub struct FetchResult {
     pub deepseek: Option<Result<deepseek::DeepSeekSnapshot, AgentSenseError>>,
     pub zai: Option<Result<zai::ZaiSnapshot, AgentSenseError>>,
     pub claude: Option<Result<claude::ClaudeSnapshot, AgentSenseError>>,
+    pub mimo: Option<Result<mimo::MimoSnapshot, AgentSenseError>>,
 }
 
 impl QuotaOrchestrator {
@@ -47,6 +50,7 @@ impl QuotaOrchestrator {
             deepseek_key: config.deepseek_key(),
             zai_token: config.zai_token(),
             claude_creds: config.claude_creds_path(),
+            mimo_cookie: config.mimo_cookie(),
         })
     }
 
@@ -109,6 +113,20 @@ impl QuotaOrchestrator {
             None
         };
 
+        let mimo = if let Some(ref cookie) = self.mimo_cookie {
+            let cookie = cookie.clone();
+            let client = self.client.clone();
+            Some(
+                tokio::spawn(async move { mimo::fetch(&client, &cookie).await })
+                    .await
+                    .unwrap_or_else(|e| {
+                        Err(AgentSenseError::Http(format!("MiMo task panicked: {e}")))
+                    }),
+            )
+        } else {
+            None
+        };
+
         // Persist to DB
         if let Some(Ok(ref snap)) = mmx {
             let _ = self.db.insert_minimax(snap);
@@ -122,12 +140,16 @@ impl QuotaOrchestrator {
         if let Some(Ok(ref snap)) = claude {
             let _ = self.db.insert_claude(snap);
         }
+        if let Some(Ok(ref snap)) = mimo {
+            let _ = self.db.insert_mimo(snap);
+        }
 
         FetchResult {
             minimax: mmx,
             deepseek: ds,
             zai,
             claude,
+            mimo,
         }
     }
 

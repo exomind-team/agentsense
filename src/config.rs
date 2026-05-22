@@ -26,6 +26,8 @@ pub struct QuotaConfig {
     pub deepseek: Option<KeyConfig>,
     #[serde(rename = "zai")]
     pub zai: Option<ZaiKeyConfig>,
+    #[serde(rename = "mimo")]
+    pub mimo: Option<MimoConfig>,
     pub claude: Option<ClaudeConfig>,
 }
 
@@ -38,6 +40,7 @@ impl Default for QuotaConfig {
             minimax: None,
             deepseek: None,
             zai: None,
+            mimo: None,
             claude: None,
         }
     }
@@ -61,6 +64,11 @@ pub struct KeyConfig {
 pub struct ZaiKeyConfig {
     pub auth_token: Option<String>,
     pub auth_token_env: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct MimoConfig {
+    pub cookie: Option<String>,
 }
 
 fn default_poll_interval() -> u64 {
@@ -117,6 +125,13 @@ impl QuotaConfig {
         let path =
             crate::quota::claude::credentials_path(&cfg.and_then(|c| c.credentials_path.clone()));
         path.exists().then_some(path)
+    }
+
+    pub fn mimo_cookie(&self) -> Option<String> {
+        self.mimo
+            .as_ref()
+            .and_then(|c| c.cookie.clone())
+            .filter(|s| !s.is_empty())
     }
 }
 

@@ -15,6 +15,8 @@ pub struct ModelQuota {
     pub interval_total: i64,
     pub weekly_usage: i64,
     pub weekly_total: i64,
+    pub interval_end: Option<i64>,
+    pub weekly_end: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -38,6 +40,16 @@ struct ModelRemain {
     current_interval_total_count: i64,
     current_weekly_usage_count: i64,
     current_weekly_total_count: i64,
+    #[serde(default)]
+    #[allow(dead_code)]
+    start_time: Option<i64>,
+    #[serde(default)]
+    end_time: Option<i64>,
+    #[serde(default)]
+    #[allow(dead_code)]
+    weekly_start_time: Option<i64>,
+    #[serde(default)]
+    weekly_end_time: Option<i64>,
 }
 
 pub async fn fetch(
@@ -85,6 +97,8 @@ pub async fn fetch(
             interval_total: m.current_interval_total_count,
             weekly_usage: m.current_weekly_usage_count,
             weekly_total: m.current_weekly_total_count,
+            interval_end: m.end_time,
+            weekly_end: m.weekly_end_time,
         })
         .collect();
 

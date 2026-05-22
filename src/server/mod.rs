@@ -20,8 +20,10 @@ pub struct AppState {
     pub minimax_key: Arc<tokio::sync::RwLock<Option<String>>>,
     pub deepseek_key: Arc<tokio::sync::RwLock<Option<String>>>,
     pub zai_token: Arc<tokio::sync::RwLock<Option<String>>>,
+    pub mimo_cookie: Arc<tokio::sync::RwLock<Option<String>>>,
     pub claude_creds: Arc<tokio::sync::RwLock<Option<PathBuf>>>,
     pub next_poll: Arc<AtomicI64>,
+    pub last_claude_poll: Arc<AtomicI64>,
     pub poll_interval_secs: u64,
     pub config_path: PathBuf,
     #[cfg(feature = "psu")]
@@ -49,6 +51,9 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
         .route("/api/deepseek/history", get(handlers::api_deepseek_history))
         .route("/api/zai", get(handlers::api_zai))
         .route("/api/zai/history", get(handlers::api_zai_history))
+        .route("/api/zai/models", get(handlers::api_zai_models))
+        .route("/api/mimo", get(handlers::api_mimo))
+        .route("/api/mimo/history", get(handlers::api_mimo_history))
         .route("/api/claude", get(handlers::api_claude))
         .route("/api/claude/history", get(handlers::api_claude_history))
         .route(
@@ -101,8 +106,10 @@ pub async fn serve(
         minimax_key: Arc::new(tokio::sync::RwLock::new(config.quota.minimax_key())),
         deepseek_key: Arc::new(tokio::sync::RwLock::new(config.quota.deepseek_key())),
         zai_token: Arc::new(tokio::sync::RwLock::new(config.quota.zai_token())),
+        mimo_cookie: Arc::new(tokio::sync::RwLock::new(config.quota.mimo_cookie())),
         claude_creds: Arc::new(tokio::sync::RwLock::new(config.quota.claude_creds_path())),
         next_poll: Arc::new(AtomicI64::new(0)),
+        last_claude_poll: Arc::new(AtomicI64::new(0)),
         poll_interval_secs: config.quota.poll_interval_secs,
         config_path,
         #[cfg(feature = "psu")]
@@ -178,11 +185,12 @@ pub async fn serve(
     println!("  Dashboard: http://localhost:{port}");
     println!("  MCP:       http://localhost:{port}/mcp");
     println!(
-        "  Config:    {} (MMX: {}, DS: {}, ZAI: {})",
+        "  Config:    {} (MMX: {}, DS: {}, ZAI: {}, MiMo: {})",
         state.config_path.display(),
         state.minimax_key.read().await.is_some(),
         state.deepseek_key.read().await.is_some(),
         state.zai_token.read().await.is_some(),
+        state.mimo_cookie.read().await.is_some(),
     );
     println!(
         "  Claude:    {}",
@@ -265,13 +273,35 @@ pub async fn do_poll(state: Arc<AppState>) {
 
     let claude_path = state.claude_creds.read().await.clone();
     let claude = if let Some(path) = claude_path {
+        let now = chrono::Utc::now().timestamp();
+        let elapsed = now - state.last_claude_poll.load(Ordering::Relaxed);
+        if elapsed >= 300 {
+            let client = state.client.clone();
+            let result = Some(
+                tokio::spawn(async move {
+                    crate::quota::claude::fetch_with_creds(&client, &path).await
+                })
+                .await
+                .unwrap_or_else(|e| {
+                    Err(AgentSenseError::Http(format!("Claude task panicked: {e}")))
+                }),
+            );
+            state.last_claude_poll.store(now, Ordering::Relaxed);
+            result
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let mimo_cookie_val = state.mimo_cookie.read().await.clone();
+    let mimo = if let Some(cookie) = mimo_cookie_val {
         let client = state.client.clone();
         Some(
-            tokio::spawn(
-                async move { crate::quota::claude::fetch_with_creds(&client, &path).await },
-            )
-            .await
-            .unwrap_or_else(|e| Err(AgentSenseError::Http(format!("Claude task panicked: {e}")))),
+            tokio::spawn(async move { crate::quota::mimo::fetch(&client, &cookie).await })
+                .await
+                .unwrap_or_else(|e| Err(AgentSenseError::Http(format!("MiMo task panicked: {e}")))),
         )
     } else {
         None
@@ -289,6 +319,9 @@ pub async fn do_poll(state: Arc<AppState>) {
     }
     if let Some(Ok(ref snap)) = claude {
         let _ = db.insert_claude(snap);
+    }
+    if let Some(Ok(ref snap)) = mimo {
+        let _ = db.insert_mimo(snap);
     }
     drop(db);
 
