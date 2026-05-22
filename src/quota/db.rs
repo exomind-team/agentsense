@@ -808,15 +808,21 @@ impl QuotaDb {
 mod power_tests {
     use super::*;
 
-    fn test_db() -> QuotaDb {
+    // Returns the TempDir alongside the DB: it MUST stay alive for the test's
+    // duration. If dropped early, the temp directory is deleted while the SQLite
+    // connection is still open — on Linux that makes writes fail with "attempt to
+    // write a readonly database" (the -journal file can't be created), while on
+    // Windows the open handle blocks deletion and it happens to work. Bind `_dir`.
+    fn test_db() -> (QuotaDb, tempfile::TempDir) {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("test_quota.db");
-        QuotaDb::open(&path).unwrap()
+        let db = QuotaDb::open(&path).unwrap();
+        (db, dir)
     }
 
     #[test]
     fn test_insert_and_query_power() {
-        let db = test_db();
+        let (db, _dir) = test_db();
         let now = chrono::Utc::now().timestamp_millis();
         let samples = vec![
             (now - 1000, 285.0, Some(260.0), Some(62.0), Some(1200)),
@@ -830,7 +836,7 @@ mod power_tests {
 
     #[test]
     fn test_compute_energy_kwh() {
-        let db = test_db();
+        let (db, _dir) = test_db();
         let now = chrono::Utc::now().timestamp_millis();
         // Simulate 1 hour of 300W using 10-second intervals (within MAX_GAP_MS).
         // 360 intervals × 10s × 300W = 1_080_000 Wms = 0.3 kWh
@@ -847,7 +853,7 @@ mod power_tests {
 
     #[test]
     fn test_power_stats() {
-        let db = test_db();
+        let (db, _dir) = test_db();
         let now = chrono::Utc::now().timestamp_millis();
         let samples = vec![
             (now - 2000, 200.0, None, None, None),
@@ -862,7 +868,7 @@ mod power_tests {
 
     #[test]
     fn test_cleanup_old_samples() {
-        let db = test_db();
+        let (db, _dir) = test_db();
         let now = chrono::Utc::now().timestamp_millis();
         let samples = vec![
             (now - 200_000, 100.0, None, None, None),
@@ -881,7 +887,7 @@ mod power_tests {
     /// must return Ok(None), not an error.
     #[test]
     fn test_power_stats_empty_table_returns_none() {
-        let db = test_db();
+        let (db, _dir) = test_db();
         // Empty table — no samples at all.
         let result = db.query_power_stats(0);
         assert!(result.is_ok(), "expected Ok, got {result:?}");
@@ -892,7 +898,7 @@ mod power_tests {
     /// must also return Ok(None).
     #[test]
     fn test_power_stats_future_since_returns_none() {
-        let db = test_db();
+        let (db, _dir) = test_db();
         let now = chrono::Utc::now().timestamp_millis();
         let samples = vec![
             (now - 1000, 100.0, None, None, None),
@@ -908,7 +914,7 @@ mod power_tests {
     /// Fix H regression: a single sample has len() < 2, so energy must be 0.0.
     #[test]
     fn test_compute_energy_single_sample_returns_zero() {
-        let db = test_db();
+        let (db, _dir) = test_db();
         let now = chrono::Utc::now().timestamp_millis();
         db.insert_power_batch(&[(now, 300.0, None, None, None)])
             .unwrap();
@@ -920,7 +926,7 @@ mod power_tests {
     /// integrate across the gap — energy should be approximately 0.
     #[test]
     fn test_compute_energy_large_gap_skipped() {
-        let db = test_db();
+        let (db, _dir) = test_db();
         let now = chrono::Utc::now().timestamp_millis();
         // 5-minute gap (300_000 ms) — far exceeds MAX_GAP_MS = 30_000.
         let samples = vec![
@@ -937,7 +943,7 @@ mod power_tests {
     /// negative or non-finite energy.
     #[test]
     fn test_compute_energy_non_monotonic_timestamps() {
-        let db = test_db();
+        let (db, _dir) = test_db();
         let now = chrono::Utc::now().timestamp_millis();
         // Insert samples out of order / with duplicates.  The DB query returns
         // them ORDER BY ts ASC, so we end up with dt_ms == 0 for the duplicate.
