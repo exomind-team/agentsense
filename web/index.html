@@ -118,10 +118,10 @@
     button#refreshBtn:hover, button#theme-btn:hover, button#settings-btn:hover { border-color: var(--accent); color: var(--accent); }
     button#refreshBtn:disabled { opacity: 0.4; cursor: not-allowed; }
 
-    /* ── Overview Cards (3 columns) ── */
+    /* ── Overview Cards — JS-driven balanced columns ── */
     .overview-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      grid-template-columns: repeat(3, 1fr); /* fallback; overridden by layoutOverview() */
       gap: 10px;
       margin-bottom: 14px;
     }
@@ -650,7 +650,7 @@
     }
 
     @media (max-width: 700px) {
-      .overview-grid { grid-template-columns: 1fr; }
+      .overview-grid { grid-template-columns: 1fr !important; }
       body { padding: 8px; }
       .quota-info { width: 100px; }
       .quota-label { width: 50px; font-size: 11px; }
@@ -739,7 +739,6 @@
       </div>
     </div>
   </div>
-</div>
   <div class="overview-card" id="ov-mimo">
     <div class="ov-header">
       <span class="ov-avatar mimo"></span>
@@ -750,12 +749,12 @@
     <div class="ov-sub" id="ov-mimo-sub">月额度</div>
     <div class="ov-bar-wrap"><div class="ov-bar" id="ov-mimo-bar" style="width:0;background:var(--mimo-color)"></div></div>
   </div>
+</div>
 
 <!-- Service tabs -->
 <div class="service-tabs">
   <button class="service-tab active" data-service="minimax">MiniMax 🌐</button>
   <button class="service-tab" data-service="deepseek">DeepSeek</button>
-  <button class="service-tab" data-service="deepseek_platform">DS 用量</button>
   <button class="service-tab" data-service="zai">GLM</button>
   <button class="service-tab" data-service="claude">Claude</button>
   <button class="service-tab" data-service="mimo">MiMo</button>
@@ -809,7 +808,7 @@
   </div>
 </div>
 
-<!-- ═══════ DeepSeek Section ═══════ -->
+<!-- ═══════ DeepSeek Section (merged: balance + platform usage) ═══════ -->
 <div class="service-section" id="sec-deepseek">
   <div id="deepseek-content">
     <div class="consumption-summary">
@@ -825,20 +824,14 @@
       </div>
     </div>
 
-    <div class="chart-container">
-      <div class="chart-title">余额变化趋势（24h）</div>
-      <div id="ds-history-chart" class="chart" role="img" aria-label="DeepSeek余额变化趋势"></div>
-    </div>
   </div>
   <div class="no-key-msg" id="ds-no-key" style="display:none">
     DeepSeek API Key 未配置。<a onclick="document.getElementById('settings-btn').click()">前往设置</a>
   </div>
-</div>
 
-<!-- ═══════ DeepSeek Platform Section ═══════ -->
-<div class="service-section" id="sec-deepseek_platform">
+  <!-- ── DS Platform usage (merged below balance) ── -->
   <div id="deepseek-platform-content">
-    <div class="consumption-summary">
+    <div class="consumption-summary" style="margin-top:14px">
       <div class="consumption-card">
         <div class="card-label">今日消耗</div>
         <div class="card-value" id="ds-daily-cost">--</div>
@@ -909,10 +902,6 @@
       <div id="zai-hourly-chart" class="chart" role="img" aria-label="GLM历史Token消耗"></div>
     </div>
 
-    <div class="chart-container">
-      <div class="chart-title">配额变化趋势（24h）</div>
-      <div id="zai-history-chart" class="chart" role="img" aria-label="GLM配额变化趋势"></div>
-    </div>
   </div>
   <div class="no-key-msg" id="zai-no-key" style="display:none">
     GLM Auth Token 未配置。<a onclick="document.getElementById('settings-btn').click()">前往设置</a>
@@ -1135,9 +1124,7 @@ let activeFilter = null;
 let activeService = 'minimax';
 let chart = null;
 let weeklyBarChart = null;
-let dsHistoryChart = null;
 let dsUsageChart = null;
-let zaiHistoryChart = null;
 let zaiHourlyChart = null;
 let zaiModelBar = null;
 let claudeHistoryChart = null;
@@ -1154,8 +1141,6 @@ const MAX_POWER_PTS = 1800;
 function init() {
   chart = echarts.init(document.getElementById('trend-chart'), null, { renderer: 'canvas' });
   weeklyBarChart = echarts.init(document.getElementById('weekly-bar-chart'), null, { renderer: 'canvas' });
-  dsHistoryChart = echarts.init(document.getElementById('ds-history-chart'), null, { renderer: 'canvas' });
-  zaiHistoryChart = echarts.init(document.getElementById('zai-history-chart'), null, { renderer: 'canvas' });
   zaiHourlyChart = echarts.init(document.getElementById('zai-hourly-chart'), null, { renderer: 'canvas' });
   zaiModelBar = echarts.init(document.getElementById('zai-model-bar'), null, { renderer: 'canvas' });
   claudeHistoryChart = echarts.init(document.getElementById('claude-history-chart'), null, { renderer: 'canvas' });
@@ -1173,9 +1158,7 @@ function init() {
   window.addEventListener('resize', () => {
     chart?.resize();
     weeklyBarChart?.resize();
-    dsHistoryChart?.resize();
     dsUsageChart?.resize();
-    zaiHistoryChart?.resize();
     zaiHourlyChart?.resize();
     zaiModelBar?.resize();
     claudeHistoryChart?.resize();
@@ -1230,9 +1213,7 @@ function bindServiceTabs() {
       setTimeout(() => {
         chart?.resize();
         weeklyBarChart?.resize();
-        dsHistoryChart?.resize();
         dsUsageChart?.resize();
-        zaiHistoryChart?.resize();
         zaiHourlyChart?.resize();
         zaiModelBar?.resize();
         claudeHistoryChart?.resize();
@@ -1760,13 +1741,9 @@ async function fetchMiniMaxDetail() {
 
 async function fetchDeepSeekDetail() {
   try {
-    const [balanceRes, historyRes] = await Promise.all([
-      fetch(`${API_BASE}/api/deepseek`),
-      fetch(`${API_BASE}/api/deepseek/history`),
-    ]);
+    const balanceRes = await fetch(`${API_BASE}/api/deepseek`);
     const balanceData = await balanceRes.json();
-    const historyData = await historyRes.json();
-    renderDeepSeek(balanceData, historyData);
+    renderDeepSeek(balanceData);
   } catch (err) {
     console.error('fetchDeepSeekDetail error:', err);
   }
@@ -1784,15 +1761,13 @@ async function fetchDeepSeekPlatformDetail() {
 
 async function fetchZaiDetail() {
   try {
-    const [quotaRes, historyRes, modelsRes] = await Promise.all([
+    const [quotaRes, modelsRes] = await Promise.all([
       fetch(`${API_BASE}/api/zai`),
-      fetch(`${API_BASE}/api/zai/history`),
       fetch(`${API_BASE}/api/zai/models`),
     ]);
     const quotaData = await quotaRes.json();
-    const historyData = await historyRes.json();
     const modelsData = await modelsRes.json();
-    renderZai(quotaData, historyData, modelsData);
+    renderZai(quotaData, modelsData);
   } catch (err) {
     console.error('fetchZaiDetail error:', err);
   }
@@ -1833,6 +1808,53 @@ async function manualRefresh() {
     btn.disabled = false;
     document.getElementById('badge').style.display = 'none';
   }
+}
+
+// ── Overview Layout (JS-driven balanced columns) ─────────────────────────────
+
+function layoutOverview() {
+  // Skip on narrow viewports — CSS media query already forces 1 column via !important
+  if (window.innerWidth < 700) return;
+
+  const cardIds = ['ov-minimax', 'ov-deepseek', 'ov-zai', 'ov-claude', 'ov-power', 'ov-mimo'];
+  let visible = 0;
+
+  for (const id of cardIds) {
+    const card = document.getElementById(id);
+    if (!card) continue;
+
+    // Determine whether this card has real data.
+    // Quota cards: check if their status element has class 'no_key'.
+    // Power card: check if status text is '未连接' (disconnected).
+    const statusEl = card.querySelector('.ov-status');
+    let hide = false;
+    if (statusEl) {
+      if (statusEl.classList.contains('no_key')) {
+        hide = true;
+      }
+      // Power card: hide when disconnected (class is 'yellow', text '未连接')
+      if (id === 'ov-power' && statusEl.textContent.trim() === '未连接') {
+        hide = true;
+      }
+      // Also hide if value is still '--' AND sub is '未配置' (initial / no-data state)
+      const valEl = card.querySelector('.ov-value');
+      const subEl = card.querySelector('.ov-sub');
+      if (valEl && subEl && valEl.textContent.trim() === '--' && subEl.textContent.trim() === '未配置') {
+        hide = true;
+      }
+    }
+
+    card.style.display = hide ? 'none' : '';
+    if (!hide) visible++;
+  }
+
+  // Compute balanced grid columns:
+  // rows = ceil(n/4), cols = ceil(n/rows)
+  // Verification: 1→1, 2→2, 3→3, 4→4, 5→3+2(cols=3), 6→3+3(cols=3), 7→4+3(cols=4), 8→4+4(cols=4)
+  const n = visible;
+  const rows = Math.ceil(n / 4);
+  const cols = rows > 0 ? Math.max(1, Math.ceil(n / rows)) : 1;
+  document.getElementById('overview').style.gridTemplateColumns = 'repeat(' + cols + ', 1fr)';
 }
 
 // ── Render Overview ──────────────────────────────────────────────────────────
@@ -1958,12 +1980,15 @@ function renderOverview(data) {
     }
   }
 
+  // Re-compute visible cards and balanced grid columns after all statuses are set
+  layoutOverview();
+
   updateFooter(data);
 }
 
 // ── Render DeepSeek Detail ──────────────────────────────────────────────────
 
-function renderDeepSeek(data, history) {
+function renderDeepSeek(data) {
   const noKey = document.getElementById('ds-no-key');
   const content = document.getElementById('deepseek-content');
 
@@ -1982,40 +2007,6 @@ function renderDeepSeek(data, history) {
       `赠送 ¥${bal.granted_cny.toFixed(2)} + 充值 ¥${bal.topped_up_cny.toFixed(2)}`;
     document.getElementById('ds-balance-usd').textContent = '$' + bal.total_balance_usd.toFixed(2);
   }
-
-  // History chart
-  if (!dsHistoryChart || !history || history.length === 0) return;
-
-  const isDark = document.documentElement.getAttribute('data-theme') !== 'light';
-  const textColor = isDark ? '#8b949e' : '#656d76';
-  const splitColor = isDark ? '#21262d' : '#eaeef2';
-
-  dsHistoryChart.setOption({
-    backgroundColor: 'transparent',
-    textStyle: { color: textColor, fontFamily: 'Cascadia Code, Consolas, monospace' },
-    tooltip: {
-      trigger: 'axis',
-      backgroundColor: isDark ? '#21262d' : '#f6f8fa',
-      borderColor: isDark ? '#30363d' : '#d0d7de',
-      textStyle: { color: isDark ? '#e6edf3' : '#1f2328', fontSize: 12 },
-      formatter: params => {
-        const t = new Date(params[0].value[0]).toLocaleTimeString();
-        return `${params[0].marker} ¥${Number(params[0].value[1]).toFixed(2)}<div style="color:${textColor};font-size:10px;margin-top:2px">${t}</div>`;
-      },
-    },
-    grid: { left: 60, right: 20, top: 10, bottom: 30 },
-    xAxis: { type: 'time', axisLine: { lineStyle: { color: splitColor } }, axisLabel: { color: textColor, fontSize: 10 }, splitLine: { show: false } },
-    yAxis: { type: 'value', name: 'CNY', nameTextStyle: { color: textColor, fontSize: 10 }, axisLine: { show: false }, axisLabel: { color: textColor, fontSize: 10 }, splitLine: { lineStyle: { color: splitColor } } },
-    series: [{
-      name: '余额', type: 'line', smooth: true, symbol: 'none',
-      lineStyle: { color: '#4f8ff7', width: 2 },
-      areaStyle: { color: { type: 'linear', x: 0, y: 0, x2: 0, y2: 1, colorStops: [
-        { offset: 0, color: 'rgba(79,143,247,0.25)' },
-        { offset: 1, color: 'rgba(79,143,247,0.02)' },
-      ]}},
-      data: history.map(h => [h.ts, h.total_balance_cny]),
-    }],
-  }, { notMerge: true });
 }
 
 // ── Render DeepSeek Platform (daily usage) ──────────────────────────────────
@@ -2073,22 +2064,28 @@ function renderDeepSeekPlatform(data) {
   const v4flashData = dates.map(d => [d, dailyMap[d].v4flash]);
   const totalData = dates.map(d => [d, dailyMap[d].total]);
 
+  // Theme-resolved hex colors (matches renderPowerTrend / renderZai siblings)
   const isDark = document.documentElement.getAttribute('data-theme') !== 'light';
-  const textColor = isDark ? '#8b949e' : '#656d76';
-  const splitColor = isDark ? '#21262d' : '#eaeef2';
+  const textColor   = isDark ? '#8b949e' : '#656d76';
+  const splitColor  = isDark ? '#30363d' : '#d0d7de';
+  const tooltipBg   = isDark ? '#21262d' : '#f6f8fa';
+  const tooltipText = isDark ? '#e6edf3' : '#1f2328';
+  // DeepSeek brand color hex (--ds-color dark:#4f8ff7 / light:#1d4ed8)
+  const dsHex       = isDark ? '#4f8ff7' : '#1d4ed8';
+  const ds2Hex      = '#22d3ee'; // V4 Flash accent
 
   dsUsageChart.setOption({
     backgroundColor: 'transparent',
     textStyle: { color: textColor, fontFamily: 'Cascadia Code, Consolas, monospace' },
     tooltip: {
       trigger: 'axis',
-      backgroundColor: isDark ? '#21262d' : '#f6f8fa',
-      borderColor: isDark ? '#30363d' : '#d0d7de',
-      textStyle: { color: isDark ? '#e6edf3' : '#1f2328', fontSize: 12 },
+      backgroundColor: tooltipBg,
+      borderColor: splitColor,
+      textStyle: { color: tooltipText, fontSize: 12 },
       formatter: params => {
         let html = `<div style="font-weight:600;margin-bottom:4px">${params[0].value[0]}</div>`;
         for (const p of params) {
-          html += `<div>${p.marker} ${p.seriesName}: ¥${Number(p.value[1]).toFixed(2)}</div>`;
+          html += `<div>${p.marker} ${p.seriesName}: ¥${Number(p.value[1]).toFixed(3)}</div>`;
         }
         return html;
       },
@@ -2098,25 +2095,40 @@ function renderDeepSeekPlatform(data) {
       textStyle: { color: textColor, fontSize: 11 },
       top: 0,
     },
-    grid: { left: 60, right: 20, top: 30, bottom: 30 },
+    grid: { left: 60, right: 20, top: 30, bottom: 38 },
     xAxis: {
       type: 'category', data: dates,
       axisLine: { lineStyle: { color: splitColor } },
-      axisLabel: { color: textColor, fontSize: 10, rotate: 45 },
+      axisLabel: { color: textColor, fontSize: 10, rotate: 40 },
       splitLine: { show: false },
     },
     yAxis: {
       type: 'value', name: 'CNY',
       nameTextStyle: { color: textColor, fontSize: 10 },
       axisLine: { show: false },
-      axisLabel: { color: textColor, fontSize: 10 },
+      axisLabel: { color: textColor, fontSize: 10, formatter: v => '¥' + v.toFixed(2) },
       splitLine: { lineStyle: { color: splitColor } },
     },
     series: [
-      { name: 'V4 Pro',   type: 'bar',  stack: 'cost', data: v4proData,   itemStyle: { color: '#4f8ff7' } },
-      { name: 'V4 Flash', type: 'bar',  stack: 'cost', data: v4flashData, itemStyle: { color: '#22d3ee' } },
-      { name: '总计',     type: 'line', data: totalData,
-        lineStyle: { color: '#f85149', width: 2 }, symbol: 'circle', symbolSize: 6, itemStyle: { color: '#f85149' } },
+      {
+        name: 'V4 Pro', type: 'bar', stack: 'cost', data: v4proData,
+        itemStyle: { color: dsHex, borderRadius: [0, 0, 0, 0] },
+        emphasis: { itemStyle: { shadowBlur: 6, shadowColor: 'rgba(79,143,247,0.4)' } },
+      },
+      {
+        name: 'V4 Flash', type: 'bar', stack: 'cost', data: v4flashData,
+        itemStyle: { color: ds2Hex, borderRadius: [3, 3, 0, 0] },
+        emphasis: { itemStyle: { shadowBlur: 6, shadowColor: 'rgba(34,211,238,0.4)' } },
+      },
+      {
+        name: '总计', type: 'line', data: totalData, smooth: true, symbol: 'circle', symbolSize: 5,
+        lineStyle: { color: isDark ? '#f59e0b' : '#d97706', width: 2 },
+        itemStyle: { color: isDark ? '#f59e0b' : '#d97706' },
+        areaStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+          { offset: 0, color: isDark ? 'rgba(245,158,11,0.18)' : 'rgba(217,119,6,0.15)' },
+          { offset: 1, color: isDark ? 'rgba(245,158,11,0.01)' : 'rgba(217,119,6,0.01)' },
+        ])},
+      },
     ],
   }, { notMerge: true });
 }
@@ -2129,7 +2141,7 @@ function fmtTokens(n) {
   return String(n);
 }
 
-function renderZai(data, history, modelsData) {
+function renderZai(data, modelsData) {
   const noKey = document.getElementById('zai-no-key');
   const content = document.getElementById('zai-content');
 
@@ -2205,48 +2217,6 @@ function renderZai(data, history, modelsData) {
     modelSummaryEl.textContent = modelsData?.error ? '加载失败' : '';
     modelHighlightEl.innerHTML = '';
   }
-
-  // History chart (quota over time)
-  if (!zaiHistoryChart || !history || history.length === 0) return;
-
-  const isDark = document.documentElement.getAttribute('data-theme') !== 'light';
-  const textColor = isDark ? '#8b949e' : '#656d76';
-  const splitColor = isDark ? '#21262d' : '#eaeef2';
-
-  const series = [
-    { name: '5h', type: 'line', smooth: true, symbol: 'none', lineStyle: { width: 2 }, itemStyle: { color: '#22d3ee' }, data: history.map(h => [h.ts, h.token_5h_pct]) },
-  ];
-  const legendData = ['5h'];
-  if (history.some(h => h.token_week_pct >= 0)) {
-    series.push({ name: '周', type: 'line', smooth: true, symbol: 'none', lineStyle: { width: 2 }, itemStyle: { color: '#818cf8' }, data: history.map(h => [h.ts, h.token_week_pct]) });
-    legendData.push('周');
-  }
-  series.push({ name: 'MCP', type: 'line', smooth: true, symbol: 'none', lineStyle: { width: 2 }, itemStyle: { color: '#fb923c' }, data: history.map(h => [h.ts, h.mcp_month_pct]) });
-  legendData.push('MCP');
-
-  zaiHistoryChart.setOption({
-    backgroundColor: 'transparent',
-    textStyle: { color: textColor, fontFamily: 'Cascadia Code, Consolas, monospace' },
-    tooltip: {
-      trigger: 'axis',
-      backgroundColor: isDark ? '#21262d' : '#f6f8fa',
-      borderColor: isDark ? '#30363d' : '#d0d7de',
-      textStyle: { color: isDark ? '#e6edf3' : '#1f2328', fontSize: 12 },
-      formatter: params => {
-        const t = new Date(params[0].value[0]).toLocaleTimeString();
-        let s = `<div style="color:${textColor};font-size:10px">${t}</div>`;
-        for (const p of params) {
-          s += `${p.marker} ${p.seriesName}: <b>${p.value[1]}%</b><br/>`;
-        }
-        return s;
-      },
-    },
-    legend: { data: legendData, textStyle: { color: textColor, fontSize: 10 }, top: 0 },
-    grid: { left: 50, right: 20, top: 30, bottom: 30 },
-    xAxis: { type: 'time', axisLine: { lineStyle: { color: splitColor } }, axisLabel: { color: textColor, fontSize: 10 }, splitLine: { show: false } },
-    yAxis: { type: 'value', name: '%', max: 100, nameTextStyle: { color: textColor, fontSize: 10 }, axisLine: { show: false }, axisLabel: { color: textColor, fontSize: 10 }, splitLine: { lineStyle: { color: splitColor } } },
-    series,
-  }, { notMerge: true });
 }
 
 function renderZaiHourlyChart(modelsData) {
