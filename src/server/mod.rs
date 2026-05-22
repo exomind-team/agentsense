@@ -4,7 +4,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
 
-use crate::config::QuotaConfig;
+#[cfg(feature = "psu")]
+use std::time::Instant;
+
+use crate::config::AppConfig;
 use crate::error::AgentSenseError;
 use crate::quota::db::QuotaDb;
 
@@ -19,12 +22,22 @@ pub struct AppState {
     pub next_poll: Arc<AtomicI64>,
     pub poll_interval_secs: u64,
     pub config_path: PathBuf,
+    #[cfg(feature = "psu")]
+    pub psu: Arc<std::sync::Mutex<Option<wattson::PsuHandle>>>,
+    #[cfg(feature = "psu")]
+    pub psu_cost_wh: Arc<std::sync::Mutex<f64>>,
+    #[cfg(feature = "psu")]
+    pub psu_start: Instant,
+    #[cfg(feature = "psu")]
+    pub price_per_kwh: f64,
+    #[cfg(feature = "psu")]
+    pub currency: String,
 }
 
 pub fn router(state: Arc<AppState>) -> axum::Router {
     use axum::routing::get;
 
-    axum::Router::new()
+    let router = axum::Router::new()
         .route("/", get(handlers::serve_index))
         .route("/mcp", axum::routing::post(handlers::mcp_handler))
         .route("/api/all", get(handlers::api_all))
@@ -42,42 +55,101 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
             "/api/config",
             get(handlers::api_config_get).put(handlers::api_config_put),
         )
-        .route("/api/refresh", get(handlers::api_refresh))
+        .route("/api/refresh", get(handlers::api_refresh));
+
+    #[cfg(feature = "psu")]
+    let router = router
+        .route("/api/power", get(handlers::psu::api_power))
+        .route("/api/thermal", get(handlers::psu::api_thermal))
+        .route("/api/psu-cost", get(handlers::psu::api_psu_cost))
+        .route("/api/power/history", get(handlers::psu::api_power_history))
+        .route("/api/fan/mode", axum::routing::post(handlers::psu::set_fan_mode))
+        .route("/api/fan/speed", axum::routing::post(handlers::psu::set_fan_speed))
+        .route("/api/fan/curve", axum::routing::post(handlers::psu::set_fan_curve));
+
+    router
         .layer(tower_http::cors::CorsLayer::permissive())
         .with_state(state)
 }
 
 pub async fn serve(
-    config: &QuotaConfig,
+    config: &AppConfig,
     config_path: PathBuf,
     port: u16,
 ) -> Result<(), AgentSenseError> {
     let mut builder = reqwest::Client::builder().timeout(std::time::Duration::from_secs(30));
-    if let Some(ref proxy) = config.proxy {
+    if let Some(ref proxy) = config.quota.proxy {
         let p = reqwest::Proxy::all(proxy)
             .map_err(|e| AgentSenseError::Config(format!("invalid proxy: {e}")))?;
         builder = builder.proxy(p);
     }
     let client = builder.build()?;
 
-    let db = QuotaDb::open(&config.db_path())?;
+    let db = QuotaDb::open(&config.quota.db_path())?;
     let state = Arc::new(AppState {
         db: Arc::new(tokio::sync::Mutex::new(db)),
         client,
-        minimax_key: Arc::new(tokio::sync::RwLock::new(config.minimax_key())),
-        deepseek_key: Arc::new(tokio::sync::RwLock::new(config.deepseek_key())),
-        zai_token: Arc::new(tokio::sync::RwLock::new(config.zai_token())),
-        claude_creds: Arc::new(tokio::sync::RwLock::new(config.claude_creds_path())),
+        minimax_key: Arc::new(tokio::sync::RwLock::new(config.quota.minimax_key())),
+        deepseek_key: Arc::new(tokio::sync::RwLock::new(config.quota.deepseek_key())),
+        zai_token: Arc::new(tokio::sync::RwLock::new(config.quota.zai_token())),
+        claude_creds: Arc::new(tokio::sync::RwLock::new(config.quota.claude_creds_path())),
         next_poll: Arc::new(AtomicI64::new(0)),
-        poll_interval_secs: config.poll_interval_secs,
+        poll_interval_secs: config.quota.poll_interval_secs,
         config_path,
+        #[cfg(feature = "psu")]
+        psu: Arc::new(std::sync::Mutex::new(None)),
+        #[cfg(feature = "psu")]
+        psu_cost_wh: Arc::new(std::sync::Mutex::new(0.0)),
+        #[cfg(feature = "psu")]
+        psu_start: Instant::now(),
+        #[cfg(feature = "psu")]
+        price_per_kwh: config.cost.price_per_kwh,
+        #[cfg(feature = "psu")]
+        currency: config.cost.currency.clone(),
     });
+
+    // Initialize PSU hardware if configured
+    #[cfg(feature = "psu")]
+    {
+        if let Some(ref serial_cfg) = config.serial {
+            let profile = wattson::DeviceProfile::from_name(&config.device.profile)
+                .unwrap_or(wattson::DeviceProfile::SEGOTEP_DM);
+            let mode = match serial_cfg.mode.as_str() {
+                "passive" => wattson::Mode::Passive,
+                _ => wattson::Mode::Active,
+            };
+            match wattson::PsuMonitor::new(&serial_cfg.port, mode)
+                .with_profile(profile)
+                .start()
+            {
+                Ok(handle) => {
+                    println!("  PSU:       {} connected", serial_cfg.port);
+                    *state.psu.lock().unwrap() = Some(handle);
+                }
+                Err(e) => {
+                    eprintln!("  PSU:       {} failed: {e}", serial_cfg.port);
+                }
+            }
+        }
+    }
 
     do_poll(state.clone()).await;
 
     {
         let loop_state = state.clone();
         tokio::spawn(async move { poll_loop(loop_state).await });
+    }
+
+    // Spawn power sampling background task
+    #[cfg(feature = "psu")]
+    {
+        let sample_state = state.clone();
+        let sample_interval = config.serial.as_ref()
+            .map(|s| s.sample_interval_ms)
+            .unwrap_or(300);
+        tokio::spawn(async move {
+            power_sampling_loop(sample_state, sample_interval).await;
+        });
     }
 
     let app = router(state.clone());
@@ -203,5 +275,43 @@ async fn poll_loop(state: Arc<AppState>) {
     loop {
         interval.tick().await;
         do_poll(state.clone()).await;
+    }
+}
+
+#[cfg(feature = "psu")]
+async fn power_sampling_loop(state: Arc<AppState>, sample_interval_ms: u64) {
+    let batch_interval = std::time::Duration::from_secs(5);
+    let mut buffer: Vec<(i64, f64, Option<f64>, Option<f64>, Option<u32>)> = Vec::new();
+    let mut interval = tokio::time::interval(std::time::Duration::from_millis(sample_interval_ms));
+    let mut batch_timer = tokio::time::interval(batch_interval);
+    loop {
+        tokio::select! {
+            _ = interval.tick() => {
+                let guard = state.psu.lock().unwrap();
+                if let Some(handle) = guard.as_ref() {
+                    let snap = handle.latest();
+                    if snap.meta.connected && snap.meta.data_age_s < 5.0 {
+                        let ts = chrono::Utc::now().timestamp_millis();
+                        buffer.push((
+                            ts,
+                            snap.power.ac_input_w,
+                            Some(snap.power.dc_output_est_w),
+                            Some(snap.thermal.temp_main_c),
+                            Some(snap.fan.rpm),
+                        ));
+                    }
+                }
+            }
+            _ = batch_timer.tick() => {
+                if !buffer.is_empty() {
+                    if let Ok(db) = state.db.try_lock() {
+                        if let Err(e) = db.insert_power_batch(&buffer) {
+                            eprintln!("power sample insert error: {e}");
+                        }
+                        buffer.clear();
+                    }
+                }
+            }
+        }
     }
 }

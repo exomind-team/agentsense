@@ -243,7 +243,7 @@ async fn main() {
         }
         Commands::Serve { port } => {
             if let Err(e) =
-                agentsense::server::serve(&config.quota, config_path.to_path_buf(), port).await
+                agentsense::server::serve(&config, config_path.to_path_buf(), port).await
             {
                 eprintln!("Server error: {e}");
                 std::process::exit(1);

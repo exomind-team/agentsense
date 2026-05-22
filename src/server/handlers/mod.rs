@@ -6,6 +6,9 @@ use serde::Deserialize;
 
 use super::AppState;
 
+#[cfg(feature = "psu")]
+pub mod psu;
+
 static INDEX_HTML: &str = include_str!("../../../web/index.html");
 
 pub async fn serve_index() -> Html<&'static str> {
