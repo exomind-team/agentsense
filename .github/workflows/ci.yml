@@ -33,6 +33,9 @@ jobs:
           repository: exomind-team/wattson
           path: wattson
 
+      - name: Install system deps (libudev for serialport via wattson/psu)
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev pkg-config
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
@@ -69,6 +72,9 @@ jobs:
         with:
           repository: exomind-team/wattson
           path: wattson
+
+      - name: Install system deps (libudev for serialport via wattson/psu)
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev pkg-config
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -120,6 +126,9 @@ jobs:
         with:
           repository: exomind-team/wattson
           path: wattson
+
+      - name: Install system deps (libudev for serialport via wattson/psu)
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev pkg-config
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
