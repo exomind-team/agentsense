@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [master, dev]
+    branches: [master, dev, feat/psu-power-monitoring]
   pull_request:
     branches: [master]
 
@@ -11,18 +11,33 @@ env:
   RUST_BACKTRACE: 1
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
+# agentsense depends on wattson via a relative path dep (../wattson).
+# We check out wattson as a sibling directory so the path resolves on CI.
+# Both repos live under the exomind-team org; if that ever changes, update
+# the repo ref below and consider publishing wattson to crates.io instead.
+
 jobs:
   test:
     name: Test (Ubuntu)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - name: Checkout agentsense
+        uses: actions/checkout@v4
+        with:
+          path: agentsense
+
+      # Check out wattson as the sibling path dep requires (../wattson)
+      - name: Checkout wattson (path dep)
+        uses: actions/checkout@v4
+        with:
+          repository: exomind-team/wattson
+          path: wattson
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
       - name: Cache cargo registry
-        uses: actions/cache@v5
+        uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
@@ -30,14 +45,30 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
 
-      - name: Run tests
+      # psu ON (default): wattson path dep is present, full integration tests run
+      - name: Test (default — pure-rust + psu)
+        working-directory: agentsense
         run: cargo test --locked
+
+      # psu OFF: pure library mode, no wattson dep needed
+      - name: Test (pure-rust, no psu)
+        working-directory: agentsense
+        run: cargo test --no-default-features --features pure-rust
 
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - name: Checkout agentsense
+        uses: actions/checkout@v4
+        with:
+          path: agentsense
+
+      - name: Checkout wattson (path dep)
+        uses: actions/checkout@v4
+        with:
+          repository: exomind-team/wattson
+          path: wattson
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -45,7 +76,7 @@ jobs:
           components: clippy
 
       - name: Cache cargo registry
-        uses: actions/cache@v5
+        uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
@@ -53,14 +84,19 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
 
-      - name: Run Clippy
+      - name: Clippy (default — pure-rust + psu)
+        working-directory: agentsense
         run: cargo clippy --all-targets -- -D warnings
+
+      - name: Clippy (pure-rust, no psu)
+        working-directory: agentsense
+        run: cargo clippy --no-default-features --features pure-rust --all-targets -- -D warnings
 
   fmt:
     name: Format
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v4
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -74,12 +110,22 @@ jobs:
     name: Docs
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - name: Checkout agentsense
+        uses: actions/checkout@v4
+        with:
+          path: agentsense
+
+      - name: Checkout wattson (path dep)
+        uses: actions/checkout@v4
+        with:
+          repository: exomind-team/wattson
+          path: wattson
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
       - name: Build docs
+        working-directory: agentsense
         run: cargo doc --no-deps --document-private-items
         env:
           RUSTDOCFLAGS: -D warnings
@@ -88,10 +134,24 @@ jobs:
     name: Test (Windows)
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v5
+      - name: Checkout agentsense
+        uses: actions/checkout@v4
+        with:
+          path: agentsense
+
+      - name: Checkout wattson (path dep)
+        uses: actions/checkout@v4
+        with:
+          repository: exomind-team/wattson
+          path: wattson
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Run tests
+      - name: Test (default — pure-rust + psu)
+        working-directory: agentsense
         run: cargo test --locked
+
+      - name: Test (pure-rust, no psu)
+        working-directory: agentsense
+        run: cargo test --no-default-features --features pure-rust
