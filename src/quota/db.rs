@@ -508,7 +508,7 @@ impl QuotaDb {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "psu"))]
 mod power_tests {
     use super::*;
 

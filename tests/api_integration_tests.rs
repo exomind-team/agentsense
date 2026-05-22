@@ -62,9 +62,20 @@ fn make_state_with_data() -> Arc<AppState> {
         minimax_key: Arc::new(tokio::sync::RwLock::new(Some("test-minimax-key".into()))),
         deepseek_key: Arc::new(tokio::sync::RwLock::new(Some("test-deepseek-key".into()))),
         zai_token: Arc::new(tokio::sync::RwLock::new(Some("test-zai-token".into()))),
+        claude_creds: Arc::new(tokio::sync::RwLock::new(None)),
         next_poll: Arc::new(AtomicI64::new(0)),
         poll_interval_secs: 60,
         config_path,
+        #[cfg(feature = "psu")]
+        psu: Arc::new(std::sync::Mutex::new(None)),
+        #[cfg(feature = "psu")]
+        psu_cost_wh: Arc::new(std::sync::Mutex::new(0.0)),
+        #[cfg(feature = "psu")]
+        psu_start: std::time::Instant::now(),
+        #[cfg(feature = "psu")]
+        price_per_kwh: 0.56,
+        #[cfg(feature = "psu")]
+        currency: "CNY".to_string(),
     })
 }
 
@@ -80,9 +91,20 @@ fn make_state_no_keys() -> Arc<AppState> {
         minimax_key: Arc::new(tokio::sync::RwLock::new(None)),
         deepseek_key: Arc::new(tokio::sync::RwLock::new(None)),
         zai_token: Arc::new(tokio::sync::RwLock::new(None)),
+        claude_creds: Arc::new(tokio::sync::RwLock::new(None)),
         next_poll: Arc::new(AtomicI64::new(0)),
         poll_interval_secs: 60,
         config_path,
+        #[cfg(feature = "psu")]
+        psu: Arc::new(std::sync::Mutex::new(None)),
+        #[cfg(feature = "psu")]
+        psu_cost_wh: Arc::new(std::sync::Mutex::new(0.0)),
+        #[cfg(feature = "psu")]
+        psu_start: std::time::Instant::now(),
+        #[cfg(feature = "psu")]
+        price_per_kwh: 0.56,
+        #[cfg(feature = "psu")]
+        currency: "CNY".to_string(),
     })
 }
 
@@ -98,9 +120,20 @@ fn make_state_empty() -> Arc<AppState> {
         minimax_key: Arc::new(tokio::sync::RwLock::new(Some("test-key".into()))),
         deepseek_key: Arc::new(tokio::sync::RwLock::new(Some("test-key".into()))),
         zai_token: Arc::new(tokio::sync::RwLock::new(Some("test-token".into()))),
+        claude_creds: Arc::new(tokio::sync::RwLock::new(None)),
         next_poll: Arc::new(AtomicI64::new(0)),
         poll_interval_secs: 60,
         config_path,
+        #[cfg(feature = "psu")]
+        psu: Arc::new(std::sync::Mutex::new(None)),
+        #[cfg(feature = "psu")]
+        psu_cost_wh: Arc::new(std::sync::Mutex::new(0.0)),
+        #[cfg(feature = "psu")]
+        psu_start: std::time::Instant::now(),
+        #[cfg(feature = "psu")]
+        price_per_kwh: 0.56,
+        #[cfg(feature = "psu")]
+        currency: "CNY".to_string(),
     })
 }
 
