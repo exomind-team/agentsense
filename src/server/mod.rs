@@ -340,24 +340,63 @@ pub async fn do_poll(state: Arc<AppState>) {
         None
     };
 
+    // Persist each provider. Log fetch AND insert errors instead of swallowing them —
+    // a silent insert failure (e.g. a schema-migration gap) otherwise just shows as a
+    // perpetual "waiting" status with no clue why.
     let db = state.db.lock().await;
-    if let Some(Ok(ref snap)) = mmx {
-        let _ = db.insert_minimax(snap);
+    match &mmx {
+        Some(Ok(snap)) => {
+            if let Err(e) = db.insert_minimax(snap) {
+                tracing::warn!(provider = "minimax", error = %e, "insert failed");
+            }
+        }
+        Some(Err(e)) => tracing::warn!(provider = "minimax", error = %e, "fetch failed"),
+        None => {}
     }
-    if let Some(Ok(ref snap)) = ds {
-        let _ = db.insert_deepseek(snap);
+    match &ds {
+        Some(Ok(snap)) => {
+            if let Err(e) = db.insert_deepseek(snap) {
+                tracing::warn!(provider = "deepseek", error = %e, "insert failed");
+            }
+        }
+        Some(Err(e)) => tracing::warn!(provider = "deepseek", error = %e, "fetch failed"),
+        None => {}
     }
-    if let Some(Ok(ref snap)) = zai {
-        let _ = db.insert_zai(snap);
+    match &zai {
+        Some(Ok(snap)) => {
+            if let Err(e) = db.insert_zai(snap) {
+                tracing::warn!(provider = "zai", error = %e, "insert failed");
+            }
+        }
+        Some(Err(e)) => tracing::warn!(provider = "zai", error = %e, "fetch failed"),
+        None => {}
     }
-    if let Some(Ok(ref snap)) = claude {
-        let _ = db.insert_claude(snap);
+    match &claude {
+        Some(Ok(snap)) => {
+            if let Err(e) = db.insert_claude(snap) {
+                tracing::warn!(provider = "claude", error = %e, "insert failed");
+            }
+        }
+        Some(Err(e)) => tracing::warn!(provider = "claude", error = %e, "fetch failed"),
+        None => {}
     }
-    if let Some(Ok(ref snap)) = mimo {
-        let _ = db.insert_mimo(snap);
+    match &mimo {
+        Some(Ok(snap)) => {
+            if let Err(e) = db.insert_mimo(snap) {
+                tracing::warn!(provider = "mimo", error = %e, "insert failed");
+            }
+        }
+        Some(Err(e)) => tracing::warn!(provider = "mimo", error = %e, "fetch failed"),
+        None => {}
     }
-    if let Some(Ok(ref snap)) = ds_platform {
-        let _ = db.insert_deepseek_platform(snap);
+    match &ds_platform {
+        Some(Ok(snap)) => {
+            if let Err(e) = db.insert_deepseek_platform(snap) {
+                tracing::warn!(provider = "deepseek_platform", error = %e, "insert failed");
+            }
+        }
+        Some(Err(e)) => tracing::warn!(provider = "deepseek_platform", error = %e, "fetch failed"),
+        None => {}
     }
     drop(db);
 

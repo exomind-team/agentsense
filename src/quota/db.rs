@@ -131,6 +131,20 @@ impl QuotaDb {
             ",
         )?;
 
+        // Migrate pre-rework databases: CREATE TABLE IF NOT EXISTS never alters an
+        // existing table, so DBs created before the zai rework lack these columns and
+        // insert_zai fails with "no such column". ALTER ... ADD COLUMN errors with
+        // "duplicate column name" once migrated — ignore that (idempotent).
+        for stmt in [
+            "ALTER TABLE zai_quota_log ADD COLUMN token_5h_reset INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE zai_quota_log ADD COLUMN token_week_reset INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE zai_quota_log ADD COLUMN mcp_remaining INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE zai_quota_log ADD COLUMN level TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE zai_quota_log ADD COLUMN usage_details TEXT NOT NULL DEFAULT '[]'",
+        ] {
+            let _ = self.conn.execute(stmt, []);
+        }
+
         Ok(())
     }
 
