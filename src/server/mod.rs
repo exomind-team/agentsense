@@ -108,16 +108,18 @@ pub async fn serve(
     let db = QuotaDb::open(&config.quota.db_path())?;
     let (ds_platform_token, ds_platform_cookies) = config
         .quota
-        .deepseek_platform_creds()
-        .map(|(t, c)| (Some(t), Some(c)))
+        .deepseek_platform_creds_list()
+        .into_iter()
+        .next()
+        .map(|((t, c), _)| (Some(t), Some(c)))
         .unwrap_or((None, None));
     let state = Arc::new(AppState {
         db: Arc::new(tokio::sync::Mutex::new(db)),
         client,
-        minimax_key: Arc::new(tokio::sync::RwLock::new(config.quota.minimax_key())),
-        deepseek_key: Arc::new(tokio::sync::RwLock::new(config.quota.deepseek_key())),
-        zai_token: Arc::new(tokio::sync::RwLock::new(config.quota.zai_token())),
-        mimo_cookie: Arc::new(tokio::sync::RwLock::new(config.quota.mimo_cookie())),
+        minimax_key: Arc::new(tokio::sync::RwLock::new(config.quota.minimax_keys().into_iter().next().map(|(k, _)| k))),
+        deepseek_key: Arc::new(tokio::sync::RwLock::new(config.quota.deepseek_keys().into_iter().next().map(|(k, _)| k))),
+        zai_token: Arc::new(tokio::sync::RwLock::new(config.quota.zai_tokens().into_iter().next().map(|(k, _)| k))),
+        mimo_cookie: Arc::new(tokio::sync::RwLock::new(config.quota.mimo_cookies().into_iter().next().map(|(k, _)| k))),
         claude_creds: Arc::new(tokio::sync::RwLock::new(config.quota.claude_creds_path())),
         deepseek_platform_token: Arc::new(tokio::sync::RwLock::new(ds_platform_token)),
         deepseek_platform_cookies: Arc::new(tokio::sync::RwLock::new(ds_platform_cookies)),
@@ -145,8 +147,13 @@ pub async fn serve(
                 "passive" => wattson::Mode::Passive,
                 _ => wattson::Mode::Active,
             };
+            // Wire the configured sample interval into the serial QUERY cadence.
+            // Without this the monitor used wattson's hard-coded 300ms default,
+            // hammering the CH340 driver (CH341S64.SYS) with ~3 write + ~10 read
+            // IRPs/sec regardless of config — the trigger for the 0xD1 BSOD race.
             match wattson::PsuMonitor::new(&serial_cfg.port, mode)
                 .with_profile(profile)
+                .with_poll_interval(std::time::Duration::from_millis(serial_cfg.sample_interval_ms))
                 .start()
             {
                 Ok(handle) => {

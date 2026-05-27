@@ -22,13 +22,16 @@ pub struct QuotaConfig {
     pub poll_interval_secs: u64,
     pub proxy: Option<String>,
     pub db_path: Option<PathBuf>,
+    #[serde(default)]
     pub minimax: Vec<KeyConfig>,
+    #[serde(default)]
     pub deepseek: Vec<KeyConfig>,
-    #[serde(rename = "zai")]
+    #[serde(default, rename = "zai")]
     pub zai: Vec<ZaiKeyConfig>,
-    #[serde(rename = "mimo")]
+    #[serde(default, rename = "mimo")]
     pub mimo: Vec<MimoConfig>,
     pub claude: Option<ClaudeConfig>,
+    #[serde(default)]
     pub deepseek_platform: Vec<DeepSeekPlatformConfig>,
 }
 
@@ -90,12 +93,35 @@ fn default_poll_interval() -> u64 {
 }
 
 impl AppConfig {
+    /// Detect old single-table format and convert to array-of-tables.
+    /// Old: [quota.deepseek]\n
+    /// New: [[quota.deepseek]]\n
+    fn migrate_config(content: &str) -> String {
+        let mut result = content.to_string();
+        for provider in ["minimax", "deepseek", "zai", "mimo", "deepseek_platform"] {
+            let old_header = format!("[quota.{provider}]\n");
+            let new_header = format!("[[quota.{provider}]]\n");
+            if result.contains(&old_header) && !result.contains(&new_header) {
+                result = result.replace(&old_header, &new_header);
+            }
+        }
+        result
+    }
+
     pub fn load(path: &std::path::Path) -> Result<Self, crate::error::AgentSenseError> {
         if !path.exists() {
             return Ok(Self::default());
         }
         let content = std::fs::read_to_string(path)?;
-        let config: Self = toml::from_str(&content)?;
+        let migrated = Self::migrate_config(&content);
+
+        let config: Self = toml::from_str(&migrated)?;
+
+        // Write back if migration changed anything
+        if migrated != content {
+            let _ = std::fs::write(path, &migrated);
+        }
+
         Ok(config)
     }
 
@@ -235,4 +261,48 @@ fn default_price() -> f64 {
 #[cfg(feature = "psu")]
 fn default_currency() -> String {
     "CNY".to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn migrate_single_to_array_table() {
+        let old = r#"
+[quota]
+poll_interval_secs = 60
+
+[quota.deepseek]
+api_key = "sk-test123"
+
+[quota.minimax]
+api_key = "sk-minimax456"
+"#;
+        let migrated = AppConfig::migrate_config(old);
+        assert!(migrated.contains("[[quota.deepseek]]"), "deepseek should be array");
+        assert!(migrated.contains("[[quota.minimax]]"), "minimax should be array");
+        assert!(!migrated.contains("[quota.deepseek]\n"), "old format gone");
+
+        let config: AppConfig = toml::from_str(&migrated).unwrap();
+        assert_eq!(config.quota.deepseek.len(), 1);
+        assert_eq!(
+            config.quota.deepseek[0].api_key.as_deref(),
+            Some("sk-test123")
+        );
+    }
+
+    #[test]
+    fn migrate_idempotent() {
+        let already_new = r#"
+[[quota.deepseek]]
+api_key = "sk-test"
+"#;
+        let result = AppConfig::migrate_config(already_new);
+        assert!(result.contains("[[quota.deepseek]]"));
+        assert!(
+            !result.contains("[[quota.deepseek]]]]"),
+            "no double migration"
+        );
+    }
 }

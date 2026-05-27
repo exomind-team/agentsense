@@ -403,27 +403,32 @@ pub async fn api_config_put(
 
     let mut config = crate::AppConfig::load(&state.config_path).unwrap_or_default();
 
-    config.quota.minimax = Some(crate::config::KeyConfig {
+    config.quota.minimax = vec![crate::config::KeyConfig {
         api_key: mmx.clone(),
         api_key_env: None,
-    });
-    config.quota.deepseek = Some(crate::config::KeyConfig {
+        label: None,
+    }];
+    config.quota.deepseek = vec![crate::config::KeyConfig {
         api_key: ds.clone(),
         api_key_env: None,
-    });
-    config.quota.zai = Some(crate::config::ZaiKeyConfig {
+        label: None,
+    }];
+    config.quota.zai = vec![crate::config::ZaiKeyConfig {
         auth_token: zai.clone(),
         auth_token_env: None,
-    });
-    config.quota.mimo = Some(crate::config::MimoConfig {
+        label: None,
+    }];
+    config.quota.mimo = vec![crate::config::MimoConfig {
         cookie: mimo.clone(),
-    });
-    config.quota.deepseek_platform = Some(crate::config::DeepSeekPlatformConfig {
+        label: None,
+    }];
+    config.quota.deepseek_platform = vec![crate::config::DeepSeekPlatformConfig {
         bearer_token: dsp_token.clone(),
         bearer_token_env: None,
         cookies: dsp_cookies.clone(),
         cookies_env: None,
-    });
+        label: None,
+    }];
 
     let toml_str = toml::to_string_pretty(&config).unwrap_or_default();
     let _ = std::fs::write(&state.config_path, toml_str);

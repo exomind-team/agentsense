@@ -50,12 +50,12 @@ impl QuotaOrchestrator {
         Ok(Self {
             client,
             db,
-            minimax_key: config.minimax_key(),
-            deepseek_key: config.deepseek_key(),
-            zai_token: config.zai_token(),
+            minimax_key: config.minimax_keys().into_iter().next().map(|(k, _)| k),
+            deepseek_key: config.deepseek_keys().into_iter().next().map(|(k, _)| k),
+            zai_token: config.zai_tokens().into_iter().next().map(|(k, _)| k),
             claude_creds: config.claude_creds_path(),
-            mimo_cookie: config.mimo_cookie(),
-            deepseek_platform_creds: config.deepseek_platform_creds(),
+            mimo_cookie: config.mimo_cookies().into_iter().next().map(|(k, _)| k),
+            deepseek_platform_creds: config.deepseek_platform_creds_list().into_iter().next().map(|((t, c), _)| (t, c)),
         })
     }
 
