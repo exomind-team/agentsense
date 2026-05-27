@@ -48,6 +48,8 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
 
     let router = axum::Router::new()
         .route("/", get(handlers::serve_index))
+        .route("/app.js", get(handlers::serve_app_js))
+        .route("/style.css", get(handlers::serve_style_css))
         .route("/mcp", axum::routing::post(handlers::mcp_handler))
         .route("/api/all", get(handlers::api_all))
         .route("/api/quota", get(handlers::api_quota))

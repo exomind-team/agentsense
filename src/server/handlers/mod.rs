@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use axum::extract::{Query, State};
-use axum::response::Html;
+use axum::response::{Html, Response};
 use serde::Deserialize;
 
 use super::AppState;
@@ -10,9 +10,38 @@ use super::AppState;
 pub mod psu;
 
 static INDEX_HTML: &str = include_str!("../../../web/index.html");
+static APP_JS: &str = include_str!("../../../web/app.js");
+static STYLE_CSS: &str = include_str!("../../../web/style.css");
 
-pub async fn serve_index() -> Html<&'static str> {
-    Html(INDEX_HTML)
+fn web_response(embedded: &'static str, content_type: &str) -> Response {
+    // Try disk first (dev mode: edit web/*.js/css, refresh browser = instant)
+    if let Ok(data) = std::fs::read_to_string("web/index.html").or_else(|_| std::fs::read_to_string("style.css")) {
+        // If web/ dir exists, read from disk
+        let _ = data; // just checking dir exists
+    }
+    let body = match content_type {
+        "text/html" => std::fs::read_to_string("web/index.html").unwrap_or_else(|_| embedded.to_string()),
+        "text/javascript" => std::fs::read_to_string("web/app.js").unwrap_or_else(|_| embedded.to_string()),
+        "text/css" => std::fs::read_to_string("web/style.css").unwrap_or_else(|_| embedded.to_string()),
+        _ => embedded.to_string(),
+    };
+    Response::builder()
+        .header("content-type", content_type)
+        .body(body.into())
+        .unwrap()
+}
+
+pub async fn serve_index() -> Html<String> {
+    let html = std::fs::read_to_string("web/index.html").unwrap_or_else(|_| INDEX_HTML.to_string());
+    Html(html)
+}
+
+pub async fn serve_app_js() -> Response {
+    web_response(APP_JS, "text/javascript")
+}
+
+pub async fn serve_style_css() -> Response {
+    web_response(STYLE_CSS, "text/css")
 }
 
 pub async fn api_all(State(state): State<Arc<AppState>>) -> axum::Json<serde_json::Value> {
