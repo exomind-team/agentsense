@@ -71,13 +71,12 @@ fn make_state_with_data() -> Arc<AppState> {
     Arc::new(AppState {
         db: Arc::new(tokio::sync::Mutex::new(db)),
         client: reqwest::Client::new(),
-        minimax_key: Arc::new(tokio::sync::RwLock::new(Some("test-minimax-key".into()))),
-        deepseek_key: Arc::new(tokio::sync::RwLock::new(Some("test-deepseek-key".into()))),
-        zai_token: Arc::new(tokio::sync::RwLock::new(Some("test-zai-token".into()))),
-        mimo_cookie: Arc::new(tokio::sync::RwLock::new(None)),
+        minimax_keys: Arc::new(tokio::sync::RwLock::new(vec![("test-minimax-key".into(), None)])),
+        deepseek_keys: Arc::new(tokio::sync::RwLock::new(vec![("test-deepseek-key".into(), None)])),
+        zai_tokens: Arc::new(tokio::sync::RwLock::new(vec![("test-zai-token".into(), None)])),
+        mimo_cookies: Arc::new(tokio::sync::RwLock::new(vec![])),
         claude_creds: Arc::new(tokio::sync::RwLock::new(None)),
-        deepseek_platform_token: Arc::new(tokio::sync::RwLock::new(None)),
-        deepseek_platform_cookies: Arc::new(tokio::sync::RwLock::new(None)),
+        deepseek_platform_creds: Arc::new(tokio::sync::RwLock::new(vec![])),
         next_poll: Arc::new(AtomicI64::new(0)),
         last_claude_poll: Arc::new(AtomicI64::new(0)),
         poll_interval_secs: 60,
@@ -102,13 +101,12 @@ fn make_state_no_keys() -> Arc<AppState> {
     Arc::new(AppState {
         db: Arc::new(tokio::sync::Mutex::new(db)),
         client: reqwest::Client::new(),
-        minimax_key: Arc::new(tokio::sync::RwLock::new(None)),
-        deepseek_key: Arc::new(tokio::sync::RwLock::new(None)),
-        zai_token: Arc::new(tokio::sync::RwLock::new(None)),
-        mimo_cookie: Arc::new(tokio::sync::RwLock::new(None)),
+        minimax_keys: Arc::new(tokio::sync::RwLock::new(vec![])),
+        deepseek_keys: Arc::new(tokio::sync::RwLock::new(vec![])),
+        zai_tokens: Arc::new(tokio::sync::RwLock::new(vec![])),
+        mimo_cookies: Arc::new(tokio::sync::RwLock::new(vec![])),
         claude_creds: Arc::new(tokio::sync::RwLock::new(None)),
-        deepseek_platform_token: Arc::new(tokio::sync::RwLock::new(None)),
-        deepseek_platform_cookies: Arc::new(tokio::sync::RwLock::new(None)),
+        deepseek_platform_creds: Arc::new(tokio::sync::RwLock::new(vec![])),
         next_poll: Arc::new(AtomicI64::new(0)),
         last_claude_poll: Arc::new(AtomicI64::new(0)),
         poll_interval_secs: 60,
@@ -133,13 +131,12 @@ fn make_state_empty() -> Arc<AppState> {
     Arc::new(AppState {
         db: Arc::new(tokio::sync::Mutex::new(db)),
         client: reqwest::Client::new(),
-        minimax_key: Arc::new(tokio::sync::RwLock::new(Some("test-key".into()))),
-        deepseek_key: Arc::new(tokio::sync::RwLock::new(Some("test-key".into()))),
-        zai_token: Arc::new(tokio::sync::RwLock::new(Some("test-token".into()))),
-        mimo_cookie: Arc::new(tokio::sync::RwLock::new(None)),
+        minimax_keys: Arc::new(tokio::sync::RwLock::new(vec![("test-key".into(), None)])),
+        deepseek_keys: Arc::new(tokio::sync::RwLock::new(vec![("test-key".into(), None)])),
+        zai_tokens: Arc::new(tokio::sync::RwLock::new(vec![("test-token".into(), None)])),
+        mimo_cookies: Arc::new(tokio::sync::RwLock::new(vec![])),
         claude_creds: Arc::new(tokio::sync::RwLock::new(None)),
-        deepseek_platform_token: Arc::new(tokio::sync::RwLock::new(None)),
-        deepseek_platform_cookies: Arc::new(tokio::sync::RwLock::new(None)),
+        deepseek_platform_creds: Arc::new(tokio::sync::RwLock::new(vec![])),
         next_poll: Arc::new(AtomicI64::new(0)),
         last_claude_poll: Arc::new(AtomicI64::new(0)),
         poll_interval_secs: 60,
@@ -221,36 +218,36 @@ async fn get_all_with_data() {
     let (status, json) = get_json(state, "/api/all").await;
     assert_eq!(status, http::StatusCode::OK);
 
-    assert!(json["minimax"].is_object());
-    assert!(json["deepseek"].is_object());
-    assert!(json["zai"].is_object());
+    assert!(json["minimax"].is_array());
+    assert!(json["deepseek"].is_array());
+    assert!(json["zai"].is_array());
     assert!(json["_nextPoll"].is_number());
 
-    let mmx = &json["minimax"];
+    let mmx = &json["minimax"][0];
     assert!(mmx["models"].is_array());
     assert_eq!(mmx["models"].as_array().unwrap().len(), 2);
     assert_eq!(mmx["status"]["status"], "ok");
 
-    assert_eq!(json["deepseek"]["status"]["status"], "ok");
-    assert_eq!(json["zai"]["status"]["status"], "ok");
+    assert_eq!(json["deepseek"][0]["status"]["status"], "ok");
+    assert_eq!(json["zai"][0]["status"]["status"], "ok");
 }
 
 #[tokio::test]
 async fn get_all_no_keys_returns_no_key() {
     let state = make_state_no_keys();
     let (_, json) = get_json(state, "/api/all").await;
-    assert_eq!(json["minimax"]["status"]["status"], "no_key");
-    assert_eq!(json["deepseek"]["status"]["status"], "no_key");
-    assert_eq!(json["zai"]["status"]["status"], "no_key");
+    assert!(json["minimax"].as_array().unwrap().is_empty());
+    assert!(json["deepseek"].as_array().unwrap().is_empty());
+    assert!(json["zai"].as_array().unwrap().is_empty());
 }
 
 #[tokio::test]
 async fn get_all_keys_no_data_returns_waiting() {
     let state = make_state_empty();
     let (_, json) = get_json(state, "/api/all").await;
-    assert_eq!(json["minimax"]["status"]["status"], "waiting");
-    assert_eq!(json["deepseek"]["status"]["status"], "waiting");
-    assert_eq!(json["zai"]["status"]["status"], "waiting");
+    assert_eq!(json["minimax"][0]["status"]["status"], "waiting");
+    assert_eq!(json["deepseek"][0]["status"]["status"], "waiting");
+    assert_eq!(json["zai"][0]["status"]["status"], "waiting");
 }
 
 // ── GET /api/quota ─────────────────────────────────────────────────────
@@ -325,19 +322,19 @@ async fn get_consumption_structure() {
 async fn get_deepseek_with_data() {
     let state = make_state_with_data();
     let (_, json) = get_json(state, "/api/deepseek").await;
-    let bal = &json["balance"];
+    let bal = &json["accounts"][0]["balance"];
     assert_eq!(bal["total_balance_cny"].as_f64().unwrap(), 42.5);
     assert_eq!(bal["total_balance_usd"].as_f64().unwrap(), 5.8);
     assert_eq!(bal["granted_cny"].as_f64().unwrap(), 10.0);
     assert_eq!(bal["topped_up_cny"].as_f64().unwrap(), 32.5);
-    assert_eq!(json["status"]["status"], "ok");
+    assert_eq!(json["accounts"][0]["status"]["status"], "ok");
 }
 
 #[tokio::test]
 async fn get_deepseek_no_key() {
     let state = make_state_no_keys();
     let (_, json) = get_json(state, "/api/deepseek").await;
-    assert_eq!(json["status"]["status"], "no_key");
+    assert!(json["accounts"].as_array().unwrap().is_empty());
 }
 
 // ── GET /api/deepseek/history ──────────────────────────────────────────
@@ -364,13 +361,13 @@ async fn get_deepseek_history_1h() {
 async fn get_zai_with_data() {
     let state = make_state_with_data();
     let (_, json) = get_json(state, "/api/zai").await;
-    let q = &json["quota"];
+    let q = &json["accounts"][0]["quota"];
     assert_eq!(q["token_5h_pct"].as_i64().unwrap(), 35);
     assert_eq!(q["token_week_pct"].as_i64().unwrap(), 60);
     assert_eq!(q["mcp_month_pct"].as_i64().unwrap(), 20);
     assert_eq!(q["mcp_used"].as_i64().unwrap(), 100);
     assert_eq!(q["mcp_total"].as_i64().unwrap(), 500);
-    assert_eq!(json["status"]["status"], "ok");
+    assert_eq!(json["accounts"][0]["status"]["status"], "ok");
 }
 
 // ── GET /api/zai/history ───────────────────────────────────────────────
@@ -398,7 +395,9 @@ async fn get_config_masked_keys() {
     let state = make_state_with_data();
     let (_, json) = get_json(state, "/api/config").await;
 
-    let mmx = json["minimax_api_key"].as_str().unwrap();
+    let mmx_arr = json["minimax_accounts"].as_array().unwrap();
+    assert_eq!(mmx_arr.len(), 1);
+    let mmx = mmx_arr[0]["masked_key"].as_str().unwrap();
     let bullet = '\u{2022}';
     assert!(mmx.starts_with(bullet), "key should be masked: {mmx}");
     assert!(mmx.ends_with("-key"), "should end with last 4 chars: {mmx}");
@@ -436,7 +435,8 @@ async fn put_config_updates_keys() {
     assert_eq!(json["ok"], true);
 
     let (_, cfg) = get_json(state, "/api/config").await;
-    let mmx = cfg["minimax_api_key"].as_str().unwrap();
+    let mmx_arr = cfg["minimax_accounts"].as_array().unwrap();
+    let mmx = mmx_arr[0]["masked_key"].as_str().unwrap();
     assert!(
         mmx.ends_with("1234"),
         "should show last 4 of new key: {mmx}"
@@ -449,7 +449,10 @@ async fn put_config_ignores_masked_values() {
 
     // Get current masked value
     let (_, before) = get_json(state.clone(), "/api/config").await;
-    let masked = before["minimax_api_key"].as_str().unwrap().to_string();
+    let masked = before["minimax_accounts"].as_array().unwrap()[0]["masked_key"]
+        .as_str()
+        .unwrap()
+        .to_string();
 
     // PUT with the masked value (should NOT update)
     let (_, resp) = put_json(
@@ -462,8 +465,8 @@ async fn put_config_ignores_masked_values() {
 
     let (_, after) = get_json(state, "/api/config").await;
     assert_eq!(
-        after["minimax_api_key"].as_str().unwrap(),
-        before["minimax_api_key"].as_str().unwrap(),
+        after["minimax_accounts"].as_array().unwrap()[0]["masked_key"],
+        before["minimax_accounts"].as_array().unwrap()[0]["masked_key"],
         "masked value should not change the key"
     );
 }
