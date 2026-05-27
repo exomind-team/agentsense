@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use axum::extract::{Query, State};
-use axum::response::{Html, Response};
+use axum::response::Response;
 use serde::Deserialize;
 
 use super::AppState;
@@ -13,35 +13,26 @@ static INDEX_HTML: &str = include_str!("../../../web/index.html");
 static APP_JS: &str = include_str!("../../../web/app.js");
 static STYLE_CSS: &str = include_str!("../../../web/style.css");
 
-fn web_response(embedded: &'static str, content_type: &str) -> Response {
-    // Try disk first (dev mode: edit web/*.js/css, refresh browser = instant)
-    if let Ok(data) = std::fs::read_to_string("web/index.html").or_else(|_| std::fs::read_to_string("style.css")) {
-        // If web/ dir exists, read from disk
-        let _ = data; // just checking dir exists
-    }
-    let body = match content_type {
-        "text/html" => std::fs::read_to_string("web/index.html").unwrap_or_else(|_| embedded.to_string()),
-        "text/javascript" => std::fs::read_to_string("web/app.js").unwrap_or_else(|_| embedded.to_string()),
-        "text/css" => std::fs::read_to_string("web/style.css").unwrap_or_else(|_| embedded.to_string()),
-        _ => embedded.to_string(),
-    };
+/// Serve a file from disk if available, otherwise use embedded content.
+fn serve_file(name: &str, embedded: &'static str, content_type: &'static str) -> Response {
+    let body = std::fs::read_to_string(format!("web/{name}"))
+        .unwrap_or_else(|_| embedded.to_string());
     Response::builder()
         .header("content-type", content_type)
         .body(body.into())
         .unwrap()
 }
 
-pub async fn serve_index() -> Html<String> {
-    let html = std::fs::read_to_string("web/index.html").unwrap_or_else(|_| INDEX_HTML.to_string());
-    Html(html)
+pub async fn serve_index() -> Response {
+    serve_file("index.html", INDEX_HTML, "text/html; charset=utf-8")
 }
 
 pub async fn serve_app_js() -> Response {
-    web_response(APP_JS, "text/javascript")
+    serve_file("app.js", APP_JS, "text/javascript")
 }
 
 pub async fn serve_style_css() -> Response {
-    web_response(STYLE_CSS, "text/css")
+    serve_file("style.css", STYLE_CSS, "text/css")
 }
 
 pub async fn api_all(State(state): State<Arc<AppState>>) -> axum::Json<serde_json::Value> {
@@ -342,14 +333,24 @@ pub async fn api_zai_history(
 
 pub async fn api_zai_models(State(state): State<Arc<AppState>>) -> axum::Json<serde_json::Value> {
     let tokens = state.zai_tokens.read().await;
-    let Some((token, _label)) = tokens.first().cloned() else {
+    if tokens.is_empty() {
         return axum::Json(serde_json::json!({"error": "no_token"}));
-    };
-
-    match crate::quota::zai::fetch_model_usage(&state.client, &token).await {
-        Ok(data) => axum::Json(serde_json::json!(data)),
-        Err(e) => axum::Json(serde_json::json!({"error": e.to_string()})),
     }
+
+    let mut accounts = Vec::new();
+    for (token, label) in tokens.iter() {
+        match crate::quota::zai::fetch_model_usage(&state.client, token).await {
+            Ok(data) => accounts.push(serde_json::json!({
+                "label": label,
+                "data": data,
+            })),
+            Err(e) => accounts.push(serde_json::json!({
+                "label": label,
+                "error": e.to_string(),
+            })),
+        }
+    }
+    axum::Json(serde_json::json!({"accounts": accounts}))
 }
 
 pub async fn api_claude(State(state): State<Arc<AppState>>) -> axum::Json<serde_json::Value> {

@@ -1217,14 +1217,15 @@ function renderZai(data, modelsData, accountIdx = 0) {
     } catch { mcpDetailsEl.textContent = ''; }
   }
 
-  // Model usage chart + highlight (shared across accounts)
+  // Model usage chart — per-account
+  const mdlAccts = (modelsData && modelsData.accounts) ? modelsData.accounts : null;
+  const mdl = mdlAccts ? (mdlAccts[accountIdx]?.data || mdlAccts[0]?.data) : modelsData;
   const modelHighlightEl = document.getElementById('zai-model-highlight');
   const modelSummaryEl = document.getElementById('zai-model-summary');
-  if (modelsData && !modelsData.error && modelsData.models) {
-    const total = modelsData.total_tokens || 0;
-    modelSummaryEl.textContent = `共 ${fmtTokens(total)} tokens · ${modelsData.total_calls || 0} calls`;
+  if (mdl && !mdl.error && mdl.models) {
+    modelSummaryEl.textContent = `共 ${fmtTokens(mdl.total_tokens || 0)} tokens · ${mdl.total_calls || 0} calls`;
 
-    const mainModel = modelsData.models.find(m => m.name === 'GLM-5.1');
+    const mainModel = mdl.models.find(m => m.name === 'GLM-5.1');
     if (mainModel) {
       modelHighlightEl.innerHTML = `
         <div style="flex:1;background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:4px 12px;display:flex;align-items:center;justify-content:center;gap:8px">
@@ -1235,10 +1236,10 @@ function renderZai(data, modelsData, accountIdx = 0) {
       `;
     }
 
-    renderZaiHourlyChart(modelsData);
-    renderZaiModelBar(modelsData);
+    renderZaiHourlyChart(mdl);
+    renderZaiModelBar(mdl);
   } else {
-    modelSummaryEl.textContent = modelsData?.error ? '加载失败' : '';
+    modelSummaryEl.textContent = mdl?.error ? '加载失败' : '';
     modelHighlightEl.innerHTML = '';
   }
 }
