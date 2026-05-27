@@ -17,13 +17,18 @@ use crate::quota::db::QuotaDb;
 pub struct AppState {
     pub db: Arc<tokio::sync::Mutex<QuotaDb>>,
     pub client: reqwest::Client,
-    pub minimax_key: Arc<tokio::sync::RwLock<Option<String>>>,
-    pub deepseek_key: Arc<tokio::sync::RwLock<Option<String>>>,
-    pub zai_token: Arc<tokio::sync::RwLock<Option<String>>>,
-    pub mimo_cookie: Arc<tokio::sync::RwLock<Option<String>>>,
+    /// (api_key, label) pairs for each configured MiniMax account
+    pub minimax_keys: Arc<tokio::sync::RwLock<Vec<(String, Option<String>)>>>,
+    /// (api_key, label) pairs for each configured DeepSeek account
+    pub deepseek_keys: Arc<tokio::sync::RwLock<Vec<(String, Option<String>)>>>,
+    /// (auth_token, label) pairs for each configured Z.AI account
+    pub zai_tokens: Arc<tokio::sync::RwLock<Vec<(String, Option<String>)>>>,
+    /// (cookie, label) pairs for each configured MiMo account
+    pub mimo_cookies: Arc<tokio::sync::RwLock<Vec<(String, Option<String>)>>>,
+    /// ((bearer_token, cookies), label) pairs for each configured DeepSeek Platform account
+    pub deepseek_platform_creds:
+        Arc<tokio::sync::RwLock<Vec<((String, String), Option<String>)>>>,
     pub claude_creds: Arc<tokio::sync::RwLock<Option<PathBuf>>>,
-    pub deepseek_platform_token: Arc<tokio::sync::RwLock<Option<String>>>,
-    pub deepseek_platform_cookies: Arc<tokio::sync::RwLock<Option<String>>>,
     pub next_poll: Arc<AtomicI64>,
     pub last_claude_poll: Arc<AtomicI64>,
     pub poll_interval_secs: u64,
@@ -106,23 +111,17 @@ pub async fn serve(
     let client = builder.build()?;
 
     let db = QuotaDb::open(&config.quota.db_path())?;
-    let (ds_platform_token, ds_platform_cookies) = config
-        .quota
-        .deepseek_platform_creds_list()
-        .into_iter()
-        .next()
-        .map(|((t, c), _)| (Some(t), Some(c)))
-        .unwrap_or((None, None));
     let state = Arc::new(AppState {
         db: Arc::new(tokio::sync::Mutex::new(db)),
         client,
-        minimax_key: Arc::new(tokio::sync::RwLock::new(config.quota.minimax_keys().into_iter().next().map(|(k, _)| k))),
-        deepseek_key: Arc::new(tokio::sync::RwLock::new(config.quota.deepseek_keys().into_iter().next().map(|(k, _)| k))),
-        zai_token: Arc::new(tokio::sync::RwLock::new(config.quota.zai_tokens().into_iter().next().map(|(k, _)| k))),
-        mimo_cookie: Arc::new(tokio::sync::RwLock::new(config.quota.mimo_cookies().into_iter().next().map(|(k, _)| k))),
+        minimax_keys: Arc::new(tokio::sync::RwLock::new(config.quota.minimax_keys())),
+        deepseek_keys: Arc::new(tokio::sync::RwLock::new(config.quota.deepseek_keys())),
+        zai_tokens: Arc::new(tokio::sync::RwLock::new(config.quota.zai_tokens())),
+        mimo_cookies: Arc::new(tokio::sync::RwLock::new(config.quota.mimo_cookies())),
         claude_creds: Arc::new(tokio::sync::RwLock::new(config.quota.claude_creds_path())),
-        deepseek_platform_token: Arc::new(tokio::sync::RwLock::new(ds_platform_token)),
-        deepseek_platform_cookies: Arc::new(tokio::sync::RwLock::new(ds_platform_cookies)),
+        deepseek_platform_creds: Arc::new(tokio::sync::RwLock::new(
+            config.quota.deepseek_platform_creds_list(),
+        )),
         next_poll: Arc::new(AtomicI64::new(0)),
         last_claude_poll: Arc::new(AtomicI64::new(0)),
         poll_interval_secs: config.quota.poll_interval_secs,
@@ -201,16 +200,20 @@ pub async fn serve(
         .await
         .map_err(AgentSenseError::Io)?;
 
+    let mmx_count = state.minimax_keys.read().await.len();
+    let ds_count = state.deepseek_keys.read().await.len();
+    let zai_count = state.zai_tokens.read().await.len();
+    let mimo_count = state.mimo_cookies.read().await.len();
     println!("AgentSense MCP Server");
     println!("  Dashboard: http://localhost:{port}");
     println!("  MCP:       http://localhost:{port}/mcp");
     println!(
-        "  Config:    {} (MMX: {}, DS: {}, ZAI: {}, MiMo: {})",
+        "  Config:    {} (MMX: {} accounts, DS: {} accounts, ZAI: {} accounts, MiMo: {} accounts)",
         state.config_path.display(),
-        state.minimax_key.read().await.is_some(),
-        state.deepseek_key.read().await.is_some(),
-        state.zai_token.read().await.is_some(),
-        state.mimo_cookie.read().await.is_some(),
+        mmx_count,
+        ds_count,
+        zai_count,
+        mimo_count,
     );
     println!(
         "  Claude:    {}",
@@ -248,164 +251,206 @@ pub async fn serve(
 }
 
 pub async fn do_poll(state: Arc<AppState>) {
-    let mmx_key = state.minimax_key.read().await.clone();
-    let ds_key = state.deepseek_key.read().await.clone();
-    let zai_tok = state.zai_token.read().await.clone();
-
-    let mmx = if let Some(key) = mmx_key {
+    // --- MiniMax: fetch all configured accounts in parallel ---
+    {
+        let mmx_keys = state.minimax_keys.read().await.clone();
+        let db = state.db.clone();
         let client = state.client.clone();
-        Some(
-            tokio::spawn(async move { crate::quota::minimax::fetch(&client, &key).await })
-                .await
-                .unwrap_or_else(|e| {
-                    Err(AgentSenseError::Http(format!("MiniMax task panicked: {e}")))
-                }),
-        )
-    } else {
-        None
-    };
+        let mut handles = Vec::new();
+        for (key, label) in mmx_keys {
+            let client = client.clone();
+            let label_str = label.clone();
+            handles.push(tokio::spawn(async move {
+                let result = crate::quota::minimax::fetch(&client, &key).await;
+                (label_str, result)
+            }));
+        }
+        let db_lock = db.lock().await;
+        for h in handles {
+            match h.await {
+                Ok((label, Ok(snap))) => {
+                    let l = label.as_deref().unwrap_or("");
+                    if let Err(e) = db_lock.insert_minimax(&snap, l) {
+                        tracing::warn!(provider = "minimax", label = l, error = %e, "insert failed");
+                    }
+                }
+                Ok((label, Err(e))) => {
+                    let l = label.as_deref().unwrap_or("");
+                    tracing::warn!(provider = "minimax", label = l, error = %e, "fetch failed");
+                }
+                Err(e) => {
+                    tracing::warn!(provider = "minimax", error = %e, "task panicked");
+                }
+            }
+        }
+    }
 
-    let ds = if let Some(key) = ds_key {
+    // --- DeepSeek: fetch all configured accounts in parallel ---
+    {
+        let ds_keys = state.deepseek_keys.read().await.clone();
+        let db = state.db.clone();
         let client = state.client.clone();
-        Some(
-            tokio::spawn(async move { crate::quota::deepseek::fetch(&client, &key).await })
-                .await
-                .unwrap_or_else(|e| {
-                    Err(AgentSenseError::Http(format!(
-                        "DeepSeek task panicked: {e}"
-                    )))
-                }),
-        )
-    } else {
-        None
-    };
+        let mut handles = Vec::new();
+        for (key, label) in ds_keys {
+            let client = client.clone();
+            let label_str = label.clone();
+            handles.push(tokio::spawn(async move {
+                let result = crate::quota::deepseek::fetch(&client, &key).await;
+                (label_str, result)
+            }));
+        }
+        let db_lock = db.lock().await;
+        for h in handles {
+            match h.await {
+                Ok((label, Ok(snap))) => {
+                    let l = label.as_deref().unwrap_or("");
+                    if let Err(e) = db_lock.insert_deepseek(&snap, l) {
+                        tracing::warn!(provider = "deepseek", label = l, error = %e, "insert failed");
+                    }
+                }
+                Ok((label, Err(e))) => {
+                    let l = label.as_deref().unwrap_or("");
+                    tracing::warn!(provider = "deepseek", label = l, error = %e, "fetch failed");
+                }
+                Err(e) => {
+                    tracing::warn!(provider = "deepseek", error = %e, "task panicked");
+                }
+            }
+        }
+    }
 
-    let zai = if let Some(token) = zai_tok {
+    // --- Z.AI: fetch all configured accounts in parallel ---
+    {
+        let zai_keys = state.zai_tokens.read().await.clone();
+        let db = state.db.clone();
         let client = state.client.clone();
-        Some(
-            tokio::spawn(async move { crate::quota::zai::fetch(&client, &token).await })
-                .await
-                .unwrap_or_else(|e| Err(AgentSenseError::Http(format!("Z.AI task panicked: {e}")))),
-        )
-    } else {
-        None
-    };
+        let mut handles = Vec::new();
+        for (token, label) in zai_keys {
+            let client = client.clone();
+            let label_str = label.clone();
+            handles.push(tokio::spawn(async move {
+                let result = crate::quota::zai::fetch(&client, &token).await;
+                (label_str, result)
+            }));
+        }
+        let db_lock = db.lock().await;
+        for h in handles {
+            match h.await {
+                Ok((label, Ok(snap))) => {
+                    let l = label.as_deref().unwrap_or("");
+                    if let Err(e) = db_lock.insert_zai(&snap, l) {
+                        tracing::warn!(provider = "zai", label = l, error = %e, "insert failed");
+                    }
+                }
+                Ok((label, Err(e))) => {
+                    let l = label.as_deref().unwrap_or("");
+                    tracing::warn!(provider = "zai", label = l, error = %e, "fetch failed");
+                }
+                Err(e) => {
+                    tracing::warn!(provider = "zai", error = %e, "task panicked");
+                }
+            }
+        }
+    }
 
+    // --- MiMo: fetch all configured accounts in parallel ---
+    {
+        let mimo_keys = state.mimo_cookies.read().await.clone();
+        let db = state.db.clone();
+        let client = state.client.clone();
+        let mut handles = Vec::new();
+        for (cookie, label) in mimo_keys {
+            let client = client.clone();
+            let label_str = label.clone();
+            handles.push(tokio::spawn(async move {
+                let result = crate::quota::mimo::fetch(&client, &cookie).await;
+                (label_str, result)
+            }));
+        }
+        let db_lock = db.lock().await;
+        for h in handles {
+            match h.await {
+                Ok((label, Ok(snap))) => {
+                    let l = label.as_deref().unwrap_or("");
+                    if let Err(e) = db_lock.insert_mimo(&snap, l) {
+                        tracing::warn!(provider = "mimo", label = l, error = %e, "insert failed");
+                    }
+                }
+                Ok((label, Err(e))) => {
+                    let l = label.as_deref().unwrap_or("");
+                    tracing::warn!(provider = "mimo", label = l, error = %e, "fetch failed");
+                }
+                Err(e) => {
+                    tracing::warn!(provider = "mimo", error = %e, "task panicked");
+                }
+            }
+        }
+    }
+
+    // --- DeepSeek Platform: fetch all configured accounts in parallel ---
+    {
+        let dsp_creds = state.deepseek_platform_creds.read().await.clone();
+        let db = state.db.clone();
+        let client = state.client.clone();
+        let mut handles = Vec::new();
+        for ((token, cookies), label) in dsp_creds {
+            let client = client.clone();
+            let label_str = label.clone();
+            handles.push(tokio::spawn(async move {
+                let result =
+                    crate::quota::deepseek_platform::fetch(&client, &token, &cookies).await;
+                (label_str, result)
+            }));
+        }
+        let db_lock = db.lock().await;
+        for h in handles {
+            match h.await {
+                Ok((label, Ok(snap))) => {
+                    let l = label.as_deref().unwrap_or("");
+                    if let Err(e) = db_lock.insert_deepseek_platform(&snap, l) {
+                        tracing::warn!(provider = "deepseek_platform", label = l, error = %e, "insert failed");
+                    }
+                }
+                Ok((label, Err(e))) => {
+                    let l = label.as_deref().unwrap_or("");
+                    tracing::warn!(provider = "deepseek_platform", label = l, error = %e, "fetch failed");
+                }
+                Err(e) => {
+                    tracing::warn!(provider = "deepseek_platform", error = %e, "task panicked");
+                }
+            }
+        }
+    }
+
+    // --- Claude: single instance, rate-limited ---
     let claude_path = state.claude_creds.read().await.clone();
-    let claude = if let Some(path) = claude_path {
+    if let Some(path) = claude_path {
         let now = chrono::Utc::now().timestamp();
         let elapsed = now - state.last_claude_poll.load(Ordering::Relaxed);
         if elapsed >= 300 {
+            let db = state.db.clone();
             let client = state.client.clone();
-            let result = Some(
-                tokio::spawn(async move {
-                    crate::quota::claude::fetch_with_creds(&client, &path).await
-                })
-                .await
-                .unwrap_or_else(|e| {
-                    Err(AgentSenseError::Http(format!("Claude task panicked: {e}")))
-                }),
-            );
-            state.last_claude_poll.store(now, Ordering::Relaxed);
-            result
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-
-    let mimo_cookie_val = state.mimo_cookie.read().await.clone();
-    let mimo = if let Some(cookie) = mimo_cookie_val {
-        let client = state.client.clone();
-        Some(
-            tokio::spawn(async move { crate::quota::mimo::fetch(&client, &cookie).await })
-                .await
-                .unwrap_or_else(|e| Err(AgentSenseError::Http(format!("MiMo task panicked: {e}")))),
-        )
-    } else {
-        None
-    };
-
-    let ds_platform_token = state.deepseek_platform_token.read().await.clone();
-    let ds_platform_cookies = state.deepseek_platform_cookies.read().await.clone();
-    let ds_platform = if let (Some(token), Some(cookies)) = (ds_platform_token, ds_platform_cookies)
-    {
-        let client = state.client.clone();
-        Some(
-            tokio::spawn(async move {
-                crate::quota::deepseek_platform::fetch(&client, &token, &cookies).await
+            let result = tokio::spawn(async move {
+                crate::quota::claude::fetch_with_creds(&client, &path).await
             })
             .await
             .unwrap_or_else(|e| {
-                Err(AgentSenseError::Http(format!(
-                    "DeepSeek Platform task panicked: {e}"
-                )))
-            }),
-        )
-    } else {
-        None
-    };
-
-    // Persist each provider. Log fetch AND insert errors instead of swallowing them —
-    // a silent insert failure (e.g. a schema-migration gap) otherwise just shows as a
-    // perpetual "waiting" status with no clue why.
-    let db = state.db.lock().await;
-    match &mmx {
-        Some(Ok(snap)) => {
-            if let Err(e) = db.insert_minimax(snap, "") {
-                tracing::warn!(provider = "minimax", error = %e, "insert failed");
+                Err(AgentSenseError::Http(format!("Claude task panicked: {e}")))
+            });
+            match result {
+                Ok(snap) => {
+                    let db_lock = db.lock().await;
+                    if let Err(e) = db_lock.insert_claude(&snap, "") {
+                        tracing::warn!(provider = "claude", error = %e, "insert failed");
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(provider = "claude", error = %e, "fetch failed");
+                }
             }
+            state.last_claude_poll.store(now, Ordering::Relaxed);
         }
-        Some(Err(e)) => tracing::warn!(provider = "minimax", error = %e, "fetch failed"),
-        None => {}
     }
-    match &ds {
-        Some(Ok(snap)) => {
-            if let Err(e) = db.insert_deepseek(snap, "") {
-                tracing::warn!(provider = "deepseek", error = %e, "insert failed");
-            }
-        }
-        Some(Err(e)) => tracing::warn!(provider = "deepseek", error = %e, "fetch failed"),
-        None => {}
-    }
-    match &zai {
-        Some(Ok(snap)) => {
-            if let Err(e) = db.insert_zai(snap, "") {
-                tracing::warn!(provider = "zai", error = %e, "insert failed");
-            }
-        }
-        Some(Err(e)) => tracing::warn!(provider = "zai", error = %e, "fetch failed"),
-        None => {}
-    }
-    match &claude {
-        Some(Ok(snap)) => {
-            if let Err(e) = db.insert_claude(snap, "") {
-                tracing::warn!(provider = "claude", error = %e, "insert failed");
-            }
-        }
-        Some(Err(e)) => tracing::warn!(provider = "claude", error = %e, "fetch failed"),
-        None => {}
-    }
-    match &mimo {
-        Some(Ok(snap)) => {
-            if let Err(e) = db.insert_mimo(snap, "") {
-                tracing::warn!(provider = "mimo", error = %e, "insert failed");
-            }
-        }
-        Some(Err(e)) => tracing::warn!(provider = "mimo", error = %e, "fetch failed"),
-        None => {}
-    }
-    match &ds_platform {
-        Some(Ok(snap)) => {
-            if let Err(e) = db.insert_deepseek_platform(snap, "") {
-                tracing::warn!(provider = "deepseek_platform", error = %e, "insert failed");
-            }
-        }
-        Some(Err(e)) => tracing::warn!(provider = "deepseek_platform", error = %e, "fetch failed"),
-        None => {}
-    }
-    drop(db);
 
     let next = chrono::Utc::now().timestamp_millis() + (state.poll_interval_secs as i64) * 1000;
     state.next_poll.store(next, Ordering::Relaxed);
@@ -424,7 +469,7 @@ async fn poll_loop(state: Arc<AppState>) {
     }
 }
 
-/// High-water cap for the in-memory sample buffer (≈1h at 300 ms intervals).
+/// High-water cap for the in-memory sample buffer (approx 1h at 300 ms intervals).
 /// Fix B: oldest samples are dropped if the buffer exceeds this limit.
 #[cfg(feature = "psu")]
 const MAX_SAMPLE_BUFFER: usize = 1200;

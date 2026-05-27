@@ -18,111 +18,159 @@ pub async fn serve_index() -> Html<&'static str> {
 pub async fn api_all(State(state): State<Arc<AppState>>) -> axum::Json<serde_json::Value> {
     let db = state.db.lock().await;
 
-    let (mmx_ts, mmx_models) = db.latest_minimax_with_ts("").unwrap_or((0, vec![]));
-    let mmx_status = provider_status(
-        state.minimax_key.read().await.is_some(),
-        if mmx_ts > 0 { Some(mmx_ts) } else { None },
-    );
+    // --- MiniMax: per-account array ---
+    let mmx_keys = state.minimax_keys.read().await;
+    let mut minimax_accounts = Vec::new();
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    for (_key, label) in mmx_keys.iter() {
+        let label_str = label.as_deref().unwrap_or("");
+        let (mmx_ts, mmx_models) = db.latest_minimax_with_ts(label_str).unwrap_or((0, vec![]));
+        let mmx_status = provider_status(true, if mmx_ts > 0 { Some(mmx_ts) } else { None });
 
-    let ds_balance = db.latest_deepseek("").unwrap_or_default();
-    let ds_status = provider_status(
-        state.deepseek_key.read().await.is_some(),
-        ds_balance.as_ref().map(|s| s.timestamp),
-    );
+        let mut mmx_models_json = Vec::new();
+        for m in &mmx_models {
+            let interval_remains = m
+                .interval_end
+                .map(|t| (t - now_ms).max(0))
+                .filter(|t| *t > 0)
+                .unwrap_or_else(|| db.interval_reset_info(&m.name).map(|(_, r)| r).unwrap_or(0));
+            let weekly_remains = m
+                .weekly_end
+                .map(|t| (t - now_ms).max(0))
+                .filter(|t| *t > 0)
+                .unwrap_or_else(|| {
+                    db.weekly_model_reset_info(&m.name)
+                        .map(|(_, r)| r)
+                        .unwrap_or(0)
+                });
+            mmx_models_json.push(serde_json::json!({
+                "model_name": m.name,
+                "current_interval_usage_count": m.interval_usage,
+                "current_interval_total_count": m.interval_total,
+                "current_weekly_usage_count": m.weekly_usage,
+                "current_weekly_total_count": m.weekly_total,
+                "remains_time": interval_remains,
+                "weekly_remains_time": weekly_remains,
+            }));
+        }
+        minimax_accounts.push(serde_json::json!({
+            "label": label,
+            "models": mmx_models_json,
+            "status": mmx_status,
+        }));
+    }
 
-    let zai_quota = db.latest_zai("").unwrap_or_default();
-    let zai_status = provider_status(
-        state.zai_token.read().await.is_some(),
-        zai_quota.as_ref().map(|s| s.timestamp),
-    );
+    // --- DeepSeek: per-account array ---
+    let ds_keys = state.deepseek_keys.read().await;
+    let mut deepseek_accounts = Vec::new();
+    for (_key, label) in ds_keys.iter() {
+        let label_str = label.as_deref().unwrap_or("");
+        let ds_balance = db.latest_deepseek(label_str).unwrap_or_default();
+        let ds_status = provider_status(
+            true,
+            ds_balance.as_ref().map(|s| s.timestamp),
+        );
+        deepseek_accounts.push(serde_json::json!({
+            "label": label,
+            "balance": ds_balance,
+            "status": ds_status,
+        }));
+    }
 
+    // --- Z.AI: per-account array ---
+    let zai_keys = state.zai_tokens.read().await;
+    let mut zai_accounts = Vec::new();
+    for (_key, label) in zai_keys.iter() {
+        let label_str = label.as_deref().unwrap_or("");
+        let zai_quota = db.latest_zai(label_str).unwrap_or_default();
+        let zai_status = provider_status(
+            true,
+            zai_quota.as_ref().map(|s| s.timestamp),
+        );
+        zai_accounts.push(serde_json::json!({
+            "label": label,
+            "quota": zai_quota,
+            "status": zai_status,
+        }));
+    }
+
+    // --- MiMo: per-account array ---
+    let mimo_keys = state.mimo_cookies.read().await;
+    let mut mimo_accounts = Vec::new();
+    for (_key, label) in mimo_keys.iter() {
+        let label_str = label.as_deref().unwrap_or("");
+        let mimo_quota = db.latest_mimo(label_str).unwrap_or_default();
+        let mimo_status = provider_status(
+            true,
+            mimo_quota.as_ref().map(|s| s.timestamp),
+        );
+        mimo_accounts.push(serde_json::json!({
+            "label": label,
+            "quota": mimo_quota,
+            "status": mimo_status,
+        }));
+    }
+
+    // --- Claude: single instance (not an array) ---
     let claude_quota = db.latest_claude("").unwrap_or_default();
     let claude_status = provider_status(
         state.claude_creds.read().await.is_some(),
         claude_quota.as_ref().map(|s| s.timestamp),
     );
 
-    let mimo_quota = db.latest_mimo("").unwrap_or_default();
-    let mimo_status = provider_status(
-        state.mimo_cookie.read().await.is_some(),
-        mimo_quota.as_ref().map(|s| s.timestamp),
-    );
-
-    let mut mmx_models_json = Vec::new();
-    let now_ms = chrono::Utc::now().timestamp_millis();
-    for m in &mmx_models {
-        let interval_remains = m
-            .interval_end
-            .map(|t| (t - now_ms).max(0))
-            .filter(|t| *t > 0)
-            .unwrap_or_else(|| db.interval_reset_info(&m.name).map(|(_, r)| r).unwrap_or(0));
-        let weekly_remains = m
-            .weekly_end
-            .map(|t| (t - now_ms).max(0))
-            .filter(|t| *t > 0)
-            .unwrap_or_else(|| {
-                db.weekly_model_reset_info(&m.name)
-                    .map(|(_, r)| r)
-                    .unwrap_or(0)
-            });
-        mmx_models_json.push(serde_json::json!({
-            "model_name": m.name,
-            "current_interval_usage_count": m.interval_usage,
-            "current_interval_total_count": m.interval_total,
-            "current_weekly_usage_count": m.weekly_usage,
-            "current_weekly_total_count": m.weekly_total,
-            "remains_time": interval_remains,
-            "weekly_remains_time": weekly_remains,
-        }));
-    }
-
-    // Reuse the db guard acquired at the top of this fn — locking state.db a second
-    // time here while the first guard is still alive deadlocks the task.
-    let ds_platform_today = db.deepseek_platform_today().unwrap_or_default();
-
-    let ds_platform_configured = state.deepseek_platform_token.read().await.is_some();
+    // --- DeepSeek Platform: aggregate today data + configured accounts ---
+    let dsp_creds = state.deepseek_platform_creds.read().await;
+    let dsp_today = db.deepseek_platform_today().unwrap_or_default();
+    let dsp_configured = !dsp_creds.is_empty();
+    let dsp_labels: Vec<Option<String>> = dsp_creds.iter().map(|(_, label)| label.clone()).collect();
 
     axum::Json(serde_json::json!({
-        "minimax": { "models": mmx_models_json, "status": mmx_status },
-        "deepseek": { "balance": ds_balance, "status": ds_status },
-        "deepseek_platform": { "today": ds_platform_today, "configured": ds_platform_configured },
-        "zai": { "quota": zai_quota, "status": zai_status },
+        "minimax": minimax_accounts,
+        "deepseek": deepseek_accounts,
+        "deepseek_platform": { "today": dsp_today, "configured": dsp_configured, "labels": dsp_labels },
+        "zai": zai_accounts,
         "claude": { "quota": claude_quota, "status": claude_status },
-        "mimo": { "quota": mimo_quota, "status": mimo_status },
+        "mimo": mimo_accounts,
         "_nextPoll": state.next_poll.load(std::sync::atomic::Ordering::Relaxed),
     }))
 }
 
 pub async fn api_quota(State(state): State<Arc<AppState>>) -> axum::Json<serde_json::Value> {
     let db = state.db.lock().await;
-    let (_, models) = db.latest_minimax_with_ts("").unwrap_or((0, vec![]));
 
+    // Aggregate models across all MiniMax accounts
+    let mmx_keys = state.minimax_keys.read().await;
     let mut remains = Vec::new();
     let now_ms = chrono::Utc::now().timestamp_millis();
-    for m in &models {
-        let interval_remains = m
-            .interval_end
-            .map(|t| (t - now_ms).max(0))
-            .filter(|t| *t > 0)
-            .unwrap_or_else(|| db.interval_reset_info(&m.name).map(|(_, r)| r).unwrap_or(0));
-        let weekly_remains = m
-            .weekly_end
-            .map(|t| (t - now_ms).max(0))
-            .filter(|t| *t > 0)
-            .unwrap_or_else(|| {
-                db.weekly_model_reset_info(&m.name)
-                    .map(|(_, r)| r)
-                    .unwrap_or(0)
-            });
-        remains.push(serde_json::json!({
-            "model_name": m.name,
-            "current_interval_usage_count": m.interval_usage,
-            "current_interval_total_count": m.interval_total,
-            "current_weekly_usage_count": m.weekly_usage,
-            "current_weekly_total_count": m.weekly_total,
-            "remains_time": interval_remains,
-            "weekly_remains_time": weekly_remains,
-        }));
+    for (_key, label) in mmx_keys.iter() {
+        let label_str = label.as_deref().unwrap_or("");
+        let (_, models) = db.latest_minimax_with_ts(label_str).unwrap_or((0, vec![]));
+        for m in &models {
+            let interval_remains = m
+                .interval_end
+                .map(|t| (t - now_ms).max(0))
+                .filter(|t| *t > 0)
+                .unwrap_or_else(|| db.interval_reset_info(&m.name).map(|(_, r)| r).unwrap_or(0));
+            let weekly_remains = m
+                .weekly_end
+                .map(|t| (t - now_ms).max(0))
+                .filter(|t| *t > 0)
+                .unwrap_or_else(|| {
+                    db.weekly_model_reset_info(&m.name)
+                        .map(|(_, r)| r)
+                        .unwrap_or(0)
+                });
+            remains.push(serde_json::json!({
+                "model_name": m.name,
+                "account_label": label,
+                "current_interval_usage_count": m.interval_usage,
+                "current_interval_total_count": m.interval_total,
+                "current_weekly_usage_count": m.weekly_usage,
+                "current_weekly_total_count": m.weekly_total,
+                "remains_time": interval_remains,
+                "weekly_remains_time": weekly_remains,
+            }));
+        }
     }
     drop(db);
 
@@ -169,17 +217,26 @@ pub async fn api_consumption(State(state): State<Arc<AppState>>) -> axum::Json<s
 
 pub async fn api_deepseek(State(state): State<Arc<AppState>>) -> axum::Json<serde_json::Value> {
     let db = state.db.lock().await;
-    let balance = db.latest_deepseek("").unwrap_or_default();
+    let ds_keys = state.deepseek_keys.read().await;
+
+    let mut accounts = Vec::new();
+    for (_key, label) in ds_keys.iter() {
+        let label_str = label.as_deref().unwrap_or("");
+        let balance = db.latest_deepseek(label_str).unwrap_or_default();
+        let status = provider_status(
+            true,
+            balance.as_ref().map(|s| s.timestamp),
+        );
+        accounts.push(serde_json::json!({
+            "label": label,
+            "balance": balance,
+            "status": status,
+        }));
+    }
     drop(db);
 
-    let status = provider_status(
-        state.deepseek_key.read().await.is_some(),
-        balance.as_ref().map(|s| s.timestamp),
-    );
-
     axum::Json(serde_json::json!({
-        "balance": balance,
-        "status": status,
+        "accounts": accounts,
     }))
 }
 
@@ -214,23 +271,32 @@ pub async fn api_deepseek_platform_usage(
     drop(db);
     axum::Json(serde_json::json!({
         "usage": usage,
-        "configured": state.deepseek_platform_token.read().await.is_some(),
+        "configured": !state.deepseek_platform_creds.read().await.is_empty(),
     }))
 }
 
 pub async fn api_zai(State(state): State<Arc<AppState>>) -> axum::Json<serde_json::Value> {
     let db = state.db.lock().await;
-    let quota = db.latest_zai("").unwrap_or_default();
+    let zai_keys = state.zai_tokens.read().await;
+
+    let mut accounts = Vec::new();
+    for (_key, label) in zai_keys.iter() {
+        let label_str = label.as_deref().unwrap_or("");
+        let quota = db.latest_zai(label_str).unwrap_or_default();
+        let status = provider_status(
+            true,
+            quota.as_ref().map(|s| s.timestamp),
+        );
+        accounts.push(serde_json::json!({
+            "label": label,
+            "quota": quota,
+            "status": status,
+        }));
+    }
     drop(db);
 
-    let status = provider_status(
-        state.zai_token.read().await.is_some(),
-        quota.as_ref().map(|s| s.timestamp),
-    );
-
     axum::Json(serde_json::json!({
-        "quota": quota,
-        "status": status,
+        "accounts": accounts,
     }))
 }
 
@@ -246,8 +312,8 @@ pub async fn api_zai_history(
 }
 
 pub async fn api_zai_models(State(state): State<Arc<AppState>>) -> axum::Json<serde_json::Value> {
-    let token = state.zai_token.read().await;
-    let Some(token) = token.clone() else {
+    let tokens = state.zai_tokens.read().await;
+    let Some((token, _label)) = tokens.first().cloned() else {
         return axum::Json(serde_json::json!({"error": "no_token"}));
     };
 
@@ -286,17 +352,26 @@ pub async fn api_claude_history(
 
 pub async fn api_mimo(State(state): State<Arc<AppState>>) -> axum::Json<serde_json::Value> {
     let db = state.db.lock().await;
-    let quota = db.latest_mimo("").unwrap_or_default();
+    let mimo_keys = state.mimo_cookies.read().await;
+
+    let mut accounts = Vec::new();
+    for (_key, label) in mimo_keys.iter() {
+        let label_str = label.as_deref().unwrap_or("");
+        let quota = db.latest_mimo(label_str).unwrap_or_default();
+        let status = provider_status(
+            true,
+            quota.as_ref().map(|s| s.timestamp),
+        );
+        accounts.push(serde_json::json!({
+            "label": label,
+            "quota": quota,
+            "status": status,
+        }));
+    }
     drop(db);
 
-    let status = provider_status(
-        state.mimo_cookie.read().await.is_some(),
-        quota.as_ref().map(|s| s.timestamp),
-    );
-
     axum::Json(serde_json::json!({
-        "quota": quota,
-        "status": status,
+        "accounts": accounts,
     }))
 }
 
@@ -312,36 +387,80 @@ pub async fn api_mimo_history(
 }
 
 pub async fn api_config_get(State(state): State<Arc<AppState>>) -> axum::Json<serde_json::Value> {
-    let mask = |key: &Option<String>| -> String {
-        match key {
-            Some(k) if k.len() > 4 => {
-                format!("\u{2022}\u{2022}\u{2022}\u{2022}{}", &k[k.len() - 4..])
-            }
-            Some(k) => k.clone(),
-            None => String::new(),
+    let mask = |key: &str| -> String {
+        if key.len() > 4 {
+            format!("\u{2022}\u{2022}\u{2022}\u{2022}{}", &key[key.len() - 4..])
+        } else {
+            key.to_string()
         }
     };
 
-    let mmx = state.minimax_key.read().await;
-    let ds = state.deepseek_key.read().await;
-    let zai = state.zai_token.read().await;
-    let mimo = state.mimo_cookie.read().await;
+    let mmx = state.minimax_keys.read().await;
+    let ds = state.deepseek_keys.read().await;
+    let zai = state.zai_tokens.read().await;
+    let mimo = state.mimo_cookies.read().await;
     let claude = state.claude_creds.read().await;
-    let dsp_token = state.deepseek_platform_token.read().await;
-    let dsp_cookies = state.deepseek_platform_cookies.read().await;
+    let dsp = state.deepseek_platform_creds.read().await;
+
+    // Return arrays of masked keys per provider for multi-account visibility
+    let mmx_masked: Vec<serde_json::Value> = mmx
+        .iter()
+        .map(|(k, label)| {
+            serde_json::json!({
+                "masked_key": mask(k),
+                "label": label,
+            })
+        })
+        .collect();
+    let ds_masked: Vec<serde_json::Value> = ds
+        .iter()
+        .map(|(k, label)| {
+            serde_json::json!({
+                "masked_key": mask(k),
+                "label": label,
+            })
+        })
+        .collect();
+    let zai_masked: Vec<serde_json::Value> = zai
+        .iter()
+        .map(|(k, label)| {
+            serde_json::json!({
+                "masked_key": mask(k),
+                "label": label,
+            })
+        })
+        .collect();
+    let mimo_masked: Vec<serde_json::Value> = mimo
+        .iter()
+        .map(|(k, label)| {
+            serde_json::json!({
+                "masked_key": mask(k),
+                "label": label,
+            })
+        })
+        .collect();
+    let dsp_masked: Vec<serde_json::Value> = dsp
+        .iter()
+        .map(|((t, c), label)| {
+            serde_json::json!({
+                "masked_token": mask(t),
+                "masked_cookies": mask(c),
+                "label": label,
+            })
+        })
+        .collect();
 
     axum::Json(serde_json::json!({
-        "minimax_api_key": mask(&mmx),
-        "deepseek_api_key": mask(&ds),
-        "zai_auth_token": mask(&zai),
-        "mimo_cookie": mask(&mimo),
-        "deepseek_platform_token": mask(&dsp_token),
-        "deepseek_platform_cookies": mask(&dsp_cookies),
-        "minimax_configured": mmx.is_some(),
-        "deepseek_configured": ds.is_some(),
-        "zai_configured": zai.is_some(),
-        "mimo_configured": mimo.is_some(),
-        "deepseek_platform_configured": dsp_token.is_some() && dsp_cookies.is_some(),
+        "minimax_accounts": mmx_masked,
+        "deepseek_accounts": ds_masked,
+        "zai_accounts": zai_masked,
+        "mimo_accounts": mimo_masked,
+        "deepseek_platform_accounts": dsp_masked,
+        "minimax_configured": !mmx.is_empty(),
+        "deepseek_configured": !ds.is_empty(),
+        "zai_configured": !zai.is_empty(),
+        "mimo_configured": !mimo.is_empty(),
+        "deepseek_platform_configured": !dsp.is_empty(),
         "claude_configured": claude.is_some(),
         "claude_creds_path": claude.as_ref().map(|p| p.display().to_string()),
     }))
@@ -363,72 +482,88 @@ pub async fn api_config_put(
 ) -> axum::Json<serde_json::Value> {
     let masked_prefix = "\u{2022}\u{2022}\u{2022}\u{2022}";
 
+    // For backward compat: accept single key and store as single-element Vec
     if let Some(ref key) = body.minimax_api_key {
         if !key.starts_with(masked_prefix) && !key.is_empty() {
-            *state.minimax_key.write().await = Some(key.clone());
+            *state.minimax_keys.write().await = vec![(key.clone(), None)];
         }
     }
     if let Some(ref key) = body.deepseek_api_key {
         if !key.starts_with(masked_prefix) && !key.is_empty() {
-            *state.deepseek_key.write().await = Some(key.clone());
+            *state.deepseek_keys.write().await = vec![(key.clone(), None)];
         }
     }
     if let Some(ref token) = body.zai_auth_token {
         if !token.starts_with(masked_prefix) && !token.is_empty() {
-            *state.zai_token.write().await = Some(token.clone());
+            *state.zai_tokens.write().await = vec![(token.clone(), None)];
         }
     }
     if let Some(ref cookie) = body.mimo_cookie {
         if !cookie.starts_with(masked_prefix) && !cookie.is_empty() {
-            *state.mimo_cookie.write().await = Some(cookie.clone());
+            *state.mimo_cookies.write().await = vec![(cookie.clone(), None)];
         }
     }
     if let Some(ref token) = body.deepseek_platform_token {
         if !token.starts_with(masked_prefix) && !token.is_empty() {
-            *state.deepseek_platform_token.write().await = Some(token.clone());
-        }
-    }
-    if let Some(ref cookies) = body.deepseek_platform_cookies {
-        if !cookies.starts_with(masked_prefix) && !cookies.is_empty() {
-            *state.deepseek_platform_cookies.write().await = Some(cookies.clone());
+            let cookies_val = body
+                .deepseek_platform_cookies
+                .as_deref()
+                .unwrap_or("")
+                .to_string();
+            *state.deepseek_platform_creds.write().await =
+                vec![((token.clone(), cookies_val), None)];
         }
     }
 
-    let mmx = state.minimax_key.read().await;
-    let ds = state.deepseek_key.read().await;
-    let zai = state.zai_token.read().await;
-    let mimo = state.mimo_cookie.read().await;
-    let dsp_token = state.deepseek_platform_token.read().await;
-    let dsp_cookies = state.deepseek_platform_cookies.read().await;
+    let mmx = state.minimax_keys.read().await;
+    let ds = state.deepseek_keys.read().await;
+    let zai = state.zai_tokens.read().await;
+    let mimo = state.mimo_cookies.read().await;
+    let dsp = state.deepseek_platform_creds.read().await;
 
     let mut config = crate::AppConfig::load(&state.config_path).unwrap_or_default();
 
-    config.quota.minimax = vec![crate::config::KeyConfig {
-        api_key: mmx.clone(),
-        api_key_env: None,
-        label: None,
-    }];
-    config.quota.deepseek = vec![crate::config::KeyConfig {
-        api_key: ds.clone(),
-        api_key_env: None,
-        label: None,
-    }];
-    config.quota.zai = vec![crate::config::ZaiKeyConfig {
-        auth_token: zai.clone(),
-        auth_token_env: None,
-        label: None,
-    }];
-    config.quota.mimo = vec![crate::config::MimoConfig {
-        cookie: mimo.clone(),
-        label: None,
-    }];
-    config.quota.deepseek_platform = vec![crate::config::DeepSeekPlatformConfig {
-        bearer_token: dsp_token.clone(),
-        bearer_token_env: None,
-        cookies: dsp_cookies.clone(),
-        cookies_env: None,
-        label: None,
-    }];
+    config.quota.minimax = mmx
+        .iter()
+        .map(|(k, label)| crate::config::KeyConfig {
+            api_key: Some(k.clone()),
+            api_key_env: None,
+            label: label.clone(),
+        })
+        .collect();
+    config.quota.deepseek = ds
+        .iter()
+        .map(|(k, label)| crate::config::KeyConfig {
+            api_key: Some(k.clone()),
+            api_key_env: None,
+            label: label.clone(),
+        })
+        .collect();
+    config.quota.zai = zai
+        .iter()
+        .map(|(k, label)| crate::config::ZaiKeyConfig {
+            auth_token: Some(k.clone()),
+            auth_token_env: None,
+            label: label.clone(),
+        })
+        .collect();
+    config.quota.mimo = mimo
+        .iter()
+        .map(|(k, label)| crate::config::MimoConfig {
+            cookie: Some(k.clone()),
+            label: label.clone(),
+        })
+        .collect();
+    config.quota.deepseek_platform = dsp
+        .iter()
+        .map(|((t, c), label)| crate::config::DeepSeekPlatformConfig {
+            bearer_token: Some(t.clone()),
+            bearer_token_env: None,
+            cookies: Some(c.clone()),
+            cookies_env: None,
+            label: label.clone(),
+        })
+        .collect();
 
     let toml_str = toml::to_string_pretty(&config).unwrap_or_default();
     let _ = std::fs::write(&state.config_path, toml_str);
@@ -617,7 +752,7 @@ fn err_resp(id: &Option<serde_json::Value>, msg: &str) -> serde_json::Value {
     serde_json::json!({"jsonrpc":"2.0","id":id,"error":{"code":-32000,"message":msg}})
 }
 
-// ── Tool implementations ────────────────────────────────────────────
+// -- Tool implementations --
 
 fn get_str(args: &serde_json::Value, k: &str) -> Result<String, String> {
     args.get(k)
