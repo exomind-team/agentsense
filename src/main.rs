@@ -51,99 +51,127 @@ fn progress_bar(pct: i64, width: usize) -> String {
 fn display_results(result: &agentsense::quota::FetchResult) {
     println!();
 
-    // MiniMax
-    match &result.minimax {
-        Some(Ok(snap)) => {
-            let ts = format_ts(snap.timestamp);
-            println!("  \x1b[32m\u{25cf}\x1b[0m MiniMax \x1b[2m({ts})\x1b[0m");
-            let mut table = Table::new();
-            table
-                .load_preset(UTF8_FULL)
-                .set_content_arrangement(ContentArrangement::Dynamic)
-                .set_header(vec![
-                    Cell::new("Model").add_attribute(Attribute::Bold),
-                    Cell::new("5h Remaining").add_attribute(Attribute::Bold),
-                    Cell::new("Weekly Remaining").add_attribute(Attribute::Bold),
-                ]);
-            for m in &snap.models {
-                let interval_remaining = m.interval_total - m.interval_usage;
-                let weekly_remaining = m.weekly_total - m.weekly_usage;
-                table.add_row(vec![
-                    m.name.clone(),
-                    format!("{interval_remaining:>8} / {}", m.interval_total),
-                    format!("{weekly_remaining:>8} / {}", m.weekly_total),
-                ]);
+    // MiniMax — multiple accounts
+    if result.minimax.is_empty() {
+        println!("  \x1b[2m\u{25cb}\x1b[0m MiniMax \u{2014} not configured");
+    } else {
+        for r in &result.minimax {
+            let label_tag = r
+                .label
+                .as_deref()
+                .map(|l| format!(" [{l}]"))
+                .unwrap_or_default();
+            match &r.result {
+                Ok(snap) => {
+                    let ts = format_ts(snap.timestamp);
+                    println!("  \x1b[32m\u{25cf}\x1b[0m MiniMax{label_tag} \x1b[2m({ts})\x1b[0m");
+                    let mut table = Table::new();
+                    table
+                        .load_preset(UTF8_FULL)
+                        .set_content_arrangement(ContentArrangement::Dynamic)
+                        .set_header(vec![
+                            Cell::new("Model").add_attribute(Attribute::Bold),
+                            Cell::new("5h Remaining").add_attribute(Attribute::Bold),
+                            Cell::new("Weekly Remaining").add_attribute(Attribute::Bold),
+                        ]);
+                    for m in &snap.models {
+                        let interval_remaining = m.interval_total - m.interval_usage;
+                        let weekly_remaining = m.weekly_total - m.weekly_usage;
+                        table.add_row(vec![
+                            m.name.clone(),
+                            format!("{interval_remaining:>8} / {}", m.interval_total),
+                            format!("{weekly_remaining:>8} / {}", m.weekly_total),
+                        ]);
+                    }
+                    println!("{table}");
+                }
+                Err(e) => {
+                    println!("  \x1b[31m\u{25cf}\x1b[0m MiniMax{label_tag} \x1b[31m\u{2717}\x1b[0m {e}");
+                }
             }
-            println!("{table}");
-        }
-        Some(Err(e)) => {
-            println!("  \x1b[31m\u{25cf}\x1b[0m MiniMax \x1b[31m\u{2717}\x1b[0m {e}");
-        }
-        None => {
-            println!("  \x1b[2m\u{25cb}\x1b[0m MiniMax \u{2014} not configured");
         }
     }
 
     println!();
 
-    // DeepSeek
-    match &result.deepseek {
-        Some(Ok(snap)) => {
-            let ts = format_ts(snap.timestamp);
-            println!("  \x1b[32m\u{25cf}\x1b[0m DeepSeek \x1b[2m({ts})\x1b[0m");
-            println!(
-                "    Balance:  \u{00a5}{:.2} CNY / ${:.2} USD",
-                snap.total_balance_cny, snap.total_balance_usd
-            );
-            println!(
-                "    Granted:  \u{00a5}{:.2}   Topped up: \u{00a5}{:.2}",
-                snap.granted_cny, snap.topped_up_cny
-            );
-        }
-        Some(Err(e)) => {
-            println!("  \x1b[31m\u{25cf}\x1b[0m DeepSeek \x1b[31m\u{2717}\x1b[0m {e}");
-        }
-        None => {
-            println!("  \x1b[2m\u{25cb}\x1b[0m DeepSeek \u{2014} not configured");
-        }
-    }
-
-    println!();
-
-    // Z.AI
-    match &result.zai {
-        Some(Ok(snap)) => {
-            let ts = format_ts(snap.timestamp);
-            println!("  \x1b[32m\u{25cf}\x1b[0m Z.AI (GLM) \x1b[2m({ts})\x1b[0m");
-            println!(
-                "    Token 5h:    {:>5}% {}",
-                snap.token_5h_pct,
-                progress_bar(snap.token_5h_pct, 20)
-            );
-            println!(
-                "    Token Week:  {:>5}% {}",
-                snap.token_week_pct,
-                progress_bar(snap.token_week_pct, 20)
-            );
-            println!(
-                "    MCP Month:   {:>5}% {} ({}/{})",
-                snap.mcp_month_pct,
-                progress_bar(snap.mcp_month_pct, 20),
-                snap.mcp_used,
-                snap.mcp_total
-            );
-        }
-        Some(Err(e)) => {
-            println!("  \x1b[31m\u{25cf}\x1b[0m Z.AI (GLM) \x1b[31m\u{2717}\x1b[0m {e}");
-        }
-        None => {
-            println!("  \x1b[2m\u{25cb}\x1b[0m Z.AI (GLM) \u{2014} not configured");
+    // DeepSeek — multiple accounts
+    if result.deepseek.is_empty() {
+        println!("  \x1b[2m\u{25cb}\x1b[0m DeepSeek \u{2014} not configured");
+    } else {
+        for r in &result.deepseek {
+            let label_tag = r
+                .label
+                .as_deref()
+                .map(|l| format!(" [{l}]"))
+                .unwrap_or_default();
+            match &r.result {
+                Ok(snap) => {
+                    let ts = format_ts(snap.timestamp);
+                    println!("  \x1b[32m\u{25cf}\x1b[0m DeepSeek{label_tag} \x1b[2m({ts})\x1b[0m");
+                    println!(
+                        "    Balance:  \u{00a5}{:.2} CNY / ${:.2} USD",
+                        snap.total_balance_cny, snap.total_balance_usd
+                    );
+                    println!(
+                        "    Granted:  \u{00a5}{:.2}   Topped up: \u{00a5}{:.2}",
+                        snap.granted_cny, snap.topped_up_cny
+                    );
+                }
+                Err(e) => {
+                    println!(
+                        "  \x1b[31m\u{25cf}\x1b[0m DeepSeek{label_tag} \x1b[31m\u{2717}\x1b[0m {e}"
+                    );
+                }
+            }
         }
     }
 
     println!();
 
-    // Claude (Anthropic OAuth subscription)
+    // Z.AI — multiple accounts
+    if result.zai.is_empty() {
+        println!("  \x1b[2m\u{25cb}\x1b[0m Z.AI (GLM) \u{2014} not configured");
+    } else {
+        for r in &result.zai {
+            let label_tag = r
+                .label
+                .as_deref()
+                .map(|l| format!(" [{l}]"))
+                .unwrap_or_default();
+            match &r.result {
+                Ok(snap) => {
+                    let ts = format_ts(snap.timestamp);
+                    println!("  \x1b[32m\u{25cf}\x1b[0m Z.AI (GLM){label_tag} \x1b[2m({ts})\x1b[0m");
+                    println!(
+                        "    Token 5h:    {:>5}% {}",
+                        snap.token_5h_pct,
+                        progress_bar(snap.token_5h_pct, 20)
+                    );
+                    println!(
+                        "    Token Week:  {:>5}% {}",
+                        snap.token_week_pct,
+                        progress_bar(snap.token_week_pct, 20)
+                    );
+                    println!(
+                        "    MCP Month:   {:>5}% {} ({}/{})",
+                        snap.mcp_month_pct,
+                        progress_bar(snap.mcp_month_pct, 20),
+                        snap.mcp_used,
+                        snap.mcp_total
+                    );
+                }
+                Err(e) => {
+                    println!(
+                        "  \x1b[31m\u{25cf}\x1b[0m Z.AI (GLM){label_tag} \x1b[31m\u{2717}\x1b[0m {e}"
+                    );
+                }
+            }
+        }
+    }
+
+    println!();
+
+    // Claude (Anthropic OAuth subscription) — single account
     match &result.claude {
         Some(Ok(snap)) => {
             let ts = format_ts(snap.timestamp);

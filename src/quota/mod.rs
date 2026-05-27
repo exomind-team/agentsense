@@ -13,25 +13,30 @@ use crate::error::AgentSenseError;
 
 use db::QuotaDb;
 
-pub struct QuotaOrchestrator {
-    client: reqwest::Client,
-    db: QuotaDb,
-    minimax_key: Option<String>,
-    deepseek_key: Option<String>,
-    zai_token: Option<String>,
-    claude_creds: Option<PathBuf>,
-    mimo_cookie: Option<String>,
-    deepseek_platform_creds: Option<(String, String)>,
+pub struct AccountResult<T> {
+    pub label: Option<String>,
+    pub result: Result<T, AgentSenseError>,
 }
 
 pub struct FetchResult {
-    pub minimax: Option<Result<minimax::MinimaxSnapshot, AgentSenseError>>,
-    pub deepseek: Option<Result<deepseek::DeepSeekSnapshot, AgentSenseError>>,
-    pub zai: Option<Result<zai::ZaiSnapshot, AgentSenseError>>,
+    pub minimax: Vec<AccountResult<minimax::MinimaxSnapshot>>,
+    pub deepseek: Vec<AccountResult<deepseek::DeepSeekSnapshot>>,
+    pub zai: Vec<AccountResult<zai::ZaiSnapshot>>,
     pub claude: Option<Result<claude::ClaudeSnapshot, AgentSenseError>>,
-    pub mimo: Option<Result<mimo::MimoSnapshot, AgentSenseError>>,
+    pub mimo: Vec<AccountResult<mimo::MimoSnapshot>>,
     pub deepseek_platform:
-        Option<Result<deepseek_platform::DeepSeekPlatformSnapshot, AgentSenseError>>,
+        Vec<AccountResult<deepseek_platform::DeepSeekPlatformSnapshot>>,
+}
+
+pub struct QuotaOrchestrator {
+    client: reqwest::Client,
+    db: QuotaDb,
+    deepseek: Vec<(String, Option<String>)>,
+    minimax: Vec<(String, Option<String>)>,
+    zai: Vec<(String, Option<String>)>,
+    mimo: Vec<(String, Option<String>)>,
+    deepseek_platform: Vec<((String, String), Option<String>)>,
+    claude_creds: Option<PathBuf>,
 }
 
 impl QuotaOrchestrator {
@@ -50,60 +55,103 @@ impl QuotaOrchestrator {
         Ok(Self {
             client,
             db,
-            minimax_key: config.minimax_keys().into_iter().next().map(|(k, _)| k),
-            deepseek_key: config.deepseek_keys().into_iter().next().map(|(k, _)| k),
-            zai_token: config.zai_tokens().into_iter().next().map(|(k, _)| k),
+            deepseek: config.deepseek_keys(),
+            minimax: config.minimax_keys(),
+            zai: config.zai_tokens(),
+            mimo: config.mimo_cookies(),
+            deepseek_platform: config.deepseek_platform_creds_list(),
             claude_creds: config.claude_creds_path(),
-            mimo_cookie: config.mimo_cookies().into_iter().next().map(|(k, _)| k),
-            deepseek_platform_creds: config.deepseek_platform_creds_list().into_iter().next().map(|((t, c), _)| (t, c)),
         })
     }
 
     pub async fn fetch_all(&self) -> FetchResult {
-        let mmx = if let Some(ref key) = self.minimax_key {
-            let key = key.clone();
-            let client = self.client.clone();
-            Some(
-                tokio::spawn(async move { minimax::fetch(&client, &key).await })
-                    .await
-                    .unwrap_or_else(|e| {
-                        Err(AgentSenseError::Http(format!("MiniMax task panicked: {e}")))
-                    }),
-            )
-        } else {
-            None
-        };
+        // MiniMax — parallel per account
+        let mmx_handles: Vec<_> = self
+            .minimax
+            .iter()
+            .map(|(key, label)| {
+                let key = key.clone();
+                let label = label.clone();
+                let client = self.client.clone();
+                tokio::spawn(async move {
+                    AccountResult {
+                        label,
+                        result: minimax::fetch(&client, &key).await,
+                    }
+                })
+            })
+            .collect();
 
-        let ds = if let Some(ref key) = self.deepseek_key {
-            let key = key.clone();
-            let client = self.client.clone();
-            Some(
-                tokio::spawn(async move { deepseek::fetch(&client, &key).await })
-                    .await
-                    .unwrap_or_else(|e| {
-                        Err(AgentSenseError::Http(format!(
-                            "DeepSeek task panicked: {e}"
-                        )))
-                    }),
-            )
-        } else {
-            None
-        };
+        // DeepSeek — parallel per account
+        let ds_handles: Vec<_> = self
+            .deepseek
+            .iter()
+            .map(|(key, label)| {
+                let key = key.clone();
+                let label = label.clone();
+                let client = self.client.clone();
+                tokio::spawn(async move {
+                    AccountResult {
+                        label,
+                        result: deepseek::fetch(&client, &key).await,
+                    }
+                })
+            })
+            .collect();
 
-        let zai = if let Some(ref token) = self.zai_token {
-            let token = token.clone();
-            let client = self.client.clone();
-            Some(
-                tokio::spawn(async move { zai::fetch(&client, &token).await })
-                    .await
-                    .unwrap_or_else(|e| {
-                        Err(AgentSenseError::Http(format!("Z.AI task panicked: {e}")))
-                    }),
-            )
-        } else {
-            None
-        };
+        // Z.AI — parallel per account
+        let zai_handles: Vec<_> = self
+            .zai
+            .iter()
+            .map(|(token, label)| {
+                let token = token.clone();
+                let label = label.clone();
+                let client = self.client.clone();
+                tokio::spawn(async move {
+                    AccountResult {
+                        label,
+                        result: zai::fetch(&client, &token).await,
+                    }
+                })
+            })
+            .collect();
 
+        // MiMo — parallel per account
+        let mimo_handles: Vec<_> = self
+            .mimo
+            .iter()
+            .map(|(cookie, label)| {
+                let cookie = cookie.clone();
+                let label = label.clone();
+                let client = self.client.clone();
+                tokio::spawn(async move {
+                    AccountResult {
+                        label,
+                        result: mimo::fetch(&client, &cookie).await,
+                    }
+                })
+            })
+            .collect();
+
+        // DeepSeek Platform — parallel per account
+        let dsp_handles: Vec<_> = self
+            .deepseek_platform
+            .iter()
+            .map(|((token, cookies), label)| {
+                let token = token.clone();
+                let cookies = cookies.clone();
+                let label = label.clone();
+                let client = self.client.clone();
+                tokio::spawn(async move {
+                    AccountResult {
+                        label,
+                        result: deepseek_platform::fetch(&client, &token, &cookies).await,
+                    }
+                })
+            })
+            .collect();
+
+        // Claude — single fetch (only one subscription)
         let claude = if let Some(ref path) = self.claude_creds {
             let path = path.clone();
             let client = self.client.clone();
@@ -118,66 +166,114 @@ impl QuotaOrchestrator {
             None
         };
 
-        let mimo = if let Some(ref cookie) = self.mimo_cookie {
-            let cookie = cookie.clone();
-            let client = self.client.clone();
-            Some(
-                tokio::spawn(async move { mimo::fetch(&client, &cookie).await })
-                    .await
-                    .unwrap_or_else(|e| {
-                        Err(AgentSenseError::Http(format!("MiMo task panicked: {e}")))
-                    }),
-            )
-        } else {
-            None
-        };
-
-        let ds_platform = if let Some((ref token, ref cookies)) = self.deepseek_platform_creds {
-            let token = token.clone();
-            let cookies = cookies.clone();
-            let client = self.client.clone();
-            Some(
-                tokio::spawn(
-                    async move { deepseek_platform::fetch(&client, &token, &cookies).await },
-                )
-                .await
-                .unwrap_or_else(|e| {
-                    Err(AgentSenseError::Http(format!(
-                        "DeepSeek Platform task panicked: {e}"
-                    )))
+        // Await all parallel handles
+        let mut mmx = Vec::with_capacity(mmx_handles.len());
+        for h in mmx_handles {
+            match h.await {
+                Ok(r) => mmx.push(r),
+                Err(e) => mmx.push(AccountResult {
+                    label: None,
+                    result: Err(AgentSenseError::Http(format!(
+                        "MiniMax task panicked: {e}"
+                    ))),
                 }),
-            )
-        } else {
-            None
-        };
+            }
+        }
 
-        // Persist to DB
-        if let Some(Ok(ref snap)) = mmx {
-            let _ = self.db.insert_minimax(snap, "");
+        let mut ds = Vec::with_capacity(ds_handles.len());
+        for h in ds_handles {
+            match h.await {
+                Ok(r) => ds.push(r),
+                Err(e) => ds.push(AccountResult {
+                    label: None,
+                    result: Err(AgentSenseError::Http(format!(
+                        "DeepSeek task panicked: {e}"
+                    ))),
+                }),
+            }
         }
-        if let Some(Ok(ref snap)) = ds {
-            let _ = self.db.insert_deepseek(snap, "");
+
+        let mut zai_results = Vec::with_capacity(zai_handles.len());
+        for h in zai_handles {
+            match h.await {
+                Ok(r) => zai_results.push(r),
+                Err(e) => zai_results.push(AccountResult {
+                    label: None,
+                    result: Err(AgentSenseError::Http(format!(
+                        "Z.AI task panicked: {e}"
+                    ))),
+                }),
+            }
         }
-        if let Some(Ok(ref snap)) = zai {
-            let _ = self.db.insert_zai(snap, "");
+
+        let mut mimo_results = Vec::with_capacity(mimo_handles.len());
+        for h in mimo_handles {
+            match h.await {
+                Ok(r) => mimo_results.push(r),
+                Err(e) => mimo_results.push(AccountResult {
+                    label: None,
+                    result: Err(AgentSenseError::Http(format!(
+                        "MiMo task panicked: {e}"
+                    ))),
+                }),
+            }
+        }
+
+        let mut dsp_results = Vec::with_capacity(dsp_handles.len());
+        for h in dsp_handles {
+            match h.await {
+                Ok(r) => dsp_results.push(r),
+                Err(e) => dsp_results.push(AccountResult {
+                    label: None,
+                    result: Err(AgentSenseError::Http(format!(
+                        "DeepSeek Platform task panicked: {e}"
+                    ))),
+                }),
+            }
+        }
+
+        // Persist to DB — each account with its label
+        for r in &mmx {
+            if let Ok(ref snap) = r.result {
+                let label = r.label.as_deref().unwrap_or("");
+                let _ = self.db.insert_minimax(snap, label);
+            }
+        }
+        for r in &ds {
+            if let Ok(ref snap) = r.result {
+                let label = r.label.as_deref().unwrap_or("");
+                let _ = self.db.insert_deepseek(snap, label);
+            }
+        }
+        for r in &zai_results {
+            if let Ok(ref snap) = r.result {
+                let label = r.label.as_deref().unwrap_or("");
+                let _ = self.db.insert_zai(snap, label);
+            }
         }
         if let Some(Ok(ref snap)) = claude {
             let _ = self.db.insert_claude(snap, "");
         }
-        if let Some(Ok(ref snap)) = mimo {
-            let _ = self.db.insert_mimo(snap, "");
+        for r in &mimo_results {
+            if let Ok(ref snap) = r.result {
+                let label = r.label.as_deref().unwrap_or("");
+                let _ = self.db.insert_mimo(snap, label);
+            }
         }
-        if let Some(Ok(ref snap)) = ds_platform {
-            let _ = self.db.insert_deepseek_platform(snap, "");
+        for r in &dsp_results {
+            if let Ok(ref snap) = r.result {
+                let label = r.label.as_deref().unwrap_or("");
+                let _ = self.db.insert_deepseek_platform(snap, label);
+            }
         }
 
         FetchResult {
             minimax: mmx,
             deepseek: ds,
-            zai,
+            zai: zai_results,
             claude,
-            mimo,
-            deepseek_platform: ds_platform,
+            mimo: mimo_results,
+            deepseek_platform: dsp_results,
         }
     }
 
