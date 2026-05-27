@@ -40,7 +40,8 @@ impl QuotaDb {
                 interval_usage  INTEGER NOT NULL,
                 weekly_usage    INTEGER NOT NULL,
                 interval_total  INTEGER NOT NULL,
-                weekly_total    INTEGER NOT NULL
+                weekly_total    INTEGER NOT NULL,
+                account_label   TEXT NOT NULL DEFAULT ''
             );
             CREATE INDEX IF NOT EXISTS idx_mmx_ts ON minimax_quota_log(ts);
             CREATE INDEX IF NOT EXISTS idx_mmx_model ON minimax_quota_log(model_name, ts);
@@ -51,7 +52,8 @@ impl QuotaDb {
                 total_balance_cny  REAL NOT NULL,
                 total_balance_usd  REAL NOT NULL,
                 granted_cny        REAL NOT NULL DEFAULT 0,
-                topped_up_cny      REAL NOT NULL DEFAULT 0
+                topped_up_cny      REAL NOT NULL DEFAULT 0,
+                account_label      TEXT NOT NULL DEFAULT ''
             );
             CREATE INDEX IF NOT EXISTS idx_ds_ts ON deepseek_balance_log(ts);
 
@@ -67,7 +69,8 @@ impl QuotaDb {
                 mcp_total       INTEGER NOT NULL DEFAULT 0,
                 mcp_remaining   INTEGER NOT NULL DEFAULT 0,
                 level           TEXT NOT NULL DEFAULT '',
-                usage_details   TEXT NOT NULL DEFAULT '[]'
+                usage_details   TEXT NOT NULL DEFAULT '[]',
+                account_label   TEXT NOT NULL DEFAULT ''
             );
             CREATE INDEX IF NOT EXISTS idx_zai_ts ON zai_quota_log(ts);
 
@@ -78,7 +81,8 @@ impl QuotaDb {
                 five_h_reset    INTEGER NOT NULL DEFAULT 0,
                 seven_d_pct     INTEGER NOT NULL,
                 seven_d_reset   INTEGER NOT NULL DEFAULT 0,
-                extra_json      TEXT NOT NULL DEFAULT '[]'
+                extra_json      TEXT NOT NULL DEFAULT '[]',
+                account_label   TEXT NOT NULL DEFAULT ''
             );
             CREATE INDEX IF NOT EXISTS idx_claude_ts ON claude_quota_log(ts);
 
@@ -91,7 +95,8 @@ impl QuotaDb {
                 expired         INTEGER NOT NULL DEFAULT 0,
                 month_used      INTEGER NOT NULL,
                 month_limit     INTEGER NOT NULL,
-                month_percent   REAL NOT NULL
+                month_percent   REAL NOT NULL,
+                account_label   TEXT NOT NULL DEFAULT ''
             );
             CREATE INDEX IF NOT EXISTS idx_mimo_ts ON mimo_quota_log(ts);
 
@@ -108,6 +113,7 @@ impl QuotaDb {
                 tokens_cache_miss INTEGER NOT NULL,
                 tokens_response   INTEGER NOT NULL,
                 requests          INTEGER NOT NULL,
+                account_label     TEXT NOT NULL DEFAULT '',
                 UNIQUE(date, model)
             );
             CREATE INDEX IF NOT EXISTS idx_dsp_ts ON deepseek_platform_usage(ts);
@@ -145,35 +151,48 @@ impl QuotaDb {
             let _ = self.conn.execute(stmt, []);
         }
 
+        // Migrate: add account_label column to all quota tables for multi-account support.
+        // ALTER ... ADD COLUMN errors with "duplicate column name" once migrated — ignore that.
+        for stmt in [
+            "ALTER TABLE minimax_quota_log ADD COLUMN account_label TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE deepseek_balance_log ADD COLUMN account_label TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE zai_quota_log ADD COLUMN account_label TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE claude_quota_log ADD COLUMN account_label TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE mimo_quota_log ADD COLUMN account_label TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE deepseek_platform_usage ADD COLUMN account_label TEXT NOT NULL DEFAULT ''",
+        ] {
+            let _ = self.conn.execute(stmt, []);
+        }
+
         Ok(())
     }
 
-    pub fn insert_minimax(&self, snap: &MinimaxSnapshot) -> Result<(), AgentSenseError> {
+    pub fn insert_minimax(&self, snap: &MinimaxSnapshot, label: &str) -> Result<(), AgentSenseError> {
         let tx = self.conn.unchecked_transaction()?;
         for m in &snap.models {
             tx.execute(
-                "INSERT INTO minimax_quota_log (ts, model_name, interval_usage, weekly_usage, interval_total, weekly_total)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                params![snap.timestamp, m.name, m.interval_usage, m.weekly_usage, m.interval_total, m.weekly_total],
+                "INSERT INTO minimax_quota_log (ts, model_name, interval_usage, weekly_usage, interval_total, weekly_total, account_label)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![snap.timestamp, m.name, m.interval_usage, m.weekly_usage, m.interval_total, m.weekly_total, label],
             )?;
         }
         tx.commit()?;
         Ok(())
     }
 
-    pub fn insert_deepseek(&self, snap: &DeepSeekSnapshot) -> Result<(), AgentSenseError> {
+    pub fn insert_deepseek(&self, snap: &DeepSeekSnapshot, label: &str) -> Result<(), AgentSenseError> {
         self.conn.execute(
-            "INSERT INTO deepseek_balance_log (ts, total_balance_cny, total_balance_usd, granted_cny, topped_up_cny)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![snap.timestamp, snap.total_balance_cny, snap.total_balance_usd, snap.granted_cny, snap.topped_up_cny],
+            "INSERT INTO deepseek_balance_log (ts, total_balance_cny, total_balance_usd, granted_cny, topped_up_cny, account_label)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![snap.timestamp, snap.total_balance_cny, snap.total_balance_usd, snap.granted_cny, snap.topped_up_cny, label],
         )?;
         Ok(())
     }
 
-    pub fn insert_zai(&self, snap: &ZaiSnapshot) -> Result<(), AgentSenseError> {
+    pub fn insert_zai(&self, snap: &ZaiSnapshot, label: &str) -> Result<(), AgentSenseError> {
         self.conn.execute(
-            "INSERT INTO zai_quota_log (ts, token_5h_pct, token_5h_reset, token_week_pct, token_week_reset, mcp_month_pct, mcp_used, mcp_total, mcp_remaining, level, usage_details)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            "INSERT INTO zai_quota_log (ts, token_5h_pct, token_5h_reset, token_week_pct, token_week_reset, mcp_month_pct, mcp_used, mcp_total, mcp_remaining, level, usage_details, account_label)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             params![
                 snap.timestamp,
                 snap.token_5h_pct,
@@ -186,32 +205,34 @@ impl QuotaDb {
                 snap.mcp_remaining,
                 snap.level,
                 snap.usage_details_json,
+                label,
             ],
         )?;
         Ok(())
     }
 
-    pub fn insert_claude(&self, snap: &ClaudeSnapshot) -> Result<(), AgentSenseError> {
+    pub fn insert_claude(&self, snap: &ClaudeSnapshot, label: &str) -> Result<(), AgentSenseError> {
         let extra_json = serde_json::to_string(&snap.extra).unwrap_or_else(|_| "[]".into());
         self.conn.execute(
-            "INSERT INTO claude_quota_log (ts, five_h_pct, five_h_reset, seven_d_pct, seven_d_reset, extra_json)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT INTO claude_quota_log (ts, five_h_pct, five_h_reset, seven_d_pct, seven_d_reset, extra_json, account_label)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
                 snap.timestamp,
                 snap.five_h_pct,
                 snap.five_h_reset,
                 snap.seven_d_pct,
                 snap.seven_d_reset,
-                extra_json
+                extra_json,
+                label,
             ],
         )?;
         Ok(())
     }
 
-    pub fn insert_mimo(&self, snap: &MimoSnapshot) -> Result<(), AgentSenseError> {
+    pub fn insert_mimo(&self, snap: &MimoSnapshot, label: &str) -> Result<(), AgentSenseError> {
         self.conn.execute(
-            "INSERT INTO mimo_quota_log (ts, plan_code, plan_name, period_end, expired, month_used, month_limit, month_percent)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            "INSERT INTO mimo_quota_log (ts, plan_code, plan_name, period_end, expired, month_used, month_limit, month_percent, account_label)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             params![
                 snap.timestamp,
                 snap.plan_code,
@@ -221,6 +242,7 @@ impl QuotaDb {
                 snap.month_used,
                 snap.month_limit,
                 snap.month_percent,
+                label,
             ],
         )?;
         Ok(())
@@ -229,14 +251,15 @@ impl QuotaDb {
     pub fn insert_deepseek_platform(
         &self,
         snap: &DeepSeekPlatformSnapshot,
+        label: &str,
     ) -> Result<(), AgentSenseError> {
         let tx = self.conn.unchecked_transaction()?;
         for day in &snap.days {
             tx.execute(
                 "INSERT OR REPLACE INTO deepseek_platform_usage \
                  (ts, date, model, cost_cache_hit, cost_cache_miss, cost_response, cost_total, \
-                  tokens_cache_hit, tokens_cache_miss, tokens_response, requests) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                  tokens_cache_hit, tokens_cache_miss, tokens_response, requests, account_label) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
                 params![
                     snap.timestamp,
                     day.date,
@@ -249,6 +272,7 @@ impl QuotaDb {
                     day.tokens_cache_miss,
                     day.tokens_response,
                     day.requests,
+                    label,
                 ],
             )?;
         }
@@ -323,12 +347,12 @@ impl QuotaDb {
         })
     }
 
-    pub fn latest_claude(&self) -> Result<Option<ClaudeSnapshot>, AgentSenseError> {
+    pub fn latest_claude(&self, label: &str) -> Result<Option<ClaudeSnapshot>, AgentSenseError> {
         let mut stmt = self.conn.prepare(
             "SELECT ts, five_h_pct, five_h_reset, seven_d_pct, seven_d_reset, extra_json
-             FROM claude_quota_log ORDER BY ts DESC LIMIT 1",
+             FROM claude_quota_log WHERE account_label = ?1 ORDER BY ts DESC LIMIT 1",
         )?;
-        let row = stmt.query_row([], Self::row_to_claude);
+        let row = stmt.query_row(params![label], Self::row_to_claude);
         match row {
             Ok(snap) => Ok(Some(snap)),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
@@ -336,25 +360,25 @@ impl QuotaDb {
         }
     }
 
-    pub fn claude_history(&self, hours: u64) -> Result<Vec<ClaudeSnapshot>, AgentSenseError> {
+    pub fn claude_history(&self, hours: u64, label: &str) -> Result<Vec<ClaudeSnapshot>, AgentSenseError> {
         let now = chrono::Utc::now().timestamp_millis();
         let cutoff = now - (hours as i64) * 60 * 60 * 1000;
         let mut stmt = self.conn.prepare(
             "SELECT ts, five_h_pct, five_h_reset, seven_d_pct, seven_d_reset, extra_json
-             FROM claude_quota_log WHERE ts >= ?1 ORDER BY ts",
+             FROM claude_quota_log WHERE ts >= ?1 AND account_label = ?2 ORDER BY ts",
         )?;
         let rows = stmt
-            .query_map(params![cutoff], Self::row_to_claude)?
+            .query_map(params![cutoff, label], Self::row_to_claude)?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(rows)
     }
 
-    pub fn latest_deepseek(&self) -> Result<Option<DeepSeekSnapshot>, AgentSenseError> {
+    pub fn latest_deepseek(&self, label: &str) -> Result<Option<DeepSeekSnapshot>, AgentSenseError> {
         let mut stmt = self.conn.prepare(
             "SELECT ts, total_balance_cny, total_balance_usd, granted_cny, topped_up_cny
-             FROM deepseek_balance_log ORDER BY ts DESC LIMIT 1",
+             FROM deepseek_balance_log WHERE account_label = ?1 ORDER BY ts DESC LIMIT 1",
         )?;
-        let row = stmt.query_row([], |row| {
+        let row = stmt.query_row(params![label], |row| {
             Ok(DeepSeekSnapshot {
                 timestamp: row.get(0)?,
                 total_balance_cny: row.get(1)?,
@@ -370,13 +394,13 @@ impl QuotaDb {
         }
     }
 
-    pub fn latest_zai(&self) -> Result<Option<ZaiSnapshot>, AgentSenseError> {
+    pub fn latest_zai(&self, label: &str) -> Result<Option<ZaiSnapshot>, AgentSenseError> {
         let mut stmt = self.conn.prepare(
             "SELECT ts, token_5h_pct, token_5h_reset, token_week_pct, token_week_reset,
                     mcp_month_pct, mcp_used, mcp_total, mcp_remaining, level, usage_details
-             FROM zai_quota_log ORDER BY ts DESC LIMIT 1",
+             FROM zai_quota_log WHERE account_label = ?1 ORDER BY ts DESC LIMIT 1",
         )?;
-        let row = stmt.query_row([], |row| {
+        let row = stmt.query_row(params![label], |row| {
             Ok(ZaiSnapshot {
                 timestamp: row.get(0)?,
                 token_5h_pct: row.get(1)?,
@@ -398,12 +422,12 @@ impl QuotaDb {
         }
     }
 
-    pub fn latest_mimo(&self) -> Result<Option<MimoSnapshot>, AgentSenseError> {
+    pub fn latest_mimo(&self, label: &str) -> Result<Option<MimoSnapshot>, AgentSenseError> {
         let mut stmt = self.conn.prepare(
             "SELECT ts, plan_code, plan_name, period_end, expired, month_used, month_limit, month_percent
-             FROM mimo_quota_log ORDER BY ts DESC LIMIT 1",
+             FROM mimo_quota_log WHERE account_label = ?1 ORDER BY ts DESC LIMIT 1",
         )?;
-        let row = stmt.query_row([], |row| {
+        let row = stmt.query_row(params![label], |row| {
             Ok(MimoSnapshot {
                 timestamp: row.get(0)?,
                 plan_code: row.get(1)?,
@@ -422,15 +446,87 @@ impl QuotaDb {
         }
     }
 
-    pub fn mimo_history(&self, hours: u64) -> Result<Vec<MimoSnapshot>, AgentSenseError> {
+    // ── Batch "latest_all_*" methods: return all labels with their latest snapshot ──
+
+    pub fn latest_all_deepseek(&self) -> Result<Vec<(String, Option<DeepSeekSnapshot>)>, AgentSenseError> {
+        let labels: Vec<String> = self.conn
+            .prepare("SELECT DISTINCT account_label FROM deepseek_balance_log WHERE account_label != ''")?
+            .query_map([], |row| row.get(0))?
+            .filter_map(|r| r.ok())
+            .collect();
+        let mut results = Vec::new();
+        for label in labels {
+            let snap = self.latest_deepseek(&label)?;
+            results.push((label, snap));
+        }
+        Ok(results)
+    }
+
+    pub fn latest_all_minimax(&self) -> Result<Vec<(String, (i64, Vec<super::minimax::ModelQuota>))>, AgentSenseError> {
+        let labels: Vec<String> = self.conn
+            .prepare("SELECT DISTINCT account_label FROM minimax_quota_log WHERE account_label != ''")?
+            .query_map([], |row| row.get(0))?
+            .filter_map(|r| r.ok())
+            .collect();
+        let mut results = Vec::new();
+        for label in labels {
+            let pair = self.latest_minimax_with_ts(&label)?;
+            results.push((label, pair));
+        }
+        Ok(results)
+    }
+
+    pub fn latest_all_zai(&self) -> Result<Vec<(String, Option<ZaiSnapshot>)>, AgentSenseError> {
+        let labels: Vec<String> = self.conn
+            .prepare("SELECT DISTINCT account_label FROM zai_quota_log WHERE account_label != ''")?
+            .query_map([], |row| row.get(0))?
+            .filter_map(|r| r.ok())
+            .collect();
+        let mut results = Vec::new();
+        for label in labels {
+            let snap = self.latest_zai(&label)?;
+            results.push((label, snap));
+        }
+        Ok(results)
+    }
+
+    pub fn latest_all_claude(&self) -> Result<Vec<(String, Option<ClaudeSnapshot>)>, AgentSenseError> {
+        let labels: Vec<String> = self.conn
+            .prepare("SELECT DISTINCT account_label FROM claude_quota_log WHERE account_label != ''")?
+            .query_map([], |row| row.get(0))?
+            .filter_map(|r| r.ok())
+            .collect();
+        let mut results = Vec::new();
+        for label in labels {
+            let snap = self.latest_claude(&label)?;
+            results.push((label, snap));
+        }
+        Ok(results)
+    }
+
+    pub fn latest_all_mimo(&self) -> Result<Vec<(String, Option<MimoSnapshot>)>, AgentSenseError> {
+        let labels: Vec<String> = self.conn
+            .prepare("SELECT DISTINCT account_label FROM mimo_quota_log WHERE account_label != ''")?
+            .query_map([], |row| row.get(0))?
+            .filter_map(|r| r.ok())
+            .collect();
+        let mut results = Vec::new();
+        for label in labels {
+            let snap = self.latest_mimo(&label)?;
+            results.push((label, snap));
+        }
+        Ok(results)
+    }
+
+    pub fn mimo_history(&self, hours: u64, label: &str) -> Result<Vec<MimoSnapshot>, AgentSenseError> {
         let now = chrono::Utc::now().timestamp_millis();
         let cutoff = now - (hours as i64) * 60 * 60 * 1000;
         let mut stmt = self.conn.prepare(
             "SELECT ts, plan_code, plan_name, period_end, expired, month_used, month_limit, month_percent
-             FROM mimo_quota_log WHERE ts >= ?1 ORDER BY ts",
+             FROM mimo_quota_log WHERE ts >= ?1 AND account_label = ?2 ORDER BY ts",
         )?;
         let rows = stmt
-            .query_map(params![cutoff], |row| {
+            .query_map(params![cutoff, label], |row| {
                 Ok(MimoSnapshot {
                     timestamp: row.get(0)?,
                     plan_code: row.get(1)?,
@@ -446,17 +542,18 @@ impl QuotaDb {
         Ok(rows)
     }
 
-    pub fn latest_minimax(&self) -> Result<Vec<super::minimax::ModelQuota>, AgentSenseError> {
-        let (_, models) = self.latest_minimax_with_ts()?;
+    pub fn latest_minimax(&self, label: &str) -> Result<Vec<super::minimax::ModelQuota>, AgentSenseError> {
+        let (_, models) = self.latest_minimax_with_ts(label)?;
         Ok(models)
     }
 
     pub fn latest_minimax_with_ts(
         &self,
+        label: &str,
     ) -> Result<(i64, Vec<super::minimax::ModelQuota>), AgentSenseError> {
         let max_ts: Option<i64> =
             self.conn
-                .query_row("SELECT MAX(ts) FROM minimax_quota_log", [], |row| {
+                .query_row("SELECT MAX(ts) FROM minimax_quota_log WHERE account_label = ?1", params![label], |row| {
                     row.get(0)
                 })?;
         match max_ts {
@@ -464,10 +561,10 @@ impl QuotaDb {
             Some(ts) => {
                 let mut stmt = self.conn.prepare(
                     "SELECT model_name, interval_usage, interval_total, weekly_usage, weekly_total
-                     FROM minimax_quota_log WHERE ts = ?1",
+                     FROM minimax_quota_log WHERE ts = ?1 AND account_label = ?2",
                 )?;
                 let models = stmt
-                    .query_map(params![ts], |row| {
+                    .query_map(params![ts, label], |row| {
                         Ok(super::minimax::ModelQuota {
                             name: row.get(0)?,
                             interval_usage: row.get(1)?,
@@ -487,6 +584,7 @@ impl QuotaDb {
     pub fn minimax_history_24h(
         &self,
         model_name: &str,
+        label: &str,
     ) -> Result<Vec<serde_json::Value>, AgentSenseError> {
         let now = chrono::Utc::now().timestamp_millis();
         let cutoff = now - 24 * 60 * 60 * 1000;
@@ -494,7 +592,7 @@ impl QuotaDb {
             "WITH buckets AS (
                 SELECT ts, interval_usage, interval_total, (ts / 300000) * 300000 AS bucket
                 FROM minimax_quota_log
-                WHERE ts >= ?1 AND model_name = ?2
+                WHERE ts >= ?1 AND model_name = ?2 AND account_label = ?3
             )
             SELECT MAX(ts) as ts, interval_usage, interval_total
             FROM buckets
@@ -502,7 +600,7 @@ impl QuotaDb {
             ORDER BY bucket",
         )?;
         let rows = stmt
-            .query_map(params![cutoff, model_name], |row| {
+            .query_map(params![cutoff, model_name, label], |row| {
                 let ts: i64 = row.get(0)?;
                 let interval_usage: i64 = row.get(1)?;
                 let interval_total: i64 = row.get(2)?;
@@ -517,17 +615,17 @@ impl QuotaDb {
         Ok(rows)
     }
 
-    pub fn deepseek_history(&self, hours: u64) -> Result<Vec<DeepSeekSnapshot>, AgentSenseError> {
+    pub fn deepseek_history(&self, hours: u64, label: &str) -> Result<Vec<DeepSeekSnapshot>, AgentSenseError> {
         let now = chrono::Utc::now().timestamp_millis();
         let cutoff = now - (hours as i64) * 60 * 60 * 1000;
         let mut stmt = self.conn.prepare(
             "SELECT ts, total_balance_cny, total_balance_usd, granted_cny, topped_up_cny
              FROM deepseek_balance_log
-             WHERE ts >= ?1
+             WHERE ts >= ?1 AND account_label = ?2
              ORDER BY ts",
         )?;
         let rows = stmt
-            .query_map(params![cutoff], |row| {
+            .query_map(params![cutoff, label], |row| {
                 Ok(DeepSeekSnapshot {
                     timestamp: row.get(0)?,
                     total_balance_cny: row.get(1)?,
@@ -540,18 +638,18 @@ impl QuotaDb {
         Ok(rows)
     }
 
-    pub fn zai_history(&self, hours: u64) -> Result<Vec<ZaiSnapshot>, AgentSenseError> {
+    pub fn zai_history(&self, hours: u64, label: &str) -> Result<Vec<ZaiSnapshot>, AgentSenseError> {
         let now = chrono::Utc::now().timestamp_millis();
         let cutoff = now - (hours as i64) * 60 * 60 * 1000;
         let mut stmt = self.conn.prepare(
             "SELECT ts, token_5h_pct, token_5h_reset, token_week_pct, token_week_reset,
                     mcp_month_pct, mcp_used, mcp_total, mcp_remaining, level, usage_details
              FROM zai_quota_log
-             WHERE ts >= ?1
+             WHERE ts >= ?1 AND account_label = ?2
              ORDER BY ts",
         )?;
         let rows = stmt
-            .query_map(params![cutoff], |row| {
+            .query_map(params![cutoff, label], |row| {
                 Ok(ZaiSnapshot {
                     timestamp: row.get(0)?,
                     token_5h_pct: row.get(1)?,
@@ -613,7 +711,7 @@ impl QuotaDb {
         let now_ms = chrono::Utc::now().timestamp_millis();
         let today_str = Self::local_date_str(now_ms);
 
-        let (_, models) = self.latest_minimax_with_ts().unwrap_or((0, vec![]));
+        let (_, models) = self.latest_minimax_with_ts("").unwrap_or((0, vec![]));
 
         let mut day = serde_json::Map::new();
         let mut week = serde_json::Map::new();

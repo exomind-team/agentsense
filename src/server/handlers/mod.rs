@@ -18,31 +18,31 @@ pub async fn serve_index() -> Html<&'static str> {
 pub async fn api_all(State(state): State<Arc<AppState>>) -> axum::Json<serde_json::Value> {
     let db = state.db.lock().await;
 
-    let (mmx_ts, mmx_models) = db.latest_minimax_with_ts().unwrap_or((0, vec![]));
+    let (mmx_ts, mmx_models) = db.latest_minimax_with_ts("").unwrap_or((0, vec![]));
     let mmx_status = provider_status(
         state.minimax_key.read().await.is_some(),
         if mmx_ts > 0 { Some(mmx_ts) } else { None },
     );
 
-    let ds_balance = db.latest_deepseek().unwrap_or_default();
+    let ds_balance = db.latest_deepseek("").unwrap_or_default();
     let ds_status = provider_status(
         state.deepseek_key.read().await.is_some(),
         ds_balance.as_ref().map(|s| s.timestamp),
     );
 
-    let zai_quota = db.latest_zai().unwrap_or_default();
+    let zai_quota = db.latest_zai("").unwrap_or_default();
     let zai_status = provider_status(
         state.zai_token.read().await.is_some(),
         zai_quota.as_ref().map(|s| s.timestamp),
     );
 
-    let claude_quota = db.latest_claude().unwrap_or_default();
+    let claude_quota = db.latest_claude("").unwrap_or_default();
     let claude_status = provider_status(
         state.claude_creds.read().await.is_some(),
         claude_quota.as_ref().map(|s| s.timestamp),
     );
 
-    let mimo_quota = db.latest_mimo().unwrap_or_default();
+    let mimo_quota = db.latest_mimo("").unwrap_or_default();
     let mimo_status = provider_status(
         state.mimo_cookie.read().await.is_some(),
         mimo_quota.as_ref().map(|s| s.timestamp),
@@ -95,7 +95,7 @@ pub async fn api_all(State(state): State<Arc<AppState>>) -> axum::Json<serde_jso
 
 pub async fn api_quota(State(state): State<Arc<AppState>>) -> axum::Json<serde_json::Value> {
     let db = state.db.lock().await;
-    let (_, models) = db.latest_minimax_with_ts().unwrap_or((0, vec![]));
+    let (_, models) = db.latest_minimax_with_ts("").unwrap_or((0, vec![]));
 
     let mut remains = Vec::new();
     let now_ms = chrono::Utc::now().timestamp_millis();
@@ -144,7 +144,7 @@ pub async fn api_history(
 ) -> axum::Json<serde_json::Value> {
     let model = q.model.as_deref().unwrap_or("MiniMax-M*");
     let db = state.db.lock().await;
-    let history = db.minimax_history_24h(model).unwrap_or_default();
+    let history = db.minimax_history_24h(model, "").unwrap_or_default();
     drop(db);
     axum::Json(serde_json::json!(history))
 }
@@ -169,7 +169,7 @@ pub async fn api_consumption(State(state): State<Arc<AppState>>) -> axum::Json<s
 
 pub async fn api_deepseek(State(state): State<Arc<AppState>>) -> axum::Json<serde_json::Value> {
     let db = state.db.lock().await;
-    let balance = db.latest_deepseek().unwrap_or_default();
+    let balance = db.latest_deepseek("").unwrap_or_default();
     drop(db);
 
     let status = provider_status(
@@ -194,7 +194,7 @@ pub async fn api_deepseek_history(
 ) -> axum::Json<serde_json::Value> {
     let hours = q.hours.unwrap_or(24);
     let db = state.db.lock().await;
-    let history = db.deepseek_history(hours).unwrap_or_default();
+    let history = db.deepseek_history(hours, "").unwrap_or_default();
     drop(db);
     axum::Json(serde_json::json!(history))
 }
@@ -220,7 +220,7 @@ pub async fn api_deepseek_platform_usage(
 
 pub async fn api_zai(State(state): State<Arc<AppState>>) -> axum::Json<serde_json::Value> {
     let db = state.db.lock().await;
-    let quota = db.latest_zai().unwrap_or_default();
+    let quota = db.latest_zai("").unwrap_or_default();
     drop(db);
 
     let status = provider_status(
@@ -240,7 +240,7 @@ pub async fn api_zai_history(
 ) -> axum::Json<serde_json::Value> {
     let hours = q.hours.unwrap_or(24);
     let db = state.db.lock().await;
-    let history = db.zai_history(hours).unwrap_or_default();
+    let history = db.zai_history(hours, "").unwrap_or_default();
     drop(db);
     axum::Json(serde_json::json!(history))
 }
@@ -259,7 +259,7 @@ pub async fn api_zai_models(State(state): State<Arc<AppState>>) -> axum::Json<se
 
 pub async fn api_claude(State(state): State<Arc<AppState>>) -> axum::Json<serde_json::Value> {
     let db = state.db.lock().await;
-    let quota = db.latest_claude().unwrap_or_default();
+    let quota = db.latest_claude("").unwrap_or_default();
     drop(db);
 
     let status = provider_status(
@@ -279,14 +279,14 @@ pub async fn api_claude_history(
 ) -> axum::Json<serde_json::Value> {
     let hours = q.hours.unwrap_or(24);
     let db = state.db.lock().await;
-    let history = db.claude_history(hours).unwrap_or_default();
+    let history = db.claude_history(hours, "").unwrap_or_default();
     drop(db);
     axum::Json(serde_json::json!(history))
 }
 
 pub async fn api_mimo(State(state): State<Arc<AppState>>) -> axum::Json<serde_json::Value> {
     let db = state.db.lock().await;
-    let quota = db.latest_mimo().unwrap_or_default();
+    let quota = db.latest_mimo("").unwrap_or_default();
     drop(db);
 
     let status = provider_status(
@@ -306,7 +306,7 @@ pub async fn api_mimo_history(
 ) -> axum::Json<serde_json::Value> {
     let hours = q.hours.unwrap_or(24);
     let db = state.db.lock().await;
-    let history = db.mimo_history(hours).unwrap_or_default();
+    let history = db.mimo_history(hours, "").unwrap_or_default();
     drop(db);
     axum::Json(serde_json::json!(history))
 }
@@ -854,7 +854,7 @@ async fn tool_quota_status() -> String {
 
     let mut json = serde_json::json!({});
 
-    if let Ok((_, models)) = db.latest_minimax_with_ts() {
+    if let Ok((_, models)) = db.latest_minimax_with_ts("") {
         json["minimax"] = serde_json::json!({
             "models": models.iter().map(|m| serde_json::json!({
                 "name": m.name,
@@ -866,14 +866,14 @@ async fn tool_quota_status() -> String {
         });
     }
 
-    if let Ok(Some(s)) = db.latest_deepseek() {
+    if let Ok(Some(s)) = db.latest_deepseek("") {
         json["deepseek"] = serde_json::json!({
             "balance_cny": s.total_balance_cny,
             "balance_usd": s.total_balance_usd,
         });
     }
 
-    if let Ok(Some(s)) = db.latest_zai() {
+    if let Ok(Some(s)) = db.latest_zai("") {
         json["zai"] = serde_json::json!({
             "token_5h_pct": s.token_5h_pct,
             "token_week_pct": s.token_week_pct,
@@ -881,7 +881,7 @@ async fn tool_quota_status() -> String {
         });
     }
 
-    if let Ok(Some(s)) = db.latest_claude() {
+    if let Ok(Some(s)) = db.latest_claude("") {
         json["claude"] = serde_json::json!({
             "five_h_pct": s.five_h_pct,
             "seven_d_pct": s.seven_d_pct,

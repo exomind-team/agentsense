@@ -12,7 +12,7 @@ fn make_db() -> QuotaDb {
 #[test]
 fn latest_minimax_with_ts_empty_db() {
     let db = make_db();
-    let (ts, models) = db.latest_minimax_with_ts().unwrap();
+    let (ts, models) = db.latest_minimax_with_ts("").unwrap();
     assert_eq!(ts, 0, "empty DB should return ts=0");
     assert!(models.is_empty(), "empty DB should return no models");
 }
@@ -45,9 +45,9 @@ fn latest_minimax_with_ts_returns_timestamp_and_models() {
         ],
     };
 
-    db.insert_minimax(&snap).unwrap();
+    db.insert_minimax(&snap, "").unwrap();
 
-    let (ts, models) = db.latest_minimax_with_ts().unwrap();
+    let (ts, models) = db.latest_minimax_with_ts("").unwrap();
     assert_eq!(
         ts, 1716000000000_i64,
         "timestamp should match inserted snapshot"
@@ -89,7 +89,7 @@ fn latest_minimax_with_ts_returns_latest_of_multiple() {
             interval_end: None,
             weekly_end: None,
         }],
-    })
+    }, "")
     .unwrap();
 
     // Insert newer snapshot
@@ -104,11 +104,87 @@ fn latest_minimax_with_ts_returns_latest_of_multiple() {
             interval_end: None,
             weekly_end: None,
         }],
-    })
+    }, "")
     .unwrap();
 
-    let (ts, models) = db.latest_minimax_with_ts().unwrap();
+    let (ts, models) = db.latest_minimax_with_ts("").unwrap();
     assert_eq!(ts, 2000, "should return the latest timestamp");
     assert_eq!(models.len(), 1);
     assert_eq!(models[0].name, "new-model");
+}
+
+#[test]
+fn multi_account_deepseek_latest_returns_per_label() {
+    use agentsense::quota::deepseek::DeepSeekSnapshot;
+
+    let db = make_db();
+    let snap1 = DeepSeekSnapshot {
+        timestamp: 1000,
+        total_balance_cny: 50.0,
+        total_balance_usd: 0.0,
+        granted_cny: 0.0,
+        topped_up_cny: 50.0,
+    };
+    let snap2 = DeepSeekSnapshot {
+        timestamp: 1000,
+        total_balance_cny: 30.0,
+        total_balance_usd: 0.0,
+        granted_cny: 0.0,
+        topped_up_cny: 30.0,
+    };
+    db.insert_deepseek(&snap1, "main").unwrap();
+    db.insert_deepseek(&snap2, "alt").unwrap();
+
+    let main = db.latest_deepseek("main").unwrap().unwrap();
+    assert_eq!(main.total_balance_cny, 50.0);
+    let alt = db.latest_deepseek("alt").unwrap().unwrap();
+    assert_eq!(alt.total_balance_cny, 30.0);
+
+    let all = db.latest_all_deepseek().unwrap();
+    assert_eq!(all.len(), 2);
+}
+
+#[test]
+fn multi_account_minimax_latest_returns_per_label() {
+    let db = make_db();
+
+    let snap_main = MinimaxSnapshot {
+        timestamp: 1000,
+        models: vec![ModelQuota {
+            name: "model-a".into(),
+            interval_usage: 10,
+            interval_total: 100,
+            weekly_usage: 50,
+            weekly_total: 500,
+            interval_end: None,
+            weekly_end: None,
+        }],
+    };
+    let snap_alt = MinimaxSnapshot {
+        timestamp: 1000,
+        models: vec![ModelQuota {
+            name: "model-b".into(),
+            interval_usage: 20,
+            interval_total: 200,
+            weekly_usage: 80,
+            weekly_total: 800,
+            interval_end: None,
+            weekly_end: None,
+        }],
+    };
+    db.insert_minimax(&snap_main, "main").unwrap();
+    db.insert_minimax(&snap_alt, "alt").unwrap();
+
+    let (ts_main, models_main) = db.latest_minimax_with_ts("main").unwrap();
+    assert_eq!(ts_main, 1000);
+    assert_eq!(models_main.len(), 1);
+    assert_eq!(models_main[0].name, "model-a");
+
+    let (ts_alt, models_alt) = db.latest_minimax_with_ts("alt").unwrap();
+    assert_eq!(ts_alt, 1000);
+    assert_eq!(models_alt.len(), 1);
+    assert_eq!(models_alt[0].name, "model-b");
+
+    let all = db.latest_all_minimax().unwrap();
+    assert_eq!(all.len(), 2);
 }

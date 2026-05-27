@@ -153,22 +153,22 @@ impl QuotaOrchestrator {
 
         // Persist to DB
         if let Some(Ok(ref snap)) = mmx {
-            let _ = self.db.insert_minimax(snap);
+            let _ = self.db.insert_minimax(snap, "");
         }
         if let Some(Ok(ref snap)) = ds {
-            let _ = self.db.insert_deepseek(snap);
+            let _ = self.db.insert_deepseek(snap, "");
         }
         if let Some(Ok(ref snap)) = zai {
-            let _ = self.db.insert_zai(snap);
+            let _ = self.db.insert_zai(snap, "");
         }
         if let Some(Ok(ref snap)) = claude {
-            let _ = self.db.insert_claude(snap);
+            let _ = self.db.insert_claude(snap, "");
         }
         if let Some(Ok(ref snap)) = mimo {
-            let _ = self.db.insert_mimo(snap);
+            let _ = self.db.insert_mimo(snap, "");
         }
         if let Some(Ok(ref snap)) = ds_platform {
-            let _ = self.db.insert_deepseek_platform(snap);
+            let _ = self.db.insert_deepseek_platform(snap, "");
         }
 
         FetchResult {

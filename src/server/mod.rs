@@ -353,7 +353,7 @@ pub async fn do_poll(state: Arc<AppState>) {
     let db = state.db.lock().await;
     match &mmx {
         Some(Ok(snap)) => {
-            if let Err(e) = db.insert_minimax(snap) {
+            if let Err(e) = db.insert_minimax(snap, "") {
                 tracing::warn!(provider = "minimax", error = %e, "insert failed");
             }
         }
@@ -362,7 +362,7 @@ pub async fn do_poll(state: Arc<AppState>) {
     }
     match &ds {
         Some(Ok(snap)) => {
-            if let Err(e) = db.insert_deepseek(snap) {
+            if let Err(e) = db.insert_deepseek(snap, "") {
                 tracing::warn!(provider = "deepseek", error = %e, "insert failed");
             }
         }
@@ -371,7 +371,7 @@ pub async fn do_poll(state: Arc<AppState>) {
     }
     match &zai {
         Some(Ok(snap)) => {
-            if let Err(e) = db.insert_zai(snap) {
+            if let Err(e) = db.insert_zai(snap, "") {
                 tracing::warn!(provider = "zai", error = %e, "insert failed");
             }
         }
@@ -380,7 +380,7 @@ pub async fn do_poll(state: Arc<AppState>) {
     }
     match &claude {
         Some(Ok(snap)) => {
-            if let Err(e) = db.insert_claude(snap) {
+            if let Err(e) = db.insert_claude(snap, "") {
                 tracing::warn!(provider = "claude", error = %e, "insert failed");
             }
         }
@@ -389,7 +389,7 @@ pub async fn do_poll(state: Arc<AppState>) {
     }
     match &mimo {
         Some(Ok(snap)) => {
-            if let Err(e) = db.insert_mimo(snap) {
+            if let Err(e) = db.insert_mimo(snap, "") {
                 tracing::warn!(provider = "mimo", error = %e, "insert failed");
             }
         }
@@ -398,7 +398,7 @@ pub async fn do_poll(state: Arc<AppState>) {
     }
     match &ds_platform {
         Some(Ok(snap)) => {
-            if let Err(e) = db.insert_deepseek_platform(snap) {
+            if let Err(e) = db.insert_deepseek_platform(snap, "") {
                 tracing::warn!(provider = "deepseek_platform", error = %e, "insert failed");
             }
         }

@@ -35,7 +35,7 @@ fn seed_db(db: &QuotaDb) {
                 weekly_end: None,
             },
         ],
-    })
+    }, "")
     .expect("insert minimax");
     db.insert_deepseek(&DeepSeekSnapshot {
         timestamp: now,
@@ -43,7 +43,7 @@ fn seed_db(db: &QuotaDb) {
         total_balance_usd: 5.8,
         granted_cny: 10.0,
         topped_up_cny: 32.5,
-    })
+    }, "")
     .expect("insert deepseek");
     db.insert_zai(&ZaiSnapshot {
         timestamp: now,
@@ -57,7 +57,7 @@ fn seed_db(db: &QuotaDb) {
         mcp_remaining: 400,
         level: "max".into(),
         usage_details_json: "[]".into(),
-    })
+    }, "")
     .expect("insert zai");
 }
 
