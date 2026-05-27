@@ -1610,13 +1610,17 @@ async function fetchAll() {
     fetchPsuCost(),
     fetchThermal(),
   ]);
+  // Render overview after all data is available (power/psu cost fetched in parallel)
+  if (lastOverviewData) renderOverview(lastOverviewData);
 }
+
+let lastOverviewData = null;
 
 async function fetchOverview() {
   try {
     const res = await fetch(`${API_BASE}/api/all`);
     const data = await res.json();
-    renderOverview(data);
+    lastOverviewData = data;
 
     if (data._nextPoll) {
       const ms = data._nextPoll - Date.now();
