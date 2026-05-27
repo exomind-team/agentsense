@@ -1869,40 +1869,65 @@ function statusText(s) {
 }
 
 function renderOverview(data) {
-  // MiniMax
-  const mmxModels = data.minimax?.models || [];
-  const mmxM = mmxModels.find(m => m.model_name === 'MiniMax-M*');
-  const mmxStatus = statusText(data.minimax?.status);
+  // MiniMax — array of accounts, aggregate across all
+  const mmxAccounts = Array.isArray(data.minimax) ? data.minimax : [];
+  const mmxStatus = mmxAccounts.length > 0 ? statusText(mmxAccounts[0]?.status) : statusText(null);
   document.getElementById('ov-minimax-status').textContent = mmxStatus.text;
   document.getElementById('ov-minimax-status').className = 'ov-status ' + mmxStatus.cls;
-  if (mmxStatus.cls === 'no_key') {
+  if (mmxAccounts.length === 0 || mmxStatus.cls === 'no_key') {
     document.getElementById('ov-minimax-value').textContent = '--';
     document.getElementById('ov-minimax-sub').textContent = '未配置';
     document.getElementById('ov-minimax-bar').style.width = '0%';
-  } else if (mmxM) {
-    const intervalTotal = mmxM.current_interval_total_count;
-    const intervalUsed = mmxM.current_interval_usage_count;
-    const remainPct = intervalTotal > 0 ? ((1 - intervalUsed / intervalTotal) * 100) : 0;
-    document.getElementById('ov-minimax-value').textContent = remainPct.toFixed(1) + '%';
-    document.getElementById('ov-minimax-sub').textContent = `剩余 ${(intervalTotal - intervalUsed).toLocaleString()} / ${intervalTotal.toLocaleString()}`;
-    document.getElementById('ov-minimax-bar').style.width = Math.min(100, remainPct).toFixed(1) + '%';
-    const color = remainPct < 20 ? 'var(--red)' : remainPct < 40 ? 'var(--yellow)' : 'var(--mmx-color)';
-    document.getElementById('ov-minimax-bar').style.background = color;
+  } else {
+    // Find the M* model across all accounts; use the worst remainPct
+    let worstRemainPct = 100;
+    let worstLabel = '';
+    for (const acct of mmxAccounts) {
+      const models = acct.models || [];
+      const mmxM = models.find(m => m.model_name === 'MiniMax-M*');
+      if (mmxM) {
+        const intervalTotal = mmxM.current_interval_total_count;
+        const intervalUsed = mmxM.current_interval_usage_count;
+        const pct = intervalTotal > 0 ? ((1 - intervalUsed / intervalTotal) * 100) : 100;
+        if (pct < worstRemainPct) {
+          worstRemainPct = pct;
+          worstLabel = mmxAccounts.length > 1 ? (acct.label || 'MiniMax') : '';
+        }
+      }
+    }
+    if (worstRemainPct < 100 || mmxAccounts.some(a => (a.models || []).find(m => m.model_name === 'MiniMax-M*'))) {
+      document.getElementById('ov-minimax-value').textContent = worstRemainPct.toFixed(1) + '%';
+      const label = mmxAccounts.length > 1 ? ` (${mmxAccounts.length} 账号)` : '';
+      // Show sub with the label of worst account if multiple
+      const worstAcct = mmxAccounts.find(a => {
+        const mmxM = (a.models || []).find(m => m.model_name === 'MiniMax-M*');
+        return mmxM && (mmxM.current_interval_total_count > 0 ? ((1 - mmxM.current_interval_usage_count / mmxM.current_interval_total_count) * 100) : 100) === worstRemainPct;
+      });
+      const wM = worstAcct ? (worstAcct.models || []).find(m => m.model_name === 'MiniMax-M*') : null;
+      const subText = wM ? `剩余 ${(wM.current_interval_total_count - wM.current_interval_usage_count).toLocaleString()} / ${wM.current_interval_total_count.toLocaleString()}${label}` : '';
+      document.getElementById('ov-minimax-sub').textContent = subText;
+      document.getElementById('ov-minimax-bar').style.width = Math.min(100, worstRemainPct).toFixed(1) + '%';
+      const color = worstRemainPct < 20 ? 'var(--red)' : worstRemainPct < 40 ? 'var(--yellow)' : 'var(--mmx-color)';
+      document.getElementById('ov-minimax-bar').style.background = color;
+    }
   }
 
-  // DeepSeek
-  const dsStatus = statusText(data.deepseek?.status);
+  // DeepSeek — array of accounts, sum balances
+  const dsAccounts = Array.isArray(data.deepseek) ? data.deepseek : [];
+  const dsStatus = dsAccounts.length > 0 ? statusText(dsAccounts[0]?.status) : statusText(null);
   document.getElementById('ov-deepseek-status').textContent = dsStatus.text;
   document.getElementById('ov-deepseek-status').className = 'ov-status ' + dsStatus.cls;
-  if (dsStatus.cls === 'no_key') {
+  if (dsAccounts.length === 0 || dsStatus.cls === 'no_key') {
     document.getElementById('ov-deepseek-value').textContent = '--';
     document.getElementById('ov-deepseek-sub').textContent = '未配置';
   } else {
-    const dsBal = data.deepseek?.balance;
-    if (dsBal) {
-      document.getElementById('ov-deepseek-value').textContent = '¥' + dsBal.total_balance_cny.toFixed(2);
-      document.getElementById('ov-deepseek-sub').textContent = '';
+    let totalCny = 0;
+    for (const acct of dsAccounts) {
+      if (acct.balance) totalCny += acct.balance.total_balance_cny || 0;
     }
+    const subLabel = dsAccounts.length > 1 ? `${dsAccounts.length} 账号合计` : '';
+    document.getElementById('ov-deepseek-value').textContent = '¥' + totalCny.toFixed(2);
+    document.getElementById('ov-deepseek-sub').textContent = subLabel;
   }
 
   // DeepSeek Platform daily usage (overview card sub-display)
@@ -1917,24 +1942,37 @@ function renderOverview(data) {
     document.getElementById('ov-deepseek-daily-sub').textContent = '今日消耗';
   }
 
-  // Z.AI
-  const zaiStatus = statusText(data.zai?.status);
+  // Z.AI — array of accounts, show worst remaining
+  const zaiAccounts = Array.isArray(data.zai) ? data.zai : [];
+  const zaiStatus = zaiAccounts.length > 0 ? statusText(zaiAccounts[0]?.status) : statusText(null);
   document.getElementById('ov-zai-status').textContent = zaiStatus.text;
   document.getElementById('ov-zai-status').className = 'ov-status ' + zaiStatus.cls;
-  if (zaiStatus.cls === 'no_key') {
+  if (zaiAccounts.length === 0 || zaiStatus.cls === 'no_key') {
     document.getElementById('ov-zai-value').textContent = '--';
     document.getElementById('ov-zai-sub').textContent = '未配置';
     document.getElementById('ov-zai-bar').style.width = '0%';
   } else {
-    const zaiQ = data.zai?.quota;
-    if (zaiQ) {
-      const remain5h = 100 - zaiQ.token_5h_pct;
-      document.getElementById('ov-zai-value').textContent = remain5h + '%';
-      const weekPct = zaiQ.token_week_pct;
+    // Show worst (lowest remaining) 5h pct across accounts
+    let worstRemain5h = 100;
+    let worstZaiQ = null;
+    for (const acct of zaiAccounts) {
+      const q = acct.quota;
+      if (q) {
+        const remain5h = 100 - q.token_5h_pct;
+        if (remain5h < worstRemain5h) {
+          worstRemain5h = remain5h;
+          worstZaiQ = q;
+        }
+      }
+    }
+    if (worstZaiQ) {
+      document.getElementById('ov-zai-value').textContent = worstRemain5h + '%';
+      const weekPct = worstZaiQ.token_week_pct;
       const weekStr = (weekPct >= 0) ? ` · 周 ${weekPct}%` : '';
-      document.getElementById('ov-zai-sub').textContent = `5h 已用 ${zaiQ.token_5h_pct}%${weekStr}`;
-      document.getElementById('ov-zai-bar').style.width = Math.min(100, remain5h) + '%';
-      const color = remain5h < 20 ? 'var(--red)' : remain5h < 40 ? 'var(--yellow)' : 'var(--zai-color)';
+      const acctLabel = zaiAccounts.length > 1 ? ` (${zaiAccounts.length} 账号)` : '';
+      document.getElementById('ov-zai-sub').textContent = `5h 已用 ${worstZaiQ.token_5h_pct}%${weekStr}${acctLabel}`;
+      document.getElementById('ov-zai-bar').style.width = Math.min(100, worstRemain5h) + '%';
+      const color = worstRemain5h < 20 ? 'var(--red)' : worstRemain5h < 40 ? 'var(--yellow)' : 'var(--zai-color)';
       document.getElementById('ov-zai-bar').style.background = color;
     }
   }
@@ -1958,23 +1996,36 @@ function renderOverview(data) {
       document.getElementById('ov-claude-bar').style.background = color;
     }
   }
-  // MiMo
-  const mimoStatus = statusText(data.mimo?.status);
+  // MiMo — array of accounts, show worst remaining
+  const mimoAccounts = Array.isArray(data.mimo) ? data.mimo : [];
+  const mimoStatus = mimoAccounts.length > 0 ? statusText(mimoAccounts[0]?.status) : statusText(null);
   document.getElementById('ov-mimo-status').textContent = mimoStatus.text;
   document.getElementById('ov-mimo-status').className = 'ov-status ' + mimoStatus.cls;
-  if (mimoStatus.cls === 'no_key') {
+  if (mimoAccounts.length === 0 || mimoStatus.cls === 'no_key') {
     document.getElementById('ov-mimo-value').textContent = '--';
     document.getElementById('ov-mimo-sub').textContent = '未配置';
     document.getElementById('ov-mimo-bar').style.width = '0%';
   } else {
-    const mQ = data.mimo?.quota;
-    if (mQ) {
-      const remainPct = (100 - mQ.month_percent * 100);
+    // Show worst (lowest remaining) across accounts
+    let worstRemainPct = 100;
+    let worstMQ = null;
+    for (const acct of mimoAccounts) {
+      const mQ = acct.quota;
+      if (mQ) {
+        const remainPct = 100 - mQ.month_percent * 100;
+        if (remainPct < worstRemainPct) {
+          worstRemainPct = remainPct;
+          worstMQ = mQ;
+        }
+      }
+    }
+    if (worstMQ) {
       const fmtM = (v) => { const m = v / 1e6; return (m < 10 ? m.toFixed(2) : m.toFixed(1)) + 'M'; };
-      document.getElementById('ov-mimo-value').textContent = remainPct.toFixed(1) + '%';
-      document.getElementById('ov-mimo-sub').textContent = `${fmtM(mQ.month_limit - mQ.month_used)} 剩余 · ${mQ.plan_name}`;
-      document.getElementById('ov-mimo-bar').style.width = Math.min(100, remainPct) + '%';
-      const color = remainPct < 20 ? 'var(--red)' : remainPct < 40 ? 'var(--yellow)' : 'var(--mimo-color)';
+      const acctLabel = mimoAccounts.length > 1 ? ` (${mimoAccounts.length} 账号)` : '';
+      document.getElementById('ov-mimo-value').textContent = worstRemainPct.toFixed(1) + '%';
+      document.getElementById('ov-mimo-sub').textContent = `${fmtM(worstMQ.month_limit - worstMQ.month_used)} 剩余 · ${worstMQ.plan_name}${acctLabel}`;
+      document.getElementById('ov-mimo-bar').style.width = Math.min(100, worstRemainPct) + '%';
+      const color = worstRemainPct < 20 ? 'var(--red)' : worstRemainPct < 40 ? 'var(--yellow)' : 'var(--mimo-color)';
       document.getElementById('ov-mimo-bar').style.background = color;
     }
   }
@@ -1991,7 +2042,17 @@ function renderDeepSeek(data) {
   const noKey = document.getElementById('ds-no-key');
   const content = document.getElementById('deepseek-content');
 
-  if (data.status?.status === 'no_key') {
+  const accounts = data.accounts || [];
+
+  if (accounts.length === 0) {
+    noKey.style.display = 'block';
+    content.style.display = 'none';
+    return;
+  }
+
+  // Check if any account has a status other than no_key
+  const hasData = accounts.some(a => a.status?.status !== 'no_key');
+  if (!hasData) {
     noKey.style.display = 'block';
     content.style.display = 'none';
     return;
@@ -1999,11 +2060,35 @@ function renderDeepSeek(data) {
   noKey.style.display = 'none';
   content.style.display = 'block';
 
-  const bal = data.balance;
-  if (bal) {
-    document.getElementById('ds-balance-cny').textContent = '¥' + bal.total_balance_cny.toFixed(2);
-    document.getElementById('ds-balance-cny-sub').textContent = '';
-    document.getElementById('ds-balance-usd').textContent = '$' + bal.total_balance_usd.toFixed(2);
+  // Build multi-account balance display
+  if (accounts.length === 1) {
+    // Single account — render as before
+    const acct = accounts[0];
+    const bal = acct.balance;
+    const label = acct.label || 'DeepSeek';
+    if (bal) {
+      document.getElementById('ds-balance-cny').textContent = '¥' + bal.total_balance_cny.toFixed(2);
+      document.getElementById('ds-balance-cny-sub').textContent = '';
+      document.getElementById('ds-balance-usd').textContent = '$' + bal.total_balance_usd.toFixed(2);
+      document.getElementById('ds-balance-usd-sub').textContent = '';
+    }
+  } else {
+    // Multiple accounts — sum CNY, show individual labels
+    let totalCny = 0, totalUsd = 0;
+    const details = [];
+    for (const acct of accounts) {
+      const bal = acct.balance;
+      const label = acct.label || 'DeepSeek';
+      if (bal) {
+        totalCny += bal.total_balance_cny || 0;
+        totalUsd += bal.total_balance_usd || 0;
+        details.push(`${label}: ¥${bal.total_balance_cny.toFixed(2)}`);
+      }
+    }
+    document.getElementById('ds-balance-cny').textContent = '¥' + totalCny.toFixed(2);
+    document.getElementById('ds-balance-cny-sub').textContent = details.join(' · ');
+    document.getElementById('ds-balance-usd').textContent = '$' + totalUsd.toFixed(2);
+    document.getElementById('ds-balance-usd-sub').textContent = '';
   }
 }
 
@@ -2143,7 +2228,16 @@ function renderZai(data, modelsData) {
   const noKey = document.getElementById('zai-no-key');
   const content = document.getElementById('zai-content');
 
-  if (data.status?.status === 'no_key') {
+  const accounts = data.accounts || [];
+
+  if (accounts.length === 0) {
+    noKey.style.display = 'block';
+    content.style.display = 'none';
+    return;
+  }
+
+  const hasData = accounts.some(a => a.status?.status !== 'no_key');
+  if (!hasData) {
     noKey.style.display = 'block';
     content.style.display = 'none';
     return;
@@ -2151,51 +2245,86 @@ function renderZai(data, modelsData) {
   noKey.style.display = 'none';
   content.style.display = 'block';
 
-  const q = data.quota;
-  if (q) {
-    // Level
-    document.getElementById('zai-level').textContent = q.level ? `Lv.${q.level}` : '';
-
-    // 5h bar
-    updateZaiBar('5h', q.token_5h_pct);
-    document.getElementById('zai-reset-5h').textContent = fmtReset(q.token_5h_reset);
-
-    // Weekly quota - conditional
+  // If single account, use the existing static HTML elements directly
+  if (accounts.length === 1) {
+    const acct = accounts[0];
+    const q = acct.quota;
+    if (q) {
+      document.getElementById('zai-level').textContent = q.level ? `Lv.${q.level}` : '';
+      updateZaiBar('5h', q.token_5h_pct);
+      document.getElementById('zai-reset-5h').textContent = fmtReset(q.token_5h_reset);
+      const weekRow = document.getElementById('zai-row-week');
+      if (q.token_week_pct >= 0) {
+        weekRow.style.display = 'flex';
+        updateZaiBar('week', q.token_week_pct);
+      } else {
+        weekRow.style.display = 'none';
+      }
+      updateZaiBar('mcp', q.mcp_month_pct);
+      const mcpExtra = document.getElementById('zai-extra-mcp');
+      if (q.mcp_total > 0) {
+        mcpExtra.textContent = `${q.mcp_used} / ${q.mcp_total}`;
+      }
+      const mcpDetailsEl = document.getElementById('zai-mcp-details');
+      try {
+        const details = JSON.parse(q.usage_details_json || '[]');
+        if (details.length > 0) {
+          mcpDetailsEl.textContent = details.map(d => `${d.modelCode}: ${d.usage}`).join(' · ');
+        } else {
+          mcpDetailsEl.textContent = '';
+        }
+      } catch { mcpDetailsEl.textContent = ''; }
+    }
+  } else {
+    // Multiple accounts — render using worst (highest used pct) for bars
+    let worst5h = 0, worst5hReset = 0, worstWeek = -1, worstMcp = 0;
+    let worst5hAcct = null;
+    let levelStr = '';
+    for (const acct of accounts) {
+      const q = acct.quota;
+      if (!q) continue;
+      if (q.token_5h_pct > worst5h) {
+        worst5h = q.token_5h_pct;
+        worst5hReset = q.token_5h_reset;
+        worst5hAcct = acct;
+      }
+      if (q.token_week_pct >= 0) worstWeek = Math.max(worstWeek, q.token_week_pct);
+      worstMcp = Math.max(worstMcp, q.mcp_month_pct);
+      if (q.level && !levelStr) levelStr = `Lv.${q.level}`;
+    }
+    document.getElementById('zai-level').textContent = levelStr;
+    updateZaiBar('5h', worst5h);
+    document.getElementById('zai-reset-5h').textContent = fmtReset(worst5hReset);
     const weekRow = document.getElementById('zai-row-week');
-    if (q.token_week_pct >= 0) {
+    if (worstWeek >= 0) {
       weekRow.style.display = 'flex';
-      updateZaiBar('week', q.token_week_pct);
+      updateZaiBar('week', worstWeek);
     } else {
       weekRow.style.display = 'none';
     }
-
-    // MCP bar
-    updateZaiBar('mcp', q.mcp_month_pct);
+    updateZaiBar('mcp', worstMcp);
+    // Show per-account breakdown in MCP details area
+    const detailsEl = document.getElementById('zai-mcp-details');
+    const perAcct = accounts
+      .filter(a => a.quota)
+      .map(a => {
+        const label = a.label || 'GLM';
+        return `${label}: 5h ${a.quota.token_5h_pct}%`;
+      });
+    detailsEl.textContent = perAcct.join(' · ');
     const mcpExtra = document.getElementById('zai-extra-mcp');
-    if (q.mcp_total > 0) {
-      mcpExtra.textContent = `${q.mcp_used} / ${q.mcp_total}`;
+    if (worst5hAcct?.quota?.mcp_total > 0) {
+      mcpExtra.textContent = `${worst5hAcct.quota.mcp_used} / ${worst5hAcct.quota.mcp_total}`;
     }
-
-    // MCP usage details
-    const mcpDetailsEl = document.getElementById('zai-mcp-details');
-    try {
-      const details = JSON.parse(q.usage_details_json || '[]');
-      if (details.length > 0) {
-        mcpDetailsEl.textContent = details.map(d => `${d.modelCode}: ${d.usage}`).join(' · ');
-      } else {
-        mcpDetailsEl.textContent = '';
-      }
-    } catch { mcpDetailsEl.textContent = ''; }
   }
 
-  // Model usage chart + highlight
+  // Model usage chart + highlight (shared across accounts)
   const modelHighlightEl = document.getElementById('zai-model-highlight');
   const modelSummaryEl = document.getElementById('zai-model-summary');
   if (modelsData && !modelsData.error && modelsData.models) {
     const total = modelsData.total_tokens || 0;
     modelSummaryEl.textContent = `共 ${fmtTokens(total)} tokens · ${modelsData.total_calls || 0} calls`;
 
-    // GLM-5.1 highlight block (compact inline style)
     const mainModel = modelsData.models.find(m => m.name === 'GLM-5.1');
     if (mainModel) {
       modelHighlightEl.innerHTML = `
@@ -2207,9 +2336,7 @@ function renderZai(data, modelsData) {
       `;
     }
 
-    // Hourly trend chart
     renderZaiHourlyChart(modelsData);
-    // Model bar chart
     renderZaiModelBar(modelsData);
   } else {
     modelSummaryEl.textContent = modelsData?.error ? '加载失败' : '';
@@ -2443,7 +2570,16 @@ function renderMimo(data, history) {
   const noKey = document.getElementById('mimo-no-key');
   const content = document.getElementById('mimo-content');
 
-  if (data.status?.status === 'no_key') {
+  const accounts = data.accounts || [];
+
+  if (accounts.length === 0) {
+    noKey.style.display = 'block';
+    content.style.display = 'none';
+    return;
+  }
+
+  const hasData = accounts.some(a => a.status?.status !== 'no_key');
+  if (!hasData) {
     noKey.style.display = 'block';
     content.style.display = 'none';
     return;
@@ -2451,17 +2587,38 @@ function renderMimo(data, history) {
   noKey.style.display = 'none';
   content.style.display = 'block';
 
-  const q = data.quota;
   const box = document.getElementById('mimo-quotas');
   const planLabel = document.getElementById('mimo-plan-label');
   box.innerHTML = '';
 
-  if (q) {
+  // Render each account as a separate block
+  for (let i = 0; i < accounts.length; i++) {
+    const acct = accounts[i];
+    const q = acct.quota;
+    if (!q) continue;
+
+    const displayLabel = acct.label || 'MiMo';
+
+    // If multiple accounts, add a label header
+    if (accounts.length > 1) {
+      const headerRow = document.createElement('div');
+      headerRow.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)';
+      if (i > 0) headerRow.style.marginTop = '12px';
+      headerRow.innerHTML = `
+        <span style="font-weight:600;font-size:13px;color:var(--mimo-color)">${escapeHtml(displayLabel)}</span>
+      `;
+      box.appendChild(headerRow);
+    }
+
     const usedPct = q.month_percent * 100;
     const remainPct = 100 - usedPct;
     const fmtM = (v) => { const m = v / 1e6; return (m < 10 ? m.toFixed(2) : m.toFixed(1)) + 'M'; };
 
-    planLabel.textContent = `${q.plan_name} · 到期 ${q.period_end}`;
+    // Update plan label with first account's info
+    if (i === 0) {
+      const extraLabel = accounts.length > 1 ? ` (${accounts.length} 账号)` : '';
+      planLabel.textContent = `${q.plan_name} · 到期 ${q.period_end}${extraLabel}`;
+    }
 
     // Plan info row
     const info = document.createElement('div');
@@ -2792,14 +2949,25 @@ function formatDuration(ms) {
   return `${m}m`;
 }
 
+function latestTsFromArray(accounts) {
+  // Given an array of account objects, find the most recent lastTs
+  let latest = 0;
+  for (const acct of (accounts || [])) {
+    const ts = acct?.status?.lastTs;
+    if (ts && ts > latest) latest = ts;
+  }
+  return latest;
+}
+
 function updateFooter(data) {
   const now = new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-  const mmxTs = data?.minimax?.status?.lastTs ? new Date(data.minimax.status.lastTs).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : '--';
-  const dsTs = data?.deepseek?.status?.lastTs ? new Date(data.deepseek.status.lastTs).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : '--';
-  const zaiTs = data?.zai?.status?.lastTs ? new Date(data.zai.status.lastTs).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : '--';
-  const ccTs = data?.claude?.status?.lastTs ? new Date(data.claude.status.lastTs).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : '--';
+  const mmxTs = latestTsFromArray(data?.minimax);
+  const dsTs = latestTsFromArray(data?.deepseek);
+  const zaiTs = latestTsFromArray(data?.zai);
+  const ccTs = data?.claude?.status?.lastTs || 0;
+  const fmtTs = ts => ts ? new Date(ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : '--';
   document.getElementById('footer').textContent =
-    `最后更新: ${now}  ·  MMX🌐 ${mmxTs}  ·  DS ${dsTs}  ·  GLM ${zaiTs}  ·  CC ${ccTs}`;
+    `最后更新: ${now}  ·  MMX🌐 ${fmtTs(mmxTs)}  ·  DS ${fmtTs(dsTs)}  ·  GLM ${fmtTs(zaiTs)}  ·  CC ${fmtTs(ccTs)}`;
 }
 
 // ── Boot ─────────────────────────────────────────────────────────────────────
