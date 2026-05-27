@@ -32,6 +32,12 @@ const API_BASE = '';
 let rawData = [];
 let activeFilter = null;
 let activeService = 'minimax';
+let activeAccountLabel = ''; // filtered by account label for multi-account
+let activeAccountIdx = 0;    // account index within provider (0=first)
+let dsAccountsData = null;   // cached DeepSeek accounts response
+let zaiAccountsData = null;  // cached ZAI accounts response
+let mimoAccountsData = null; // cached MiMo accounts response
+let zaiModelsData = null;    // cached ZAI models data
 let chart = null;
 let weeklyBarChart = null;
 let dsUsageChart = null;
@@ -63,7 +69,6 @@ function init() {
 
   initTheme();
   buildFilterTabs();
-  bindServiceTabs();
   bindSettings();
 
   document.getElementById('refreshBtn').addEventListener('click', manualRefresh);
@@ -112,35 +117,136 @@ function updateThemeIcon(theme) {
   btn.title = theme === 'dark' ? '切换亮色模式' : '切换暗色模式';
 }
 
-// ── Service Tabs ─────────────────────────────────────────────────────────────
+// ── Service Tabs (dynamic, per-account) ────────────────────────────────────────
 
-function bindServiceTabs() {
+let tabsGenerated = false;
+
+function generateServiceTabs() {
+  // Build tab list from API data
+  const tabs = []; // {provider, label, display, accountIdx}
+
+  const mmxAccounts = Array.isArray(lastOverviewData?.minimax) ? lastOverviewData.minimax : [];
+  mmxAccounts.forEach((a, i) => tabs.push({
+    provider: 'minimax', label: a.label || '', display: 'MiniMax ' + (a.label || ''),
+    accountIdx: i
+  }));
+
+  const dsAccounts = Array.isArray(lastOverviewData?.deepseek) ? lastOverviewData.deepseek : [];
+  dsAccounts.forEach((a, i) => tabs.push({
+    provider: 'deepseek', label: a.label || '', display: 'DeepSeek' + (a.label ? ' ' + a.label : ''),
+    accountIdx: i
+  }));
+
+  const zaiAccounts = Array.isArray(lastOverviewData?.zai) ? lastOverviewData.zai : [];
+  zaiAccounts.forEach((a, i) => tabs.push({
+    provider: 'zai', label: a.label || '', display: 'GLM ' + (a.label || ''),
+    accountIdx: i
+  }));
+
+  // Claude (single)
+  if (lastOverviewData?.claude) {
+    tabs.push({ provider: 'claude', label: '', display: 'Claude', accountIdx: 0 });
+  }
+
+  const mimoAccounts = Array.isArray(lastOverviewData?.mimo) ? lastOverviewData.mimo : [];
+  mimoAccounts.forEach((a, i) => tabs.push({
+    provider: 'mimo', label: a.label || '', display: 'MiMo' + (a.label ? ' ' + a.label : ''),
+    accountIdx: i
+  }));
+
+  // Power
+  tabs.push({ provider: 'power', label: '', display: '⚡ Power', accountIdx: 0 });
+
+  // Preserve active tab selection across regenerations
+  let activeTabIdx = 0;
+  if (tabsGenerated) {
+    // Find the currently active tab
+    for (let i = 0; i < tabs.length; i++) {
+      if (tabs[i].provider === activeService && tabs[i].label === activeAccountLabel) {
+        activeTabIdx = i;
+        break;
+      }
+    }
+  }
+  tabsGenerated = true;
+
+  // Render tabs HTML
+  const container = document.getElementById('service-tabs');
+  container.innerHTML = tabs.map((t, i) => {
+    const activeCls = (i === activeTabIdx) ? ' active' : '';
+    return `<button class="service-tab${activeCls}" data-tab="${i}" data-provider="${t.provider}" data-label="${t.label}" data-idx="${t.accountIdx}">${t.display}</button>`;
+  }).join('');
+
+  // Restore active state
+  if (tabs.length > activeTabIdx) {
+    activeService = tabs[activeTabIdx].provider;
+    activeAccountLabel = tabs[activeTabIdx].label;
+    activeAccountIdx = tabs[activeTabIdx].accountIdx;
+    switchSection(activeService);
+  }
+
+  bindTabClicks();
+}
+
+function bindTabClicks() {
   document.querySelectorAll('.service-tab').forEach(tab => {
     tab.addEventListener('click', () => {
-      activeService = tab.dataset.service;
       document.querySelectorAll('.service-tab').forEach(t => t.classList.remove('active'));
       tab.classList.add('active');
-      document.querySelectorAll('.service-section').forEach(s => s.classList.remove('active'));
-      document.getElementById('sec-' + activeService).classList.add('active');
-      // Resize charts when switching tabs
-      setTimeout(() => {
-        chart?.resize();
-        weeklyBarChart?.resize();
-        dsUsageChart?.resize();
-        zaiHourlyChart?.resize();
-        zaiModelBar?.resize();
-        claudeHistoryChart?.resize();
-        mimoHistoryChart?.resize();
-        powerTrendChart?.resize();
-      }, 100);
-      // Power tab: start 1s polling
-      if (activeService === 'power') {
-        startPowerPolling();
-      } else {
-        stopPowerPolling();
-      }
+
+      activeService = tab.dataset.provider;
+      activeAccountLabel = tab.dataset.label || '';
+      activeAccountIdx = parseInt(tab.dataset.idx || '0');
+
+      switchSection(activeService);
+
+      // Re-render content for the selected account
+      refreshActiveSection();
     });
   });
+}
+
+function switchSection(provider) {
+  document.querySelectorAll('.service-section').forEach(s => s.classList.remove('active'));
+  const sec = document.getElementById('sec-' + provider);
+  if (sec) sec.classList.add('active');
+
+  // Resize charts after layout
+  setTimeout(() => {
+    chart?.resize();
+    weeklyBarChart?.resize();
+    dsUsageChart?.resize();
+    zaiHourlyChart?.resize();
+    zaiModelBar?.resize();
+    claudeHistoryChart?.resize();
+    mimoHistoryChart?.resize();
+    powerTrendChart?.resize();
+  }, 100);
+
+  if (provider === 'power') {
+    startPowerPolling();
+  } else {
+    stopPowerPolling();
+  }
+}
+
+function refreshActiveSection() {
+  switch (activeService) {
+    case 'minimax':
+      renderCards(activeFilter);
+      renderTable();
+      break;
+    case 'deepseek':
+      if (dsAccountsData) renderDeepSeek(dsAccountsData, activeAccountIdx);
+      break;
+    case 'zai':
+      if (zaiAccountsData) renderZai(zaiAccountsData, zaiModelsData, activeAccountIdx);
+      break;
+    case 'mimo':
+      if (mimoAccountsData) renderMimo(mimoAccountsData, activeAccountIdx);
+      break;
+    // claude and power don't need per-account refresh
+  }
 }
 
 // ── Settings Modal ───────────────────────────────────────────────────────────
@@ -581,7 +687,10 @@ async function fetchAll() {
     fetchThermal(),
   ]);
   // Render overview after all data is available (power/psu cost fetched in parallel)
-  if (lastOverviewData) renderOverview(lastOverviewData);
+  if (lastOverviewData) {
+    renderOverview(lastOverviewData);
+    generateServiceTabs();
+  }
 }
 
 let lastOverviewData = null;
@@ -652,7 +761,8 @@ async function fetchDeepSeekDetail() {
   try {
     const balanceRes = await fetch(`${API_BASE}/api/deepseek`);
     const balanceData = await balanceRes.json();
-    renderDeepSeek(balanceData);
+    dsAccountsData = balanceData;
+    renderDeepSeek(balanceData, activeAccountIdx);
   } catch (err) {
     console.error('fetchDeepSeekDetail error:', err);
   }
@@ -676,7 +786,9 @@ async function fetchZaiDetail() {
     ]);
     const quotaData = await quotaRes.json();
     const modelsData = await modelsRes.json();
-    renderZai(quotaData, modelsData);
+    zaiAccountsData = quotaData;
+    zaiModelsData = modelsData;
+    renderZai(quotaData, modelsData, activeAccountIdx);
   } catch (err) {
     console.error('fetchZaiDetail error:', err);
   }
@@ -700,7 +812,10 @@ async function fetchMimoDetail() {
       fetch(`${API_BASE}/api/mimo`),
       fetch(`${API_BASE}/api/mimo/history`),
     ]);
-    renderMimo(await quotaRes.json(), await historyRes.json());
+    const quotaData = await quotaRes.json();
+    const history = await historyRes.json();
+    mimoAccountsData = quotaData;
+    renderMimo(quotaData, history, activeAccountIdx);
   } catch (err) {
     console.error('fetchMimoDetail error:', err);
   }
@@ -894,21 +1009,14 @@ function renderOverview(data) {
 
 // ── Render DeepSeek Detail ──────────────────────────────────────────────────
 
-function renderDeepSeek(data) {
+function renderDeepSeek(data, accountIdx = 0) {
   const noKey = document.getElementById('ds-no-key');
   const content = document.getElementById('deepseek-content');
 
   const accounts = data.accounts || [];
+  const acct = accounts[accountIdx];
 
-  if (accounts.length === 0) {
-    noKey.style.display = 'block';
-    content.style.display = 'none';
-    return;
-  }
-
-  // Check if any account has a status other than no_key
-  const hasData = accounts.some(a => a.status?.status !== 'no_key');
-  if (!hasData) {
+  if (accounts.length === 0 || !acct || acct.status?.status === 'no_key') {
     noKey.style.display = 'block';
     content.style.display = 'none';
     return;
@@ -916,34 +1024,12 @@ function renderDeepSeek(data) {
   noKey.style.display = 'none';
   content.style.display = 'block';
 
-  // Build multi-account balance display
-  if (accounts.length === 1) {
-    // Single account — render as before
-    const acct = accounts[0];
-    const bal = acct.balance;
-    const label = acct.label || 'DeepSeek';
-    if (bal) {
-      document.getElementById('ds-balance-cny').textContent = '¥' + bal.total_balance_cny.toFixed(2);
-      document.getElementById('ds-balance-cny-sub').textContent = '';
-      document.getElementById('ds-balance-usd').textContent = '$' + bal.total_balance_usd.toFixed(2);
-      document.getElementById('ds-balance-usd-sub').textContent = '';
-    }
-  } else {
-    // Multiple accounts — sum CNY, show individual labels
-    let totalCny = 0, totalUsd = 0;
-    const details = [];
-    for (const acct of accounts) {
-      const bal = acct.balance;
-      const label = acct.label || 'DeepSeek';
-      if (bal) {
-        totalCny += bal.total_balance_cny || 0;
-        totalUsd += bal.total_balance_usd || 0;
-        details.push(`${label}: ¥${bal.total_balance_cny.toFixed(2)}`);
-      }
-    }
-    document.getElementById('ds-balance-cny').textContent = '¥' + totalCny.toFixed(2);
-    document.getElementById('ds-balance-cny-sub').textContent = details.join(' · ');
-    document.getElementById('ds-balance-usd').textContent = '$' + totalUsd.toFixed(2);
+  // Show per-account balance (tab already selects the account)
+  const bal = acct.balance;
+  if (bal) {
+    document.getElementById('ds-balance-cny').textContent = '¥' + bal.total_balance_cny.toFixed(2);
+    document.getElementById('ds-balance-cny-sub').textContent = acct.label || '';
+    document.getElementById('ds-balance-usd').textContent = '$' + bal.total_balance_usd.toFixed(2);
     document.getElementById('ds-balance-usd-sub').textContent = '';
   }
 }
@@ -1080,7 +1166,7 @@ function fmtTokens(n) {
   return String(n);
 }
 
-function renderZai(data, modelsData) {
+function renderZai(data, modelsData, accountIdx = 0) {
   const noKey = document.getElementById('zai-no-key');
   const content = document.getElementById('zai-content');
 
@@ -1092,8 +1178,9 @@ function renderZai(data, modelsData) {
     return;
   }
 
-  const hasData = accounts.some(a => a.status?.status !== 'no_key');
-  if (!hasData) {
+  // Select account by tab index
+  const acct = accounts[accountIdx] || accounts[0];
+  if (!acct || acct.status?.status === 'no_key') {
     noKey.style.display = 'block';
     content.style.display = 'none';
     return;
@@ -1101,77 +1188,33 @@ function renderZai(data, modelsData) {
   noKey.style.display = 'none';
   content.style.display = 'block';
 
-  // If single account, use the existing static HTML elements directly
-  if (accounts.length === 1) {
-    const acct = accounts[0];
-    const q = acct.quota;
-    if (q) {
-      document.getElementById('zai-level').textContent = q.level ? `Lv.${q.level}` : '';
-      updateZaiBar('5h', q.token_5h_pct);
-      document.getElementById('zai-reset-5h').textContent = fmtReset(q.token_5h_reset);
-      const weekRow = document.getElementById('zai-row-week');
-      if (q.token_week_pct >= 0) {
-        weekRow.style.display = 'flex';
-        updateZaiBar('week', q.token_week_pct);
-      } else {
-        weekRow.style.display = 'none';
-      }
-      updateZaiBar('mcp', q.mcp_month_pct);
-      const mcpExtra = document.getElementById('zai-extra-mcp');
-      if (q.mcp_total > 0) {
-        mcpExtra.textContent = `${q.mcp_used} / ${q.mcp_total}`;
-      }
-      const mcpDetailsEl = document.getElementById('zai-mcp-details');
-      try {
-        const details = JSON.parse(q.usage_details_json || '[]');
-        if (details.length > 0) {
-          mcpDetailsEl.textContent = details.map(d => `${d.modelCode}: ${d.usage}`).join(' · ');
-        } else {
-          mcpDetailsEl.textContent = '';
-        }
-      } catch { mcpDetailsEl.textContent = ''; }
-    }
-  } else {
-    // Multiple accounts — render using worst (highest used pct) for bars
-    let worst5h = 0, worst5hReset = 0, worstWeek = -1, worstMcp = 0;
-    let worst5hAcct = null;
-    let levelStr = '';
-    for (const acct of accounts) {
-      const q = acct.quota;
-      if (!q) continue;
-      if (q.token_5h_pct > worst5h) {
-        worst5h = q.token_5h_pct;
-        worst5hReset = q.token_5h_reset;
-        worst5hAcct = acct;
-      }
-      if (q.token_week_pct >= 0) worstWeek = Math.max(worstWeek, q.token_week_pct);
-      worstMcp = Math.max(worstMcp, q.mcp_month_pct);
-      if (q.level && !levelStr) levelStr = `Lv.${q.level}`;
-    }
-    document.getElementById('zai-level').textContent = levelStr;
-    updateZaiBar('5h', worst5h);
-    document.getElementById('zai-reset-5h').textContent = fmtReset(worst5hReset);
+  // Per-account quota display
+  const q = acct.quota;
+  if (q) {
+    document.getElementById('zai-level').textContent = q.level ? `Lv.${q.level}` : '';
+    updateZaiBar('5h', q.token_5h_pct);
+    document.getElementById('zai-reset-5h').textContent = fmtReset(q.token_5h_reset);
     const weekRow = document.getElementById('zai-row-week');
-    if (worstWeek >= 0) {
+    if (q.token_week_pct >= 0) {
       weekRow.style.display = 'flex';
-      updateZaiBar('week', worstWeek);
+      updateZaiBar('week', q.token_week_pct);
     } else {
       weekRow.style.display = 'none';
     }
-    updateZaiBar('mcp', worstMcp);
-    // Show per-account breakdown in MCP details area
-    const detailsEl = document.getElementById('zai-mcp-details');
-    const perAcct = accounts
-      .filter(a => a.quota)
-      .map(a => {
-        const label = a.label || 'GLM';
-        return `${label}: 5h ${a.quota.token_5h_pct}%`;
-      });
-    detailsEl.textContent = perAcct.join(' · ');
+    updateZaiBar('mcp', q.mcp_month_pct);
     const mcpExtra = document.getElementById('zai-extra-mcp');
-    if (worst5hAcct?.quota?.mcp_total > 0) {
-      mcpExtra.textContent = `${worst5hAcct.quota.mcp_used} / ${worst5hAcct.quota.mcp_total}`;
+    if (q.mcp_total > 0) {
+      mcpExtra.textContent = `${q.mcp_used} / ${q.mcp_total}`;
     }
+    const mcpDetailsEl = document.getElementById('zai-mcp-details');
+    try {
+      const details = JSON.parse(q.usage_details_json || '[]');
+      if (details.length > 0) {
+        mcpDetailsEl.textContent = details.map(d => `${d.modelCode}: ${d.usage}`).join(' · ');
+      } else {
+        mcpDetailsEl.textContent = '';
+      }
+    } catch { mcpDetailsEl.textContent = ''; }
   }
 
   // Model usage chart + highlight (shared across accounts)
@@ -1422,11 +1465,12 @@ function renderClaude(data, history) {
 }
 
 
-function renderMimo(data, history) {
+function renderMimo(data, history, accountIdx = 0) {
   const noKey = document.getElementById('mimo-no-key');
   const content = document.getElementById('mimo-content');
 
   const accounts = data.accounts || [];
+  const acct = accounts[accountIdx];
 
   if (accounts.length === 0) {
     noKey.style.display = 'block';
@@ -1434,8 +1478,7 @@ function renderMimo(data, history) {
     return;
   }
 
-  const hasData = accounts.some(a => a.status?.status !== 'no_key');
-  if (!hasData) {
+  if (!acct || acct.status?.status === 'no_key') {
     noKey.style.display = 'block';
     content.style.display = 'none';
     return;
@@ -1447,59 +1490,38 @@ function renderMimo(data, history) {
   const planLabel = document.getElementById('mimo-plan-label');
   box.innerHTML = '';
 
-  // Render each account as a separate block
-  for (let i = 0; i < accounts.length; i++) {
-    const acct = accounts[i];
-    const q = acct.quota;
-    if (!q) continue;
+  // Per-account rendering (tab selects the account)
+  const q = acct.quota;
+  if (!q) return;
 
-    const displayLabel = acct.label || 'MiMo';
+  const usedPct = q.month_percent * 100;
+  const fmtM = (v) => { const m = v / 1e6; return (m < 10 ? m.toFixed(2) : m.toFixed(1)) + 'M'; };
+  planLabel.textContent = `${q.plan_name} · 到期 ${q.period_end}`;
 
-    // If multiple accounts, add a label header
-    if (accounts.length > 1) {
-      const headerRow = document.createElement('div');
-      headerRow.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)';
-      if (i > 0) headerRow.style.marginTop = '12px';
-      headerRow.innerHTML = `
-        <span style="font-weight:600;font-size:13px;color:var(--mimo-color)">${escapeHtml(displayLabel)}</span>
-      `;
-      box.appendChild(headerRow);
-    }
+  // Plan info row
+  const info = document.createElement('div');
+  info.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)';
+  info.innerHTML = `
+    <span style="color:var(--muted);font-size:12px">套餐</span>
+    <span style="font-weight:600;color:${q.expired ? 'var(--red)' : 'var(--fg)'}">${q.plan_name}${q.expired ? ' (已过期)' : ''}</span>
+  `;
+  box.appendChild(info);
 
-    const usedPct = q.month_percent * 100;
-    const remainPct = 100 - usedPct;
-    const fmtM = (v) => { const m = v / 1e6; return (m < 10 ? m.toFixed(2) : m.toFixed(1)) + 'M'; };
-
-    // Update plan label with first account's info
-    if (i === 0) {
-      const extraLabel = accounts.length > 1 ? ` (${accounts.length} 账号)` : '';
-      planLabel.textContent = `${q.plan_name} · 到期 ${q.period_end}${extraLabel}`;
-    }
-
-    // Plan info row
-    const info = document.createElement('div');
-    info.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)';
-    info.innerHTML = `
-      <span style="color:var(--muted);font-size:12px">套餐</span>
-      <span style="font-weight:600;color:${q.expired ? 'var(--red)' : 'var(--fg)'}">${q.plan_name}${q.expired ? ' (已过期)' : ''}</span>
-    `;
-    box.appendChild(info);
-
-    // Usage bar
-    const usageRow = document.createElement('div');
-    usageRow.style.cssText = 'padding:8px 0;border-bottom:1px solid var(--border)';
-    usageRow.innerHTML = `
-      <div style="display:flex;justify-content:space-between;margin-bottom:6px">
-        <span style="color:var(--muted);font-size:12px">月用量</span>
-        <span style="font-weight:600">${fmtM(q.month_used)} / ${fmtM(q.month_limit)}</span>
-      </div>
-      <div style="background:var(--bg);border-radius:4px;height:8px;overflow:hidden">
-        <div style="height:100%;width:${Math.min(100, usedPct).toFixed(1)}%;background:${usedPct > 80 ? 'var(--red)' : usedPct > 50 ? 'var(--yellow)' : 'var(--mimo-color)'};border-radius:4px;transition:width 0.5s"></div>
-      </div>
-      <div style="display:flex;justify-content:space-between;margin-top:4px;font-size:10px;color:var(--muted)">
-        <span>已用 ${usedPct.toFixed(2)}%</span>
-        <span>剩余 ${fmtM(q.month_limit - q.month_used)}</span>
-      </div>
+  // Usage bar
+  const usageRow = document.createElement('div');
+  usageRow.style.cssText = 'padding:8px 0;border-bottom:1px solid var(--border)';
+  usageRow.innerHTML = `
+    <div style="display:flex;justify-content:space-between;margin-bottom:6px">
+      <span style="color:var(--muted);font-size:12px">月用量</span>
+      <span style="font-weight:600">${fmtM(q.month_used)} / ${fmtM(q.month_limit)}</span>
+    </div>
+    <div style="background:var(--bg);border-radius:4px;height:8px;overflow:hidden">
+      <div style="height:100%;width:${Math.min(100, usedPct).toFixed(1)}%;background:${usedPct > 80 ? 'var(--red)' : usedPct > 50 ? 'var(--yellow)' : 'var(--mimo-color)'};border-radius:4px;transition:width 0.5s"></div>
+    </div>
+    <div style="display:flex;justify-content:space-between;margin-top:4px;font-size:10px;color:var(--muted)">
+      <span>已用 ${usedPct.toFixed(2)}%</span>
+      <span>剩余 ${fmtM(q.month_limit - q.month_used)}</span>
+    </div>
     `;
     box.appendChild(usageRow);
 
@@ -1511,7 +1533,6 @@ function renderMimo(data, history) {
       <span>${q.period_end}</span>
     `;
     box.appendChild(periodRow);
-  }
 
   // History chart
   if (!mimoHistoryChart || !history || history.length === 0) return;
@@ -1634,9 +1655,14 @@ function buildFilterTabs() {
 // ── MiniMax Cards (unchanged logic) ─────────────────────────────────────────
 
 function getModelsToShow(filter) {
+  let data = rawData;
+  // Filter by active account label if set
+  if (activeAccountLabel) {
+    data = data.filter(m => (m.account_label || '') === activeAccountLabel);
+  }
   const cat = FILTER_CATEGORIES.find(c => c.label === filter) || FILTER_CATEGORIES[0];
-  if (!cat.models) return rawData;
-  return rawData.filter(m => cat.models.includes(m.model_name));
+  if (!cat.models) return data;
+  return data.filter(m => cat.models.includes(m.model_name));
 }
 
 function getDisplayName(name) { return DISPLAY_NAMES[name] || name; }
