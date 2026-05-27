@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="zh">
 <head>
   <meta charset="UTF-8" />
@@ -513,6 +513,19 @@
     .pct-badge.ok      { background: #1a4d2e; color: var(--green); }
     .pct-badge.low     { background: #4d3a1a; color: var(--yellow); }
     .pct-badge.very-low{ background: #4d1a1a; color: var(--red); }
+
+    .acct-badge {
+      display: inline-block;
+      padding: 0 5px;
+      border-radius: 4px;
+      font-size: 10px;
+      font-weight: 500;
+      background: var(--bg2);
+      color: var(--muted);
+      border: 1px solid var(--border);
+      margin-right: 4px;
+      vertical-align: middle;
+    }
 
     /* ── PSU Power ── */
     .psu-card { border-left: 3px solid var(--psu-color); }
@@ -2812,9 +2825,11 @@ function buildCardHTML(m, subtitle) {
 
   const barW = Math.min(100, intervalPct).toFixed(1);
 
+  const acctLabel = m.account_label ? `<span class="acct-badge">${escapeHtml(m.account_label)}</span>` : '';
+
   return `
     <div class="model-card">
-      <div class="model-name">${escapeHtml(getDisplayName(m.model_name))}</div>
+      <div class="model-name">${acctLabel}${escapeHtml(getDisplayName(m.model_name))}</div>
       ${subtitle ? `<div class="shared-quota-hint">${escapeHtml(subtitle)}</div>` : ''}
       <div class="quota-row">
         <span class="quota-label">5h窗口</span>
@@ -2879,7 +2894,7 @@ function renderTable() {
     const badge = (pct) => `<span class="pct-badge ${pctColor(pct)}">${pct.toFixed(1)}%</span>`;
 
     return `<tr>
-      <td>${escapeHtml(getDisplayName(m.model_name))}</td>
+      <td>${(m.account_label ? `<span class="acct-badge">${escapeHtml(m.account_label)}</span>` : '')}${escapeHtml(getDisplayName(m.model_name))}</td>
       <td>${m.current_interval_usage_count.toLocaleString()}</td>
       <td>${intervalLeft.toLocaleString()}</td>
       <td>${formatDuration(m.remains_time)}</td>
