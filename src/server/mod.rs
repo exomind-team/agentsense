@@ -17,8 +17,8 @@ use crate::quota::db::QuotaDb;
 pub struct AppState {
     pub db: Arc<tokio::sync::Mutex<QuotaDb>>,
     pub client: reqwest::Client,
-    /// (api_key, label) pairs for each configured MiniMax account
-    pub minimax_keys: Arc<tokio::sync::RwLock<Vec<(String, Option<String>)>>>,
+    /// (api_key, label, base_url) tuples for each configured MiniMax account
+    pub minimax_keys: Arc<tokio::sync::RwLock<Vec<(String, Option<String>, Option<String>)>>>,
     /// (api_key, label) pairs for each configured DeepSeek account
     pub deepseek_keys: Arc<tokio::sync::RwLock<Vec<(String, Option<String>)>>>,
     /// (auth_token, label) pairs for each configured Z.AI account
@@ -257,11 +257,11 @@ pub async fn do_poll(state: Arc<AppState>) {
         let db = state.db.clone();
         let client = state.client.clone();
         let mut handles = Vec::new();
-        for (key, label) in mmx_keys {
+        for (key, label, base_url) in mmx_keys {
             let client = client.clone();
             let label_str = label.clone();
             handles.push(tokio::spawn(async move {
-                let result = crate::quota::minimax::fetch(&client, &key).await;
+                let result = crate::quota::minimax::fetch(&client, &key, base_url.as_deref()).await;
                 (label_str, result)
             }));
         }

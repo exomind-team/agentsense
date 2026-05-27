@@ -32,7 +32,7 @@ pub struct QuotaOrchestrator {
     client: reqwest::Client,
     db: QuotaDb,
     deepseek: Vec<(String, Option<String>)>,
-    minimax: Vec<(String, Option<String>)>,
+    minimax: Vec<(String, Option<String>, Option<String>)>,
     zai: Vec<(String, Option<String>)>,
     mimo: Vec<(String, Option<String>)>,
     deepseek_platform: Vec<((String, String), Option<String>)>,
@@ -69,14 +69,15 @@ impl QuotaOrchestrator {
         let mmx_handles: Vec<_> = self
             .minimax
             .iter()
-            .map(|(key, label)| {
+            .map(|(key, label, base_url)| {
                 let key = key.clone();
                 let label = label.clone();
+                let base_url = base_url.clone();
                 let client = self.client.clone();
                 tokio::spawn(async move {
                     AccountResult {
                         label,
-                        result: minimax::fetch(&client, &key).await,
+                        result: minimax::fetch(&client, &key, base_url.as_deref()).await,
                     }
                 })
             })

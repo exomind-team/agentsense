@@ -55,9 +55,14 @@ struct ModelRemain {
 pub async fn fetch(
     client: &reqwest::Client,
     api_key: &str,
+    base_url: Option<&str>,
 ) -> Result<MinimaxSnapshot, AgentSenseError> {
+    let url = match base_url {
+        Some(u) => format!("{u}/v1/token_plan/remains"),
+        None => "https://api.minimax.io/v1/token_plan/remains".to_string(),
+    };
     let resp = client
-        .get("https://api.minimax.io/v1/token_plan/remains")
+        .get(&url)
         .header("Authorization", format!("Bearer {api_key}"))
         .timeout(std::time::Duration::from_secs(15))
         .send()

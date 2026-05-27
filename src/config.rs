@@ -73,6 +73,8 @@ pub struct KeyConfig {
     pub api_key: Option<String>,
     pub api_key_env: Option<String>,
     pub label: Option<String>,
+    #[serde(default)]
+    pub base_url: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -137,11 +139,12 @@ impl QuotaConfig {
             .unwrap_or_else(|| PathBuf::from("quota.db"))
     }
 
-    pub fn minimax_keys(&self) -> Vec<(String, Option<String>)> {
+    pub fn minimax_keys(&self) -> Vec<(String, Option<String>, Option<String>)> {
         self.minimax
             .iter()
             .filter_map(|c| {
-                resolve_key(&c.api_key, &c.api_key_env).map(|k| (k, c.label.clone()))
+                resolve_key(&c.api_key, &c.api_key_env)
+                    .map(|k| (k, c.label.clone(), c.base_url.clone()))
             })
             .collect()
     }

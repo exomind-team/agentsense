@@ -71,7 +71,7 @@ fn make_state_with_data() -> Arc<AppState> {
     Arc::new(AppState {
         db: Arc::new(tokio::sync::Mutex::new(db)),
         client: reqwest::Client::new(),
-        minimax_keys: Arc::new(tokio::sync::RwLock::new(vec![("test-minimax-key".into(), None)])),
+        minimax_keys: Arc::new(tokio::sync::RwLock::new(vec![("test-minimax-key".into(), None, None)])),
         deepseek_keys: Arc::new(tokio::sync::RwLock::new(vec![("test-deepseek-key".into(), None)])),
         zai_tokens: Arc::new(tokio::sync::RwLock::new(vec![("test-zai-token".into(), None)])),
         mimo_cookies: Arc::new(tokio::sync::RwLock::new(vec![])),
@@ -131,7 +131,7 @@ fn make_state_empty() -> Arc<AppState> {
     Arc::new(AppState {
         db: Arc::new(tokio::sync::Mutex::new(db)),
         client: reqwest::Client::new(),
-        minimax_keys: Arc::new(tokio::sync::RwLock::new(vec![("test-key".into(), None)])),
+        minimax_keys: Arc::new(tokio::sync::RwLock::new(vec![("test-key".into(), None, None)])),
         deepseek_keys: Arc::new(tokio::sync::RwLock::new(vec![("test-key".into(), None)])),
         zai_tokens: Arc::new(tokio::sync::RwLock::new(vec![("test-token".into(), None)])),
         mimo_cookies: Arc::new(tokio::sync::RwLock::new(vec![])),

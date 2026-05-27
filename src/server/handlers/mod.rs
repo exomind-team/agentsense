@@ -22,7 +22,7 @@ pub async fn api_all(State(state): State<Arc<AppState>>) -> axum::Json<serde_jso
     let mmx_keys = state.minimax_keys.read().await;
     let mut minimax_accounts = Vec::new();
     let now_ms = chrono::Utc::now().timestamp_millis();
-    for (_key, label) in mmx_keys.iter() {
+    for (_key, label, _base_url) in mmx_keys.iter() {
         let label_str = label.as_deref().unwrap_or("");
         let (mmx_ts, mmx_models) = db.latest_minimax_with_ts(label_str).unwrap_or((0, vec![]));
         let mmx_status = provider_status(true, if mmx_ts > 0 { Some(mmx_ts) } else { None });
@@ -142,7 +142,7 @@ pub async fn api_quota(State(state): State<Arc<AppState>>) -> axum::Json<serde_j
     let mmx_keys = state.minimax_keys.read().await;
     let mut remains = Vec::new();
     let now_ms = chrono::Utc::now().timestamp_millis();
-    for (_key, label) in mmx_keys.iter() {
+    for (_key, label, _base_url) in mmx_keys.iter() {
         let label_str = label.as_deref().unwrap_or("");
         let (_, models) = db.latest_minimax_with_ts(label_str).unwrap_or((0, vec![]));
         for m in &models {
@@ -405,7 +405,7 @@ pub async fn api_config_get(State(state): State<Arc<AppState>>) -> axum::Json<se
     // Return arrays of masked keys per provider for multi-account visibility
     let mmx_masked: Vec<serde_json::Value> = mmx
         .iter()
-        .map(|(k, label)| {
+        .map(|(k, label, _base_url)| {
             serde_json::json!({
                 "masked_key": mask(k),
                 "label": label,
@@ -485,7 +485,7 @@ pub async fn api_config_put(
     // For backward compat: accept single key and store as single-element Vec
     if let Some(ref key) = body.minimax_api_key {
         if !key.starts_with(masked_prefix) && !key.is_empty() {
-            *state.minimax_keys.write().await = vec![(key.clone(), None)];
+            *state.minimax_keys.write().await = vec![(key.clone(), None, None)];
         }
     }
     if let Some(ref key) = body.deepseek_api_key {
@@ -525,10 +525,11 @@ pub async fn api_config_put(
 
     config.quota.minimax = mmx
         .iter()
-        .map(|(k, label)| crate::config::KeyConfig {
+        .map(|(k, label, base_url)| crate::config::KeyConfig {
             api_key: Some(k.clone()),
             api_key_env: None,
             label: label.clone(),
+            base_url: base_url.clone(),
         })
         .collect();
     config.quota.deepseek = ds
@@ -537,6 +538,7 @@ pub async fn api_config_put(
             api_key: Some(k.clone()),
             api_key_env: None,
             label: label.clone(),
+            base_url: None,
         })
         .collect();
     config.quota.zai = zai
