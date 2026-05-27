@@ -22,14 +22,14 @@ pub struct QuotaConfig {
     pub poll_interval_secs: u64,
     pub proxy: Option<String>,
     pub db_path: Option<PathBuf>,
-    pub minimax: Option<KeyConfig>,
-    pub deepseek: Option<KeyConfig>,
+    pub minimax: Vec<KeyConfig>,
+    pub deepseek: Vec<KeyConfig>,
     #[serde(rename = "zai")]
-    pub zai: Option<ZaiKeyConfig>,
+    pub zai: Vec<ZaiKeyConfig>,
     #[serde(rename = "mimo")]
-    pub mimo: Option<MimoConfig>,
+    pub mimo: Vec<MimoConfig>,
     pub claude: Option<ClaudeConfig>,
-    pub deepseek_platform: Option<DeepSeekPlatformConfig>,
+    pub deepseek_platform: Vec<DeepSeekPlatformConfig>,
 }
 
 impl Default for QuotaConfig {
@@ -38,12 +38,12 @@ impl Default for QuotaConfig {
             poll_interval_secs: default_poll_interval(),
             proxy: None,
             db_path: None,
-            minimax: None,
-            deepseek: None,
-            zai: None,
-            mimo: None,
+            minimax: Vec::new(),
+            deepseek: Vec::new(),
+            zai: Vec::new(),
+            mimo: Vec::new(),
             claude: None,
-            deepseek_platform: None,
+            deepseek_platform: Vec::new(),
         }
     }
 }
@@ -62,23 +62,27 @@ pub struct DeepSeekPlatformConfig {
     pub bearer_token_env: Option<String>,
     pub cookies: Option<String>,
     pub cookies_env: Option<String>,
+    pub label: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct KeyConfig {
     pub api_key: Option<String>,
     pub api_key_env: Option<String>,
+    pub label: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct ZaiKeyConfig {
     pub auth_token: Option<String>,
     pub auth_token_env: Option<String>,
+    pub label: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct MimoConfig {
     pub cookie: Option<String>,
+    pub label: Option<String>,
 }
 
 fn default_poll_interval() -> u64 {
@@ -107,22 +111,31 @@ impl QuotaConfig {
             .unwrap_or_else(|| PathBuf::from("quota.db"))
     }
 
-    pub fn minimax_key(&self) -> Option<String> {
+    pub fn minimax_keys(&self) -> Vec<(String, Option<String>)> {
         self.minimax
-            .as_ref()
-            .and_then(|c| resolve_key(&c.api_key, &c.api_key_env))
+            .iter()
+            .filter_map(|c| {
+                resolve_key(&c.api_key, &c.api_key_env).map(|k| (k, c.label.clone()))
+            })
+            .collect()
     }
 
-    pub fn deepseek_key(&self) -> Option<String> {
+    pub fn deepseek_keys(&self) -> Vec<(String, Option<String>)> {
         self.deepseek
-            .as_ref()
-            .and_then(|c| resolve_key(&c.api_key, &c.api_key_env))
+            .iter()
+            .filter_map(|c| {
+                resolve_key(&c.api_key, &c.api_key_env).map(|k| (k, c.label.clone()))
+            })
+            .collect()
     }
 
-    pub fn zai_token(&self) -> Option<String> {
+    pub fn zai_tokens(&self) -> Vec<(String, Option<String>)> {
         self.zai
-            .as_ref()
-            .and_then(|c| resolve_key(&c.auth_token, &c.auth_token_env))
+            .iter()
+            .filter_map(|c| {
+                resolve_key(&c.auth_token, &c.auth_token_env).map(|k| (k, c.label.clone()))
+            })
+            .collect()
     }
 
     /// Resolved credentials path when Claude monitoring is active, else None.
@@ -137,22 +150,31 @@ impl QuotaConfig {
         path.exists().then_some(path)
     }
 
-    pub fn mimo_cookie(&self) -> Option<String> {
+    pub fn mimo_cookies(&self) -> Vec<(String, Option<String>)> {
         self.mimo
-            .as_ref()
-            .and_then(|c| c.cookie.clone())
-            .filter(|s| !s.is_empty())
+            .iter()
+            .filter_map(|c| {
+                c.cookie
+                    .clone()
+                    .filter(|s| !s.is_empty())
+                    .map(|k| (k, c.label.clone()))
+            })
+            .collect()
     }
 
-    pub fn deepseek_platform_creds(&self) -> Option<(String, String)> {
-        let cfg = self.deepseek_platform.as_ref()?;
-        let token = resolve_key(&cfg.bearer_token, &cfg.bearer_token_env)?;
-        let cookies = cfg.cookies.clone().or_else(|| {
-            cfg.cookies_env
-                .as_ref()
-                .and_then(|var| std::env::var(var).ok())
-        })?;
-        Some((token, cookies))
+    pub fn deepseek_platform_creds_list(&self) -> Vec<((String, String), Option<String>)> {
+        self.deepseek_platform
+            .iter()
+            .filter_map(|cfg| {
+                let token = resolve_key(&cfg.bearer_token, &cfg.bearer_token_env)?;
+                let cookies = cfg.cookies.clone().or_else(|| {
+                    cfg.cookies_env
+                        .as_ref()
+                        .and_then(|var| std::env::var(var).ok())
+                })?;
+                Some(((token, cookies), cfg.label.clone()))
+            })
+            .collect()
     }
 }
 
