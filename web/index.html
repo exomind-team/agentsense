@@ -688,81 +688,8 @@
   </div>
 </header>
 
-<!-- Three-column overview -->
-<div class="overview-grid" id="overview">
-  <div class="overview-card" id="ov-minimax">
-    <div class="ov-header">
-      <span class="ov-avatar mmx"></span>
-      <span class="ov-label">MiniMax 🌐</span>
-      <span class="ov-status" id="ov-minimax-status">--</span>
-    </div>
-    <div class="ov-value" id="ov-minimax-value">--</div>
-    <div class="ov-sub" id="ov-minimax-sub">MiniMax-M*</div>
-    <div class="ov-bar-wrap"><div class="ov-bar" id="ov-minimax-bar" style="width:0;background:var(--mmx-color)"></div></div>
-  </div>
-  <div class="overview-card" id="ov-deepseek">
-    <div class="ov-header">
-      <span class="ov-avatar ds"></span>
-      <span class="ov-label">DeepSeek</span>
-      <span class="ov-status" id="ov-deepseek-status">--</span>
-    </div>
-    <div class="ov-value" id="ov-deepseek-value">--</div>
-    <div class="ov-sub" id="ov-deepseek-sub">余额</div>
-    <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border)">
-      <div class="ov-value" id="ov-deepseek-daily" style="font-size:14px">--</div>
-      <div class="ov-sub" id="ov-deepseek-daily-sub">今日消耗</div>
-    </div>
-  </div>
-  <div class="overview-card" id="ov-zai">
-    <div class="ov-header">
-      <span class="ov-avatar zai"></span>
-      <span class="ov-label">GLM</span>
-      <span class="ov-status" id="ov-zai-status">--</span>
-    </div>
-    <div class="ov-value" id="ov-zai-value">--</div>
-    <div class="ov-sub" id="ov-zai-sub">5h 窗口</div>
-    <div class="ov-bar-wrap"><div class="ov-bar" id="ov-zai-bar" style="width:0;background:var(--zai-color)"></div></div>
-  </div>
-  <div class="overview-card" id="ov-claude">
-    <div class="ov-header">
-      <span class="ov-avatar claude"></span>
-      <span class="ov-label">Claude</span>
-      <span class="ov-status" id="ov-claude-status">--</span>
-    </div>
-    <div class="ov-value" id="ov-claude-value">--</div>
-    <div class="ov-sub" id="ov-claude-sub">5h 窗口</div>
-    <div class="ov-bar-wrap"><div class="ov-bar" id="ov-claude-bar" style="width:0;background:var(--claude-color)"></div></div>
-  </div>
-  <div class="overview-card psu-card" id="ov-power">
-    <div class="ov-header">
-      <span style="font-size:14px;">⚡</span>
-      <span class="ov-label">Power</span>
-      <span class="ov-status" id="ov-power-status">--</span>
-    </div>
-    <div class="ov-value" id="ov-power-value" style="color:var(--psu-color)">--</div>
-    <div class="ov-sub" id="ov-power-sub">AC 输入功率</div>
-    <div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);display:flex;justify-content:space-between;">
-      <div>
-        <div style="font-size:14px;font-weight:700;color:var(--text)" id="ov-power-kwh">--</div>
-        <div style="font-size:11px;color:var(--muted)">今日用电</div>
-      </div>
-      <div style="text-align:right;">
-        <div style="font-size:14px;font-weight:700;color:var(--text)" id="ov-power-cost">--</div>
-        <div style="font-size:11px;color:var(--muted)">今日电费</div>
-      </div>
-    </div>
-  </div>
-  <div class="overview-card" id="ov-mimo">
-    <div class="ov-header">
-      <span class="ov-avatar mimo"></span>
-      <span class="ov-label">MiMo</span>
-      <span class="ov-status" id="ov-mimo-status">--</span>
-    </div>
-    <div class="ov-value" id="ov-mimo-value">--</div>
-    <div class="ov-sub" id="ov-mimo-sub">月额度</div>
-    <div class="ov-bar-wrap"><div class="ov-bar" id="ov-mimo-bar" style="width:0;background:var(--mimo-color)"></div></div>
-  </div>
-</div>
+<!-- Three-column overview (dynamic, rendered by JS) -->
+<div class="overview-grid" id="overview"></div>
 
 <!-- Service tabs -->
 <div class="service-tabs">
@@ -1146,6 +1073,9 @@ let countdownSec = 60;
 let powerTrendChart = null;
 let powerPollInterval = null;
 let powerLocalStorage = []; // 30m buffer: {ts, ac_w}
+let powerOverviewData = null; // latest power snapshot for dynamic overview
+let psuEnergyToday = 0;
+let psuCostToday = 0;
 const POWER_LS_KEY = 'power_local_30m';
 const MAX_POWER_PTS = 1800;
 
@@ -1344,33 +1274,26 @@ async function fetchPowerOverview() {
   try {
     const res = await fetch(`${API_BASE}/api/power`);
     const d = await res.json();
+    powerOverviewData = d.connected ? d : null;
     const el = (id) => document.getElementById(id);
     if (!d.connected) {
-      el('ov-power-status').textContent = '未连接';
-      el('ov-power-status').className = 'ov-status yellow';
-      el('ov-power-value').textContent = '--';
-      el('ov-power-sub').textContent = 'AC 输入功率';
-      el('ov-power-kwh').textContent = '--';
-      el('ov-power-cost').textContent = '--';
-      el('psu-current-w').textContent = '--';
       // FIX 4: show no-key / hide content when disconnected
-      document.getElementById('power-no-key').style.display = 'block';
-      document.getElementById('power-content').style.display = 'none';
+      const pnk = document.getElementById('power-no-key');
+      const pc = document.getElementById('power-content');
+      if (pnk) pnk.style.display = 'block';
+      if (pc) pc.style.display = 'none';
       return;
     }
     // FIX 4: show content / hide no-key when connected
-    document.getElementById('power-no-key').style.display = 'none';
-    document.getElementById('power-content').style.display = 'block';
+    const pnk = document.getElementById('power-no-key');
+    const pc = document.getElementById('power-content');
+    if (pnk) pnk.style.display = 'none';
+    if (pc) pc.style.display = 'block';
 
-    el('ov-power-status').textContent = '已连接';
-    el('ov-power-status').className = 'ov-status ok';
-    // FIX 3: use fmtNum for all numeric fields
-    el('ov-power-value').textContent = fmtNum(d.ac_input_w, 0) + 'W';
-    el('ov-power-sub').textContent = 'AC 输入功率';
-    el('psu-current-w').textContent = fmtNum(d.ac_input_w, 0) + 'W';
-    el('psu-peak-w').textContent = fmtNum(d.today_peak_w, 0) + 'W';
-    el('psu-avg-w').textContent = fmtNum(d.today_avg_w, 0) + 'W';
-    el('psu-dc-w').textContent = '~' + fmtNum(d.dc_output_est_w, 0) + 'W';
+    if (el('psu-current-w')) el('psu-current-w').textContent = fmtNum(d.ac_input_w, 0) + 'W';
+    if (el('psu-peak-w')) el('psu-peak-w').textContent = fmtNum(d.today_peak_w, 0) + 'W';
+    if (el('psu-avg-w')) el('psu-avg-w').textContent = fmtNum(d.today_avg_w, 0) + 'W';
+    if (el('psu-dc-w')) el('psu-dc-w').textContent = '~' + fmtNum(d.dc_output_est_w, 0) + 'W';
     // Store in in-memory buffer; persist to localStorage throttled (FIX 8b)
     if (d.ac_input_w !== null && d.ac_input_w !== undefined) {
       powerLocalStorage.push({ ts: Date.now(), ac_w: d.ac_input_w });
@@ -1391,27 +1314,26 @@ async function fetchPsuCost() {
     const d = await res.json();
     const el = (id) => document.getElementById(id);
     if (!d.connected) {
-      el('ov-power-kwh').textContent = '--';
-      el('ov-power-cost').textContent = '--';
+      psuEnergyToday = 0;
+      psuCostToday = 0;
       return;
     }
-    // FIX 3: guard all deep numeric fields with optional chaining + fmtNum
-    el('ov-power-kwh').textContent = fmtNum(d.day?.kwh, 2) + ' kWh';
-    el('ov-power-cost').textContent = '¥' + fmtNum(d.day?.cost, 2);
-    el('psu-day-cost').textContent = '¥' + fmtNum(d.day?.cost, 2);
-    el('psu-day-kwh').textContent = fmtNum(d.day?.kwh, 2) + ' kWh';
-    el('psu-week-cost').textContent = '¥' + fmtNum(d.week?.cost, 2);
-    el('psu-week-kwh').textContent = fmtNum(d.week?.kwh, 1) + ' kWh';
-    el('psu-month-cost').textContent = '¥' + fmtNum(d.month?.cost, 2);
-    el('psu-month-kwh').textContent = fmtNum(d.month?.kwh, 1) + ' kWh';
-    el('psu-day-proj').textContent = '¥' + fmtNum(d.projected?.day?.cost, 2) + ' · ' + fmtNum(d.projected?.day?.kwh, 1) + ' kWh';
-    el('psu-week-proj').textContent = '¥' + fmtNum(d.projected?.week?.cost, 2) + ' · ' + fmtNum(d.projected?.week?.kwh, 1) + ' kWh';
-    el('psu-month-proj').textContent = '¥' + fmtNum(d.projected?.month?.cost, 2) + ' · ' + fmtNum(d.projected?.month?.kwh, 0) + ' kWh';
-    el('psu-price').textContent = '¥' + (d.price_per_kwh ?? '--') + '/kWh';
+    psuEnergyToday = d.day?.kwh ?? 0;
+    psuCostToday = d.day?.cost ?? 0;
+    if (el('psu-day-cost')) el('psu-day-cost').textContent = '¥' + fmtNum(d.day?.cost, 2);
+    if (el('psu-day-kwh')) el('psu-day-kwh').textContent = fmtNum(d.day?.kwh, 2) + ' kWh';
+    if (el('psu-week-cost')) el('psu-week-cost').textContent = '¥' + fmtNum(d.week?.cost, 2);
+    if (el('psu-week-kwh')) el('psu-week-kwh').textContent = fmtNum(d.week?.kwh, 1) + ' kWh';
+    if (el('psu-month-cost')) el('psu-month-cost').textContent = '¥' + fmtNum(d.month?.cost, 2);
+    if (el('psu-month-kwh')) el('psu-month-kwh').textContent = fmtNum(d.month?.kwh, 1) + ' kWh';
+    if (el('psu-day-proj')) el('psu-day-proj').textContent = '¥' + fmtNum(d.projected?.day?.cost, 2) + ' · ' + fmtNum(d.projected?.day?.kwh, 1) + ' kWh';
+    if (el('psu-week-proj')) el('psu-week-proj').textContent = '¥' + fmtNum(d.projected?.week?.cost, 2) + ' · ' + fmtNum(d.projected?.week?.kwh, 1) + ' kWh';
+    if (el('psu-month-proj')) el('psu-month-proj').textContent = '¥' + fmtNum(d.projected?.month?.cost, 2) + ' · ' + fmtNum(d.projected?.month?.kwh, 0) + ' kWh';
+    if (el('psu-price')) el('psu-price').textContent = '¥' + (d.price_per_kwh ?? '--') + '/kWh';
     const durS = d.monitoring_duration_s ?? 0;
     const h = Math.floor(durS / 3600);
     const m = Math.floor((durS % 3600) / 60);
-    el('psu-duration').textContent = h + 'h ' + m + 'm';
+    if (el('psu-duration')) el('psu-duration').textContent = h + 'h ' + m + 'm';
   } catch(e) { console.error('fetchPsuCost:', e); }
 }
 
@@ -1829,45 +1751,17 @@ function layoutOverview() {
   // Skip on narrow viewports — CSS media query already forces 1 column via !important
   if (window.innerWidth < 700) return;
 
-  const cardIds = ['ov-minimax', 'ov-deepseek', 'ov-zai', 'ov-claude', 'ov-power', 'ov-mimo'];
+  const grid = document.getElementById('overview');
+  const cards = grid.querySelectorAll('.overview-card');
   let visible = 0;
-
-  for (const id of cardIds) {
-    const card = document.getElementById(id);
-    if (!card) continue;
-
-    // Determine whether this card has real data.
-    // Quota cards: check if their status element has class 'no_key'.
-    // Power card: check if status text is '未连接' (disconnected).
-    const statusEl = card.querySelector('.ov-status');
-    let hide = false;
-    if (statusEl) {
-      if (statusEl.classList.contains('no_key')) {
-        hide = true;
-      }
-      // Power card: hide when disconnected (class is 'yellow', text '未连接')
-      if (id === 'ov-power' && statusEl.textContent.trim() === '未连接') {
-        hide = true;
-      }
-      // Also hide if value is still '--' AND sub is '未配置' (initial / no-data state)
-      const valEl = card.querySelector('.ov-value');
-      const subEl = card.querySelector('.ov-sub');
-      if (valEl && subEl && valEl.textContent.trim() === '--' && subEl.textContent.trim() === '未配置') {
-        hide = true;
-      }
-    }
-
-    card.style.display = hide ? 'none' : '';
-    if (!hide) visible++;
+  for (const card of cards) {
+    if (card.style.display !== 'none') visible++;
   }
 
-  // Compute balanced grid columns:
-  // rows = ceil(n/4), cols = ceil(n/rows)
-  // Verification: 1→1, 2→2, 3→3, 4→4, 5→3+2(cols=3), 6→3+3(cols=3), 7→4+3(cols=4), 8→4+4(cols=4)
   const n = visible;
   const rows = Math.ceil(n / 4);
   const cols = rows > 0 ? Math.max(1, Math.ceil(n / rows)) : 1;
-  document.getElementById('overview').style.gridTemplateColumns = 'repeat(' + cols + ', 1fr)';
+  grid.style.gridTemplateColumns = 'repeat(' + cols + ', 1fr)';
 }
 
 // ── Render Overview ──────────────────────────────────────────────────────────
@@ -1881,167 +1775,142 @@ function statusText(s) {
   return { text: s.status, cls: '' };
 }
 
+function ovCard(avatarCls, providerName, accountLabel, st, value, sub, barPct, barBg, extraHtml, isPsu) {
+  const avatarHtml = isPsu ? `<span style="font-size:14px;">⚡</span>` : `<span class="ov-avatar ${avatarCls}"></span>`;
+  const title = accountLabel ? `${providerName} ${accountLabel}` : providerName;
+  const barHtml = barPct != null ? `<div class="ov-bar-wrap"><div class="ov-bar" style="width:${barPct};background:${barBg}"></div></div>` : '';
+  const extra = extraHtml || '';
+  const hidden = (st.cls === 'no_key' || (value === '--' && sub === '未配置')) ? ' style="display:none"' : '';
+  const psuCls = isPsu ? ' psu-card' : '';
+  const valueStyle = isPsu ? ' style="color:var(--psu-color)"' : '';
+  return `<div class="overview-card${psuCls}"${hidden}>
+    <div class="ov-header">${avatarHtml}<span class="ov-label">${escapeHtml(title)}</span><span class="ov-status ${st.cls}">${st.text}</span></div>
+    <div class="ov-value"${valueStyle}>${value}</div>
+    <div class="ov-sub">${sub}</div>
+    ${barHtml}${extra}
+  </div>`;
+}
+
 function renderOverview(data) {
-  // MiniMax — array of accounts, aggregate across all
+  const cards = [];
+
+  // --- MiniMax: one card per account ---
   const mmxAccounts = Array.isArray(data.minimax) ? data.minimax : [];
-  const mmxStatus = mmxAccounts.length > 0 ? statusText(mmxAccounts[0]?.status) : statusText(null);
-  document.getElementById('ov-minimax-status').textContent = mmxStatus.text;
-  document.getElementById('ov-minimax-status').className = 'ov-status ' + mmxStatus.cls;
-  if (mmxAccounts.length === 0 || mmxStatus.cls === 'no_key') {
-    document.getElementById('ov-minimax-value').textContent = '--';
-    document.getElementById('ov-minimax-sub').textContent = '未配置';
-    document.getElementById('ov-minimax-bar').style.width = '0%';
-  } else {
-    // Find the M* model across all accounts; use the worst remainPct
-    let worstRemainPct = 100;
-    let worstLabel = '';
-    for (const acct of mmxAccounts) {
-      const models = acct.models || [];
-      const mmxM = models.find(m => m.model_name === 'MiniMax-M*');
-      if (mmxM) {
-        const intervalTotal = mmxM.current_interval_total_count;
-        const intervalUsed = mmxM.current_interval_usage_count;
-        const pct = intervalTotal > 0 ? ((1 - intervalUsed / intervalTotal) * 100) : 100;
-        if (pct < worstRemainPct) {
-          worstRemainPct = pct;
-          worstLabel = mmxAccounts.length > 1 ? (acct.label || 'MiniMax') : '';
-        }
-      }
+  for (const acct of mmxAccounts) {
+    const st = statusText(acct.status);
+    const models = acct.models || [];
+    const mmxM = models.find(m => m.model_name === 'MiniMax-M*');
+    let value = '--', sub = '等待中', barW = '0%', barBg = 'var(--mmx-color)';
+    if (mmxM && st.cls === 'ok') {
+      const pct = mmxM.current_interval_total_count > 0 ? ((1 - mmxM.current_interval_usage_count / mmxM.current_interval_total_count) * 100) : 100;
+      value = pct.toFixed(1) + '%';
+      sub = `剩余 ${(mmxM.current_interval_total_count - mmxM.current_interval_usage_count).toLocaleString()} / ${mmxM.current_interval_total_count.toLocaleString()}`;
+      barW = Math.min(100, pct).toFixed(1) + '%';
+      barBg = pct < 20 ? 'var(--red)' : pct < 40 ? 'var(--yellow)' : 'var(--mmx-color)';
     }
-    if (worstRemainPct < 100 || mmxAccounts.some(a => (a.models || []).find(m => m.model_name === 'MiniMax-M*'))) {
-      document.getElementById('ov-minimax-value').textContent = worstRemainPct.toFixed(1) + '%';
-      const label = mmxAccounts.length > 1 ? ` (${mmxAccounts.length} 账号)` : '';
-      // Show sub with the label of worst account if multiple
-      const worstAcct = mmxAccounts.find(a => {
-        const mmxM = (a.models || []).find(m => m.model_name === 'MiniMax-M*');
-        return mmxM && (mmxM.current_interval_total_count > 0 ? ((1 - mmxM.current_interval_usage_count / mmxM.current_interval_total_count) * 100) : 100) === worstRemainPct;
-      });
-      const wM = worstAcct ? (worstAcct.models || []).find(m => m.model_name === 'MiniMax-M*') : null;
-      const subText = wM ? `剩余 ${(wM.current_interval_total_count - wM.current_interval_usage_count).toLocaleString()} / ${wM.current_interval_total_count.toLocaleString()}${label}` : '';
-      document.getElementById('ov-minimax-sub').textContent = subText;
-      document.getElementById('ov-minimax-bar').style.width = Math.min(100, worstRemainPct).toFixed(1) + '%';
-      const color = worstRemainPct < 20 ? 'var(--red)' : worstRemainPct < 40 ? 'var(--yellow)' : 'var(--mmx-color)';
-      document.getElementById('ov-minimax-bar').style.background = color;
-    }
+    const label = acct.label || 'MiniMax';
+    cards.push(ovCard('mmx', 'MiniMax 🌐', label, st, value, sub, barW, barBg));
+  }
+  if (mmxAccounts.length === 0) {
+    cards.push(ovCard('mmx', 'MiniMax 🌐', null, statusText(null), '--', '未配置', '0%', 'var(--mmx-color)'));
   }
 
-  // DeepSeek — array of accounts, sum balances
+  // --- DeepSeek: one card per account ---
   const dsAccounts = Array.isArray(data.deepseek) ? data.deepseek : [];
-  const dsStatus = dsAccounts.length > 0 ? statusText(dsAccounts[0]?.status) : statusText(null);
-  document.getElementById('ov-deepseek-status').textContent = dsStatus.text;
-  document.getElementById('ov-deepseek-status').className = 'ov-status ' + dsStatus.cls;
-  if (dsAccounts.length === 0 || dsStatus.cls === 'no_key') {
-    document.getElementById('ov-deepseek-value').textContent = '--';
-    document.getElementById('ov-deepseek-sub').textContent = '未配置';
-  } else {
-    let totalCny = 0;
-    for (const acct of dsAccounts) {
-      if (acct.balance) totalCny += acct.balance.total_balance_cny || 0;
+  for (const acct of dsAccounts) {
+    const st = statusText(acct.status);
+    let value = '--', sub = '等待中';
+    if (acct.balance && st.cls === 'ok') {
+      value = '¥' + acct.balance.total_balance_cny.toFixed(2);
+      sub = '$' + acct.balance.total_balance_usd.toFixed(2);
     }
-    const subLabel = dsAccounts.length > 1 ? `${dsAccounts.length} 账号合计` : '';
-    document.getElementById('ov-deepseek-value').textContent = '¥' + totalCny.toFixed(2);
-    document.getElementById('ov-deepseek-sub').textContent = subLabel;
+    const label = acct.label || 'DeepSeek';
+    // DeepSeek Platform daily sub-display on first account
+    const dspToday = data.deepseek_platform?.today || [];
+    const dspConfigured = data.deepseek_platform?.configured;
+    let dailyHtml = '';
+    if (acct === dsAccounts[0]) {
+      const todayCost = dspToday.reduce((sum, u) => sum + u.cost_total, 0);
+      const costStr = dspToday.length > 0 ? '¥' + todayCost.toFixed(2) : (dspConfigured ? '¥0.00' : '--');
+      dailyHtml = `<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border)"><div class="ov-value" style="font-size:14px">${costStr}</div><div class="ov-sub">今日消耗</div></div>`;
+    }
+    cards.push(ovCard('ds', 'DeepSeek', label, st, value, sub, null, null, dailyHtml));
+  }
+  if (dsAccounts.length === 0) {
+    cards.push(ovCard('ds', 'DeepSeek', null, statusText(null), '--', '未配置', null, null));
   }
 
-  // DeepSeek Platform daily usage (overview card sub-display)
-  const dspToday = data.deepseek_platform?.today || [];
-  const dspConfigured = data.deepseek_platform?.configured;
-  if (dspToday.length > 0) {
-    const totalCost = dspToday.reduce((sum, u) => sum + u.cost_total, 0);
-    document.getElementById('ov-deepseek-daily').textContent = '¥' + totalCost.toFixed(2);
-    document.getElementById('ov-deepseek-daily-sub').textContent = '今日消耗';
-  } else {
-    document.getElementById('ov-deepseek-daily').textContent = dspConfigured ? '¥0.00' : '--';
-    document.getElementById('ov-deepseek-daily-sub').textContent = '今日消耗';
-  }
-
-  // Z.AI — array of accounts, show worst remaining
+  // --- Z.AI: one card per account ---
   const zaiAccounts = Array.isArray(data.zai) ? data.zai : [];
-  const zaiStatus = zaiAccounts.length > 0 ? statusText(zaiAccounts[0]?.status) : statusText(null);
-  document.getElementById('ov-zai-status').textContent = zaiStatus.text;
-  document.getElementById('ov-zai-status').className = 'ov-status ' + zaiStatus.cls;
-  if (zaiAccounts.length === 0 || zaiStatus.cls === 'no_key') {
-    document.getElementById('ov-zai-value').textContent = '--';
-    document.getElementById('ov-zai-sub').textContent = '未配置';
-    document.getElementById('ov-zai-bar').style.width = '0%';
-  } else {
-    // Show worst (lowest remaining) 5h pct across accounts
-    let worstRemain5h = 100;
-    let worstZaiQ = null;
-    for (const acct of zaiAccounts) {
-      const q = acct.quota;
-      if (q) {
-        const remain5h = 100 - q.token_5h_pct;
-        if (remain5h < worstRemain5h) {
-          worstRemain5h = remain5h;
-          worstZaiQ = q;
-        }
-      }
+  for (const acct of zaiAccounts) {
+    const st = statusText(acct.status);
+    let value = '--', sub = '等待中', barW = '0%', barBg = 'var(--zai-color)';
+    if (acct.quota && st.cls === 'ok') {
+      const remain = 100 - acct.quota.token_5h_pct;
+      const weekStr = acct.quota.token_week_pct >= 0 ? ` · 周 ${acct.quota.token_week_pct}%` : '';
+      value = remain + '%';
+      sub = `Lv.${acct.quota.level || '?'} · 5h 已用 ${acct.quota.token_5h_pct}%${weekStr}`;
+      barW = Math.min(100, remain) + '%';
+      barBg = remain < 20 ? 'var(--red)' : remain < 40 ? 'var(--yellow)' : 'var(--zai-color)';
     }
-    if (worstZaiQ) {
-      document.getElementById('ov-zai-value').textContent = worstRemain5h + '%';
-      const weekPct = worstZaiQ.token_week_pct;
-      const weekStr = (weekPct >= 0) ? ` · 周 ${weekPct}%` : '';
-      const acctLabel = zaiAccounts.length > 1 ? ` (${zaiAccounts.length} 账号)` : '';
-      document.getElementById('ov-zai-sub').textContent = `5h 已用 ${worstZaiQ.token_5h_pct}%${weekStr}${acctLabel}`;
-      document.getElementById('ov-zai-bar').style.width = Math.min(100, worstRemain5h) + '%';
-      const color = worstRemain5h < 20 ? 'var(--red)' : worstRemain5h < 40 ? 'var(--yellow)' : 'var(--zai-color)';
-      document.getElementById('ov-zai-bar').style.background = color;
-    }
+    const label = acct.label || 'GLM';
+    cards.push(ovCard('zai', 'GLM', label, st, value, sub, barW, barBg));
+  }
+  if (zaiAccounts.length === 0) {
+    cards.push(ovCard('zai', 'GLM', null, statusText(null), '--', '未配置', '0%', 'var(--zai-color)'));
   }
 
-  // Claude
-  const claudeStatus = statusText(data.claude?.status);
-  document.getElementById('ov-claude-status').textContent = claudeStatus.text;
-  document.getElementById('ov-claude-status').className = 'ov-status ' + claudeStatus.cls;
-  if (claudeStatus.cls === 'no_key') {
-    document.getElementById('ov-claude-value').textContent = '--';
-    document.getElementById('ov-claude-sub').textContent = '未配置';
-    document.getElementById('ov-claude-bar').style.width = '0%';
-  } else {
+  // --- Claude: single instance ---
+  {
+    const st = statusText(data.claude?.status);
+    let value = '--', sub = '未配置', barW = '0%', barBg = 'var(--claude-color)';
     const cQ = data.claude?.quota;
-    if (cQ) {
-      const remain5h = 100 - cQ.five_h_pct;
-      document.getElementById('ov-claude-value').textContent = remain5h + '%';
-      document.getElementById('ov-claude-sub').textContent = `5h 已用 ${cQ.five_h_pct}% · 7d ${cQ.seven_d_pct}%`;
-      document.getElementById('ov-claude-bar').style.width = Math.min(100, remain5h) + '%';
-      const color = remain5h < 20 ? 'var(--red)' : remain5h < 40 ? 'var(--yellow)' : 'var(--claude-color)';
-      document.getElementById('ov-claude-bar').style.background = color;
+    if (cQ && st.cls === 'ok') {
+      const remain = 100 - cQ.five_h_pct;
+      value = remain + '%';
+      sub = `5h 已用 ${cQ.five_h_pct}% · 7d ${cQ.seven_d_pct}%`;
+      barW = Math.min(100, remain) + '%';
+      barBg = remain < 20 ? 'var(--red)' : remain < 40 ? 'var(--yellow)' : 'var(--claude-color)';
     }
+    cards.push(ovCard('claude', 'Claude', null, st, value, sub, barW, barBg));
   }
-  // MiMo — array of accounts, show worst remaining
+
+  // --- Power ---
+  {
+    const st = { text: powerData ? '正常' : '未连接', cls: powerData ? 'ok' : '' };
+    let value = '--', sub = 'AC 输入功率', extraHtml = '';
+    if (powerData) {
+      value = powerData.ac_w.toFixed(1) + 'W';
+      const kWh = psuEnergyToday ?? 0;
+      const cost = psuCostToday ?? 0;
+      extraHtml = `<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);display:flex;justify-content:space-between;"><div><div style="font-size:14px;font-weight:700;color:var(--text)">${kWh.toFixed(3)}</div><div style="font-size:11px;color:var(--muted)">今日用电</div></div><div style="text-align:right;"><div style="font-size:14px;font-weight:700;color:var(--text)">¥${cost.toFixed(2)}</div><div style="font-size:11px;color:var(--muted)">今日电费</div></div></div>`;
+    }
+    cards.push(ovCard('psu', '⚡ Power', null, st, value, sub, null, null, extraHtml, true));
+  }
+
+  // --- MiMo: one card per account ---
   const mimoAccounts = Array.isArray(data.mimo) ? data.mimo : [];
-  const mimoStatus = mimoAccounts.length > 0 ? statusText(mimoAccounts[0]?.status) : statusText(null);
-  document.getElementById('ov-mimo-status').textContent = mimoStatus.text;
-  document.getElementById('ov-mimo-status').className = 'ov-status ' + mimoStatus.cls;
-  if (mimoAccounts.length === 0 || mimoStatus.cls === 'no_key') {
-    document.getElementById('ov-mimo-value').textContent = '--';
-    document.getElementById('ov-mimo-sub').textContent = '未配置';
-    document.getElementById('ov-mimo-bar').style.width = '0%';
-  } else {
-    // Show worst (lowest remaining) across accounts
-    let worstRemainPct = 100;
-    let worstMQ = null;
-    for (const acct of mimoAccounts) {
-      const mQ = acct.quota;
-      if (mQ) {
-        const remainPct = 100 - mQ.month_percent * 100;
-        if (remainPct < worstRemainPct) {
-          worstRemainPct = remainPct;
-          worstMQ = mQ;
-        }
-      }
-    }
-    if (worstMQ) {
+  for (const acct of mimoAccounts) {
+    const st = statusText(acct.status);
+    let value = '--', sub = '等待中', barW = '0%', barBg = 'var(--mimo-color)';
+    if (acct.quota && st.cls === 'ok') {
+      const remainPct = 100 - acct.quota.month_percent * 100;
       const fmtM = (v) => { const m = v / 1e6; return (m < 10 ? m.toFixed(2) : m.toFixed(1)) + 'M'; };
-      const acctLabel = mimoAccounts.length > 1 ? ` (${mimoAccounts.length} 账号)` : '';
-      document.getElementById('ov-mimo-value').textContent = worstRemainPct.toFixed(1) + '%';
-      document.getElementById('ov-mimo-sub').textContent = `${fmtM(worstMQ.month_limit - worstMQ.month_used)} 剩余 · ${worstMQ.plan_name}${acctLabel}`;
-      document.getElementById('ov-mimo-bar').style.width = Math.min(100, worstRemainPct) + '%';
-      const color = worstRemainPct < 20 ? 'var(--red)' : worstRemainPct < 40 ? 'var(--yellow)' : 'var(--mimo-color)';
-      document.getElementById('ov-mimo-bar').style.background = color;
+      value = remainPct.toFixed(1) + '%';
+      sub = `${fmtM(acct.quota.month_limit - acct.quota.month_used)} 剩余 · ${acct.quota.plan_name}`;
+      barW = Math.min(100, remainPct) + '%';
+      barBg = remainPct < 20 ? 'var(--red)' : remainPct < 40 ? 'var(--yellow)' : 'var(--mimo-color)';
     }
+    const label = acct.label || 'MiMo';
+    cards.push(ovCard('mimo', 'MiMo', label, st, value, sub, barW, barBg));
   }
+  if (mimoAccounts.length === 0) {
+    cards.push(ovCard('mimo', 'MiMo', null, statusText(null), '--', '未配置', '0%', 'var(--mimo-color)'));
+  }
+
+  // Render all cards into overview grid
+  const grid = document.getElementById('overview');
+  grid.innerHTML = cards.join('');
 
   // Re-compute visible cards and balanced grid columns after all statuses are set
   layoutOverview();
