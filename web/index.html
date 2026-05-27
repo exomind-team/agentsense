@@ -1901,8 +1901,7 @@ function renderOverview(data) {
     const dsBal = data.deepseek?.balance;
     if (dsBal) {
       document.getElementById('ov-deepseek-value').textContent = '¥' + dsBal.total_balance_cny.toFixed(2);
-      document.getElementById('ov-deepseek-sub').textContent =
-        '赠送 ¥' + dsBal.granted_cny.toFixed(2) + ' + 充值 ¥' + dsBal.topped_up_cny.toFixed(2);
+      document.getElementById('ov-deepseek-sub').textContent = '';
     }
   }
 
@@ -2003,8 +2002,7 @@ function renderDeepSeek(data) {
   const bal = data.balance;
   if (bal) {
     document.getElementById('ds-balance-cny').textContent = '¥' + bal.total_balance_cny.toFixed(2);
-    document.getElementById('ds-balance-cny-sub').textContent =
-      `赠送 ¥${bal.granted_cny.toFixed(2)} + 充值 ¥${bal.topped_up_cny.toFixed(2)}`;
+    document.getElementById('ds-balance-cny-sub').textContent = '';
     document.getElementById('ds-balance-usd').textContent = '$' + bal.total_balance_usd.toFixed(2);
   }
 }
