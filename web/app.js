@@ -854,7 +854,7 @@ function renderOverview(data) {
     const st = { text: powerOverviewData ? '正常' : '未连接', cls: powerOverviewData ? 'ok' : '' };
     let value = '--', sub = 'AC 输入功率', extraHtml = '';
     if (powerOverviewData) {
-      value = powerOverviewData.ac_w.toFixed(1) + 'W';
+      value = powerOverviewData.ac_input_w.toFixed(1) + 'W';
       const kWh = psuEnergyToday ?? 0;
       const cost = psuCostToday ?? 0;
       extraHtml = `<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);display:flex;justify-content:space-between;"><div><div style="font-size:14px;font-weight:700;color:var(--text)">${kWh.toFixed(3)}</div><div style="font-size:11px;color:var(--muted)">今日用电</div></div><div style="text-align:right;"><div style="font-size:14px;font-weight:700;color:var(--text)">¥${cost.toFixed(2)}</div><div style="font-size:11px;color:var(--muted)">今日电费</div></div></div>`;
