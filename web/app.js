@@ -26,6 +26,9 @@ const FILTER_CATEGORIES = [
 const LS_HISTORY_KEY = 'quota_local_history';
 const MAX_LOCAL_PTS = 60;
 const API_BASE = '';
+const COMMAND_HISTORY_KEY = 'command_usage_snapshots_v1';
+const COMMAND_HISTORY_WINDOW_MS = 6 * 60 * 60 * 1000;
+const MAX_COMMAND_HISTORY_PTS = 720;
 
 // ── State ───────────────────────────────────────────────────────────────────
 
@@ -40,6 +43,9 @@ let mimoAccountsData = null; // cached MiMo accounts response
 let zaiModelsData = null;    // cached ZAI models data
 let commandDemoData = null;  // cached personal command dashboard demo data
 let localUsageData = null;   // cached local Claude Code aggregate usage
+let commandTrendChart = null;
+let commandModelChart = null;
+let commandHistoryStorage = [];
 let chart = null;
 let weeklyBarChart = null;
 let dsUsageChart = null;
@@ -60,6 +66,8 @@ const MAX_POWER_PTS = 1800;
 // ── Init ─────────────────────────────────────────────────────────────────────
 
 function init() {
+  commandTrendChart = echarts.init(document.getElementById('command-trend-chart'), null, { renderer: 'canvas' });
+  commandModelChart = echarts.init(document.getElementById('command-model-chart'), null, { renderer: 'canvas' });
   chart = echarts.init(document.getElementById('trend-chart'), null, { renderer: 'canvas' });
   weeklyBarChart = echarts.init(document.getElementById('weekly-bar-chart'), null, { renderer: 'canvas' });
   zaiHourlyChart = echarts.init(document.getElementById('zai-hourly-chart'), null, { renderer: 'canvas' });
@@ -67,6 +75,7 @@ function init() {
   claudeHistoryChart = echarts.init(document.getElementById('claude-history-chart'), null, { renderer: 'canvas' });
   mimoHistoryChart = echarts.init(document.getElementById('mimo-history-chart'), null, { renderer: 'canvas' });
   powerTrendChart = echarts.init(document.getElementById('power-trend-chart'), null, { renderer: 'canvas' });
+  try { commandHistoryStorage = JSON.parse(localStorage.getItem(COMMAND_HISTORY_KEY) || '[]'); } catch(e) { commandHistoryStorage = []; }
   try { powerLocalStorage = JSON.parse(localStorage.getItem(POWER_LS_KEY) || '[]'); } catch(e) { powerLocalStorage = []; }
 
   initTheme();
@@ -76,6 +85,8 @@ function init() {
   document.getElementById('refreshBtn').addEventListener('click', manualRefresh);
   document.getElementById('theme-btn').addEventListener('click', toggleTheme);
   window.addEventListener('resize', () => {
+    commandTrendChart?.resize();
+    commandModelChart?.resize();
     chart?.resize();
     weeklyBarChart?.resize();
     dsUsageChart?.resize();
@@ -1152,6 +1163,208 @@ function renderCommandDemo(data) {
       <td>${p.model_count || 0}</td>
     </tr>
   `).join('') : '<tr><td colspan="3" style="color:var(--muted)">暂无工作区数据</td></tr>';
+
+  recordCommandSnapshot(data);
+  renderCommandTrend();
+  renderCommandModelChart(models);
+}
+
+function signalNumber(signals, path) {
+  const signal = (signals || []).find(s => s.path === path);
+  const value = Number(signal?.value);
+  return Number.isFinite(value) ? value : null;
+}
+
+function sanitizeCommandHistory(items) {
+  const cutoff = Date.now() - COMMAND_HISTORY_WINDOW_MS;
+  return (Array.isArray(items) ? items : [])
+    .filter(p => Number.isFinite(Number(p.ts)) && Number(p.ts) >= cutoff)
+    .map(p => ({
+      ts: Number(p.ts),
+      cost: Number(p.cost || 0),
+      tokens: Number(p.tokens || 0),
+      projects: Number(p.projects || 0),
+      sourcesOk: Number(p.sourcesOk || 0),
+      sourcesTotal: Number(p.sourcesTotal || 0),
+    }))
+    .slice(-MAX_COMMAND_HISTORY_PTS);
+}
+
+function recordCommandSnapshot(data) {
+  const signals = data?.signals || [];
+  const cost = signalNumber(signals, 'agent.usage.cost.aggregate');
+  const tokens = signalNumber(signals, 'agent.usage.tokens.total.aggregate');
+  const projects = signalNumber(signals, 'agent.usage.projects.count');
+  const sources = data?.sources || [];
+  const counts = data?.source_counts || {};
+  if (cost === null && tokens === null && projects === null && sources.length === 0) return;
+
+  const generated = Date.parse(data?.generated_at || '');
+  const point = {
+    ts: Number.isFinite(generated) ? generated : Date.now(),
+    cost: cost || 0,
+    tokens: tokens || 0,
+    projects: projects || 0,
+    sourcesOk: counts.ok || 0,
+    sourcesTotal: sources.length || 0,
+  };
+
+  const history = sanitizeCommandHistory(commandHistoryStorage);
+  const last = history.at(-1);
+  if (last && Math.abs(point.ts - last.ts) < 30_000) {
+    history[history.length - 1] = point;
+  } else {
+    history.push(point);
+  }
+  commandHistoryStorage = sanitizeCommandHistory(history);
+  localStorage.setItem(COMMAND_HISTORY_KEY, JSON.stringify(commandHistoryStorage));
+}
+
+function renderCommandTrend() {
+  if (!commandTrendChart) return;
+  const history = sanitizeCommandHistory(commandHistoryStorage);
+  const note = document.getElementById('command-trend-note');
+  const isDark = document.documentElement.getAttribute('data-theme') !== 'light';
+  const textColor = isDark ? '#8b949e' : '#656d76';
+  const splitColor = isDark ? '#21262d' : '#eaeef2';
+  const lineColor = '#14b8a6';
+  const tokenColor = '#388bfd';
+
+  if (note) {
+    if (history.length < 2) {
+      note.textContent = '已开始记录当前浏览器的聚合快照；第二次刷新后会形成走势。';
+    } else {
+      const first = new Date(history[0].ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+      const last = new Date(history.at(-1).ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+      note.textContent = `${history.length} 个采样点 · ${first} - ${last} · 只保存聚合数值。`;
+    }
+  }
+
+  commandTrendChart.setOption({
+    backgroundColor: 'transparent',
+    textStyle: { color: textColor, fontFamily: 'Cascadia Code, Consolas, monospace' },
+    grid: { left: 58, right: 58, top: 16, bottom: 32 },
+    tooltip: {
+      trigger: 'axis',
+      backgroundColor: isDark ? '#21262d' : '#f6f8fa',
+      borderColor: isDark ? '#30363d' : '#d0d7de',
+      textStyle: { color: isDark ? '#e6edf3' : '#1f2328', fontSize: 12 },
+      formatter: params => {
+        const t = new Date(params[0].value[0]).toLocaleString('zh-CN');
+        const rows = params.map(p => `${p.marker}${p.seriesName}: <b>${p.seriesName === '成本' ? fmtUsd(p.value[1]) : fmtTokens(p.value[1])}</b>`);
+        return `${rows.join('<br>')}<div style="color:${textColor};font-size:10px;margin-top:4px">${t}</div>`;
+      },
+    },
+    legend: { top: 0, right: 0, textStyle: { color: textColor, fontSize: 11 } },
+    xAxis: {
+      type: 'time',
+      axisLine: { lineStyle: { color: isDark ? '#30363d' : '#d0d7de' } },
+      axisLabel: { color: textColor, fontSize: 10 },
+      splitLine: { show: false },
+    },
+    yAxis: [
+      {
+        type: 'value',
+        name: 'USD',
+        nameTextStyle: { color: textColor, fontSize: 10 },
+        axisLine: { show: false },
+        axisLabel: { color: textColor, fontSize: 10, formatter: v => `$${Number(v).toFixed(0)}` },
+        splitLine: { lineStyle: { color: splitColor } },
+      },
+      {
+        type: 'value',
+        name: 'Token',
+        nameTextStyle: { color: textColor, fontSize: 10 },
+        axisLine: { show: false },
+        axisLabel: { color: textColor, fontSize: 10, formatter: v => fmtTokens(v) },
+        splitLine: { show: false },
+      },
+    ],
+    series: [
+      {
+        name: '成本',
+        type: 'line',
+        smooth: true,
+        symbol: history.length < 8 ? 'circle' : 'none',
+        yAxisIndex: 0,
+        lineStyle: { color: lineColor, width: 2 },
+        itemStyle: { color: lineColor },
+        areaStyle: { color: { type: 'linear', x: 0, y: 0, x2: 0, y2: 1, colorStops: [
+          { offset: 0, color: 'rgba(20,184,166,0.22)' },
+          { offset: 1, color: 'rgba(20,184,166,0.02)' },
+        ]}},
+        data: history.map(p => [p.ts, p.cost]),
+      },
+      {
+        name: 'Token',
+        type: 'line',
+        smooth: true,
+        symbol: history.length < 8 ? 'circle' : 'none',
+        yAxisIndex: 1,
+        lineStyle: { color: tokenColor, width: 2 },
+        itemStyle: { color: tokenColor },
+        data: history.map(p => [p.ts, p.tokens]),
+      },
+    ],
+  }, { notMerge: true });
+}
+
+function renderCommandModelChart(models) {
+  if (!commandModelChart) return;
+  const note = document.getElementById('command-model-note');
+  const top = (models || []).slice(0, 6).reverse();
+  const isDark = document.documentElement.getAttribute('data-theme') !== 'light';
+  const textColor = isDark ? '#8b949e' : '#656d76';
+  const splitColor = isDark ? '#21262d' : '#eaeef2';
+
+  if (note) {
+    note.textContent = top.length
+      ? `当前聚合快照 · Top ${top.length} 模型 · 后续可切换为按日/小时分布。`
+      : '暂无模型成本分布数据。';
+  }
+
+  commandModelChart.setOption({
+    backgroundColor: 'transparent',
+    textStyle: { color: textColor, fontFamily: 'Cascadia Code, Consolas, monospace' },
+    grid: { left: 118, right: 28, top: 12, bottom: 28 },
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'shadow' },
+      backgroundColor: isDark ? '#21262d' : '#f6f8fa',
+      borderColor: isDark ? '#30363d' : '#d0d7de',
+      textStyle: { color: isDark ? '#e6edf3' : '#1f2328', fontSize: 12 },
+      formatter: params => {
+        const model = params[0].name;
+        const cost = fmtUsd(params[0].value);
+        const source = top[params[0].dataIndex];
+        const tokens = source
+          ? fmtTokens((source.input_tokens || 0) + (source.output_tokens || 0) + (source.cache_read_tokens || 0) + (source.cache_creation_tokens || 0))
+          : '--';
+        return `${escapeHtml(model)}<br>${params[0].marker}成本: <b>${cost}</b><br><span style="color:${textColor}">Token: ${tokens}</span>`;
+      },
+    },
+    xAxis: {
+      type: 'value',
+      axisLine: { show: false },
+      axisLabel: { color: textColor, fontSize: 10, formatter: v => `$${Number(v).toFixed(0)}` },
+      splitLine: { lineStyle: { color: splitColor } },
+    },
+    yAxis: {
+      type: 'category',
+      data: top.map(m => m.model || '--'),
+      axisLine: { lineStyle: { color: isDark ? '#30363d' : '#d0d7de' } },
+      axisLabel: { color: textColor, fontSize: 10, width: 104, overflow: 'truncate' },
+    },
+    series: [{
+      type: 'bar',
+      data: top.map(m => Number(m.cost_usd || 0)),
+      barMaxWidth: 18,
+      itemStyle: {
+        borderRadius: [0, 4, 4, 0],
+        color: p => ['#14b8a6', '#388bfd', '#818cf8', '#3fb950', '#f59e0b', '#d97757'][p.dataIndex % 6],
+      },
+    }],
+  }, { notMerge: true });
 }
 
 function renderLocalUsage(data) {

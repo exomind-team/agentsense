@@ -66,6 +66,25 @@
   </div>
 
   <div class="command-layout">
+    <div class="table-section command-panel command-chart-panel">
+      <div class="command-chart-title">
+        <div class="section-title">实时采样趋势</div>
+        <span id="command-trend-window">近 6 小时</span>
+      </div>
+      <div id="command-trend-chart" class="command-chart" role="img" aria-label="Agent 使用实时采样趋势图"></div>
+      <div class="command-chart-note" id="command-trend-note">等待首次采样。</div>
+    </div>
+    <div class="table-section command-panel command-chart-panel">
+      <div class="command-chart-title">
+        <div class="section-title">模型成本分布</div>
+        <span>当前聚合</span>
+      </div>
+      <div id="command-model-chart" class="command-chart" role="img" aria-label="模型成本分布图"></div>
+      <div class="command-chart-note" id="command-model-note">等待模型聚合数据。</div>
+    </div>
+  </div>
+
+  <div class="command-layout">
     <div class="table-section command-panel">
       <div class="section-title">态势提示</div>
       <div id="command-alerts" class="command-alerts"></div>
