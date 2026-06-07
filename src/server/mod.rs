@@ -26,8 +26,7 @@ pub struct AppState {
     /// (cookie, label) pairs for each configured MiMo account
     pub mimo_cookies: Arc<tokio::sync::RwLock<Vec<(String, Option<String>)>>>,
     /// ((bearer_token, cookies), label) pairs for each configured DeepSeek Platform account
-    pub deepseek_platform_creds:
-        Arc<tokio::sync::RwLock<Vec<((String, String), Option<String>)>>>,
+    pub deepseek_platform_creds: Arc<tokio::sync::RwLock<Vec<((String, String), Option<String>)>>>,
     pub claude_creds: Arc<tokio::sync::RwLock<Option<PathBuf>>>,
     pub next_poll: Arc<AtomicI64>,
     pub last_claude_poll: Arc<AtomicI64>,
@@ -69,6 +68,8 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
         .route("/api/mimo/history", get(handlers::api_mimo_history))
         .route("/api/claude", get(handlers::api_claude))
         .route("/api/claude/history", get(handlers::api_claude_history))
+        .route("/api/command-demo", get(handlers::api_command_demo))
+        .route("/api/local-usage", get(handlers::api_local_usage))
         .route(
             "/api/config",
             get(handlers::api_config_get).put(handlers::api_config_put),
@@ -154,7 +155,9 @@ pub async fn serve(
             // IRPs/sec regardless of config — the trigger for the 0xD1 BSOD race.
             match wattson::PsuMonitor::new(&serial_cfg.port, mode)
                 .with_profile(profile)
-                .with_poll_interval(std::time::Duration::from_millis(serial_cfg.sample_interval_ms))
+                .with_poll_interval(std::time::Duration::from_millis(
+                    serial_cfg.sample_interval_ms,
+                ))
                 .start()
             {
                 Ok(handle) => {
@@ -436,9 +439,7 @@ pub async fn do_poll(state: Arc<AppState>) {
                 crate::quota::claude::fetch_with_creds(&client, &path).await
             })
             .await
-            .unwrap_or_else(|e| {
-                Err(AgentSenseError::Http(format!("Claude task panicked: {e}")))
-            });
+            .unwrap_or_else(|e| Err(AgentSenseError::Http(format!("Claude task panicked: {e}"))));
             match result {
                 Ok(snap) => {
                     let db_lock = db.lock().await;

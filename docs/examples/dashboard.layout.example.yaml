@@ -1,0 +1,165 @@
+version: 1
+
+dashboards:
+  - id: overview
+    title: 总览
+    grid:
+      columns: 12
+      rowHeight: 72
+      gap: 12
+    sections:
+      - id: today
+        title: 今日状态
+        widgets:
+          - id: agent-cost-today
+            type: metric-card
+            title: 今日 Agent 成本
+            bind:
+              kind: signal
+              path: agent.usage.cost.today
+            format:
+              unit: usd
+              precision: 2
+            layout: { x: 0, y: 0, w: 3, h: 2 }
+
+          - id: token-today
+            type: metric-card
+            title: 今日 Tokens
+            bind:
+              kind: signal
+              path: agent.usage.tokens.total.today
+            format:
+              unit: token
+              compact: true
+            layout: { x: 3, y: 0, w: 3, h: 2 }
+
+          - id: provider-health
+            type: status-grid
+            title: API 健康
+            bind:
+              kind: dataset
+              id: api.providers.health
+            layout: { x: 6, y: 0, w: 3, h: 2 }
+
+          - id: battery
+            type: quota-ring
+            title: 电量
+            bind:
+              kind: signal
+              path: device.power.battery.percent
+            fallback:
+              state: missing
+              message: 当前设备未提供电池数据
+            layout: { x: 9, y: 0, w: 3, h: 2 }
+
+      - id: usage
+        title: 使用分析
+        widgets:
+          - id: usage-trend
+            type: trend-chart
+            title: 近 7 天成本趋势
+            bind:
+              kind: dataset
+              id: agent.usage.by_day
+              window: 7d
+            series:
+              x: date
+              y: total_cost_usd
+            layout: { x: 0, y: 2, w: 6, h: 4 }
+
+          - id: model-usage
+            type: stacked-bar
+            title: 模型消耗分布
+            bind:
+              kind: dataset
+              id: agent.usage.by_model
+              window: 7d
+            series:
+              category: model
+              value: total_cost_usd
+            layout: { x: 6, y: 2, w: 6, h: 4 }
+
+          - id: project-table
+            type: entity-table
+            title: 高消耗工作区
+            bind:
+              kind: dataset
+              id: agent.usage.by_project
+              window: 7d
+            columns:
+              - key: project_label
+                label: 工作区
+              - key: total_cost_usd
+                label: 成本
+                format: usd
+              - key: input_tokens
+                label: 输入
+                format: compact-number
+              - key: output_tokens
+                label: 输出
+                format: compact-number
+            layout: { x: 0, y: 6, w: 12, h: 4 }
+
+  - id: sources
+    title: 来源
+    grid:
+      columns: 12
+      rowHeight: 72
+      gap: 12
+    sections:
+      - id: source-health
+        title: 数据来源
+        widgets:
+          - id: source-status
+            type: entity-table
+            title: 来源状态
+            bind:
+              kind: dataset
+              id: sources.status
+            columns:
+              - key: label
+                label: 名称
+              - key: kind
+                label: 类型
+              - key: state
+                label: 状态
+                format: status
+              - key: last_read_at
+                label: 最近读取
+                format: datetime
+            layout: { x: 0, y: 0, w: 12, h: 5 }
+
+  - id: api
+    title: API
+    grid:
+      columns: 12
+      rowHeight: 72
+      gap: 12
+    sections:
+      - id: api-quota
+        title: 余额与额度
+        widgets:
+          - id: quota-table
+            type: entity-table
+            title: 账号额度
+            bind:
+              kind: dataset
+              id: api.quota.by_account
+            columns:
+              - key: provider
+                label: Provider
+              - key: account_label
+                label: 账号
+              - key: balance_usd
+                label: 余额
+                format: usd
+              - key: quota_remaining
+                label: 剩余额度
+                format: compact-number
+              - key: reset_at
+                label: 重置时间
+                format: datetime
+              - key: state
+                label: 状态
+                format: status
+            layout: { x: 0, y: 0, w: 12, h: 5 }

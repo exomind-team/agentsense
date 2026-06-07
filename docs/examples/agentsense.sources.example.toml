@@ -1,0 +1,104 @@
+# AgentSense source registry example.
+# This file is safe to sync because it stores secret references, not secret values.
+
+[profile]
+id = "personal-default"
+label = "Personal AI Dashboard"
+
+[[sources]]
+id = "claude-code-local"
+kind = "claude_code_local"
+label = "Claude Code local"
+enabled = true
+scope = "local"
+refresh_mode = "on_request"
+path = "${USERPROFILE}\\.claude.json"
+capabilities = ["agent_usage", "model_usage", "project_usage"]
+
+[[sources]]
+id = "claude-stats-cache"
+kind = "claude_code_local"
+label = "Claude stats cache"
+enabled = true
+scope = "local"
+refresh_mode = "on_request"
+path = "${USERPROFILE}\\.claude\\stats-cache.json"
+capabilities = ["agent_usage", "daily_usage", "model_usage"]
+
+[[sources]]
+id = "codex-local"
+kind = "codex_local"
+label = "Codex local state"
+enabled = true
+scope = "local"
+refresh_mode = "on_request"
+path = "${USERPROFILE}\\.codex\\state_5.sqlite"
+capabilities = ["agent_usage", "session_health", "model_usage"]
+
+[[sources]]
+id = "cc-switch"
+kind = "cc_switch"
+label = "CC Switch"
+enabled = true
+scope = "local"
+refresh_mode = "on_request"
+path = "${USERPROFILE}\\.cc-switch\\cc-switch.db"
+capabilities = ["agent_usage", "provider_health", "model_pricing"]
+
+[[sources]]
+id = "newapi-main"
+kind = "newapi"
+label = "NewAPI main"
+enabled = false
+scope = "remote"
+base_url = "https://example-newapi.local"
+refresh_mode = "interval"
+refresh_interval_seconds = 300
+capabilities = ["api_balance", "api_quota", "api_key_status", "provider_health"]
+
+[sources.auth]
+type = "pat"
+secret_ref = "env:NEWAPI_TOKEN"
+
+[sources.endpoints]
+status = "/api/status"
+quota = "/api/quota"
+keys = "/api/keys"
+channels = "/api/channels"
+
+[[sources]]
+id = "sub2api-main"
+kind = "sub2api"
+label = "Sub2API main"
+enabled = false
+scope = "remote"
+base_url = "https://example-sub2api.local"
+refresh_mode = "interval"
+refresh_interval_seconds = 300
+capabilities = ["api_balance", "api_quota", "provider_health"]
+
+[sources.auth]
+type = "bearer"
+secret_ref = "env:SUB2API_TOKEN"
+
+[[sources]]
+id = "windows-power"
+kind = "system_api"
+label = "Windows power"
+enabled = true
+scope = "local"
+refresh_mode = "interval"
+refresh_interval_seconds = 60
+capabilities = ["device_power", "battery", "ac_power"]
+
+[[sources]]
+id = "custom-power"
+kind = "custom_script"
+label = "Custom desktop power monitor"
+enabled = false
+scope = "local"
+refresh_mode = "interval"
+refresh_interval_seconds = 60
+command = "powershell.exe"
+args = ["-File", "${USERPROFILE}\\scripts\\power-monitor.ps1"]
+capabilities = ["device_power"]

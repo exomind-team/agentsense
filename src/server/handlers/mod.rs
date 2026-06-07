@@ -15,8 +15,8 @@ static STYLE_CSS: &str = include_str!("../../../web/style.css");
 
 /// Serve a file from disk if available, otherwise use embedded content.
 fn serve_file(name: &str, embedded: &'static str, content_type: &'static str) -> Response {
-    let body = std::fs::read_to_string(format!("web/{name}"))
-        .unwrap_or_else(|_| embedded.to_string());
+    let body =
+        std::fs::read_to_string(format!("web/{name}")).unwrap_or_else(|_| embedded.to_string());
     Response::builder()
         .header("content-type", content_type)
         .body(body.into())
@@ -86,10 +86,7 @@ pub async fn api_all(State(state): State<Arc<AppState>>) -> axum::Json<serde_jso
     for (_key, label) in ds_keys.iter() {
         let label_str = label.as_deref().unwrap_or("");
         let ds_balance = db.latest_deepseek(label_str).unwrap_or_default();
-        let ds_status = provider_status(
-            true,
-            ds_balance.as_ref().map(|s| s.timestamp),
-        );
+        let ds_status = provider_status(true, ds_balance.as_ref().map(|s| s.timestamp));
         deepseek_accounts.push(serde_json::json!({
             "label": label,
             "balance": ds_balance,
@@ -103,10 +100,7 @@ pub async fn api_all(State(state): State<Arc<AppState>>) -> axum::Json<serde_jso
     for (_key, label) in zai_keys.iter() {
         let label_str = label.as_deref().unwrap_or("");
         let zai_quota = db.latest_zai(label_str).unwrap_or_default();
-        let zai_status = provider_status(
-            true,
-            zai_quota.as_ref().map(|s| s.timestamp),
-        );
+        let zai_status = provider_status(true, zai_quota.as_ref().map(|s| s.timestamp));
         zai_accounts.push(serde_json::json!({
             "label": label,
             "quota": zai_quota,
@@ -120,10 +114,7 @@ pub async fn api_all(State(state): State<Arc<AppState>>) -> axum::Json<serde_jso
     for (_key, label) in mimo_keys.iter() {
         let label_str = label.as_deref().unwrap_or("");
         let mimo_quota = db.latest_mimo(label_str).unwrap_or_default();
-        let mimo_status = provider_status(
-            true,
-            mimo_quota.as_ref().map(|s| s.timestamp),
-        );
+        let mimo_status = provider_status(true, mimo_quota.as_ref().map(|s| s.timestamp));
         mimo_accounts.push(serde_json::json!({
             "label": label,
             "quota": mimo_quota,
@@ -142,7 +133,8 @@ pub async fn api_all(State(state): State<Arc<AppState>>) -> axum::Json<serde_jso
     let dsp_creds = state.deepseek_platform_creds.read().await;
     let dsp_today = db.deepseek_platform_today().unwrap_or_default();
     let dsp_configured = !dsp_creds.is_empty();
-    let dsp_labels: Vec<Option<String>> = dsp_creds.iter().map(|(_, label)| label.clone()).collect();
+    let dsp_labels: Vec<Option<String>> =
+        dsp_creds.iter().map(|(_, label)| label.clone()).collect();
 
     axum::Json(serde_json::json!({
         "minimax": minimax_accounts,
@@ -243,10 +235,7 @@ pub async fn api_deepseek(State(state): State<Arc<AppState>>) -> axum::Json<serd
     for (_key, label) in ds_keys.iter() {
         let label_str = label.as_deref().unwrap_or("");
         let balance = db.latest_deepseek(label_str).unwrap_or_default();
-        let status = provider_status(
-            true,
-            balance.as_ref().map(|s| s.timestamp),
-        );
+        let status = provider_status(true, balance.as_ref().map(|s| s.timestamp));
         accounts.push(serde_json::json!({
             "label": label,
             "balance": balance,
@@ -303,10 +292,7 @@ pub async fn api_zai(State(state): State<Arc<AppState>>) -> axum::Json<serde_jso
     for (_key, label) in zai_keys.iter() {
         let label_str = label.as_deref().unwrap_or("");
         let quota = db.latest_zai(label_str).unwrap_or_default();
-        let status = provider_status(
-            true,
-            quota.as_ref().map(|s| s.timestamp),
-        );
+        let status = provider_status(true, quota.as_ref().map(|s| s.timestamp));
         accounts.push(serde_json::json!({
             "label": label,
             "quota": quota,
@@ -388,10 +374,7 @@ pub async fn api_mimo(State(state): State<Arc<AppState>>) -> axum::Json<serde_js
     for (_key, label) in mimo_keys.iter() {
         let label_str = label.as_deref().unwrap_or("");
         let quota = db.latest_mimo(label_str).unwrap_or_default();
-        let status = provider_status(
-            true,
-            quota.as_ref().map(|s| s.timestamp),
-        );
+        let status = provider_status(true, quota.as_ref().map(|s| s.timestamp));
         accounts.push(serde_json::json!({
             "label": label,
             "quota": quota,
@@ -608,6 +591,457 @@ pub async fn api_refresh(State(state): State<Arc<AppState>>) -> axum::Json<serde
     axum::Json(serde_json::json!({
         "ok": true,
         "_nextPoll": state.next_poll.load(std::sync::atomic::Ordering::Relaxed),
+    }))
+}
+
+#[derive(Default, Clone)]
+struct UsageTotals {
+    cost_usd: f64,
+    input_tokens: i64,
+    output_tokens: i64,
+    cache_read_tokens: i64,
+    cache_creation_tokens: i64,
+    web_search_requests: i64,
+}
+
+fn json_i64(obj: &serde_json::Value, key: &str) -> i64 {
+    obj.get(key)
+        .and_then(|v| {
+            v.as_i64()
+                .or_else(|| v.as_u64().map(|u| u.min(i64::MAX as u64) as i64))
+        })
+        .unwrap_or(0)
+}
+
+fn json_f64(obj: &serde_json::Value, key: &str) -> f64 {
+    obj.get(key).and_then(|v| v.as_f64()).unwrap_or(0.0)
+}
+
+fn workspace_label(path: &str) -> String {
+    path.replace('\\', "/")
+        .split('/')
+        .filter(|part| !part.is_empty())
+        .last()
+        .unwrap_or(path)
+        .to_string()
+}
+
+pub async fn api_local_usage() -> axum::Json<serde_json::Value> {
+    let Some(home) = dirs::home_dir() else {
+        return axum::Json(serde_json::json!({
+            "configured": false,
+            "status": {"state": "missing_home", "message": "home directory unavailable"}
+        }));
+    };
+    let path = home.join(".claude.json");
+    if !path.exists() {
+        return axum::Json(serde_json::json!({
+            "configured": false,
+            "status": {"state": "missing", "message": ".claude.json not found"}
+        }));
+    }
+
+    let last_modified = std::fs::metadata(&path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+
+    let raw = match std::fs::read_to_string(&path) {
+        Ok(raw) => raw,
+        Err(e) => {
+            return axum::Json(serde_json::json!({
+                "configured": true,
+                "status": {"state": "read_error", "message": e.to_string()}
+            }));
+        }
+    };
+    let root: serde_json::Value = match serde_json::from_str(&raw) {
+        Ok(root) => root,
+        Err(e) => {
+            return axum::Json(serde_json::json!({
+                "configured": true,
+                "status": {"state": "parse_error", "message": e.to_string()}
+            }));
+        }
+    };
+
+    let mut total = UsageTotals::default();
+    let mut top_projects: Vec<serde_json::Value> = Vec::new();
+    let mut model_totals = std::collections::BTreeMap::<String, UsageTotals>::new();
+    let projects = root
+        .get("projects")
+        .and_then(|v| v.as_object())
+        .cloned()
+        .unwrap_or_default();
+
+    for (project_path, project) in projects {
+        let cost = json_f64(&project, "lastCost");
+        let input = json_i64(&project, "lastTotalInputTokens");
+        let output = json_i64(&project, "lastTotalOutputTokens");
+        let cache_read = json_i64(&project, "lastTotalCacheReadInputTokens");
+        let cache_create = json_i64(&project, "lastTotalCacheCreationInputTokens");
+        let web_search = json_i64(&project, "lastTotalWebSearchRequests");
+        let model_count = project
+            .get("lastModelUsage")
+            .and_then(|v| v.as_object())
+            .map(|m| m.len())
+            .unwrap_or(0);
+
+        if cost == 0.0 && input == 0 && output == 0 && cache_read == 0 && cache_create == 0 {
+            continue;
+        }
+
+        total.cost_usd += cost;
+        total.input_tokens += input;
+        total.output_tokens += output;
+        total.cache_read_tokens += cache_read;
+        total.cache_creation_tokens += cache_create;
+        total.web_search_requests += web_search;
+
+        if let Some(models) = project.get("lastModelUsage").and_then(|v| v.as_object()) {
+            for (name, usage) in models {
+                let entry = model_totals.entry(name.clone()).or_default();
+                entry.cost_usd += json_f64(usage, "costUSD");
+                entry.input_tokens += json_i64(usage, "inputTokens");
+                entry.output_tokens += json_i64(usage, "outputTokens");
+                entry.cache_read_tokens += json_i64(usage, "cacheReadInputTokens");
+                entry.cache_creation_tokens += json_i64(usage, "cacheCreationInputTokens");
+                entry.web_search_requests += json_i64(usage, "webSearchRequests");
+            }
+        }
+
+        top_projects.push(serde_json::json!({
+            "workspace": workspace_label(&project_path),
+            "cost_usd": cost,
+            "input_tokens": input,
+            "output_tokens": output,
+            "cache_read_tokens": cache_read,
+            "cache_creation_tokens": cache_create,
+            "web_search_requests": web_search,
+            "model_count": model_count,
+        }));
+    }
+
+    top_projects.sort_by(|a, b| {
+        let ac = a.get("cost_usd").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let bc = b.get("cost_usd").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        bc.partial_cmp(&ac).unwrap_or(std::cmp::Ordering::Equal)
+    });
+    top_projects.truncate(8);
+
+    let mut models: Vec<_> = model_totals
+        .into_iter()
+        .map(|(name, usage)| {
+            serde_json::json!({
+                "model": name,
+                "cost_usd": usage.cost_usd,
+                "input_tokens": usage.input_tokens,
+                "output_tokens": usage.output_tokens,
+                "cache_read_tokens": usage.cache_read_tokens,
+                "cache_creation_tokens": usage.cache_creation_tokens,
+                "web_search_requests": usage.web_search_requests,
+            })
+        })
+        .collect();
+    models.sort_by(|a, b| {
+        let ac = a.get("cost_usd").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let bc = b.get("cost_usd").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        bc.partial_cmp(&ac).unwrap_or(std::cmp::Ordering::Equal)
+    });
+    models.truncate(10);
+
+    axum::Json(serde_json::json!({
+        "configured": true,
+        "source": ".claude.json projects aggregate",
+        "status": {"state": "ok", "last_modified": last_modified},
+        "summary": {
+            "project_count": top_projects.len().max(
+                root.get("projects")
+                    .and_then(|v| v.as_object())
+                    .map(|p| p.values().filter(|project| {
+                        json_f64(project, "lastCost") != 0.0
+                            || json_i64(project, "lastTotalInputTokens") != 0
+                            || json_i64(project, "lastTotalOutputTokens") != 0
+                    }).count())
+                    .unwrap_or(0)
+            ),
+            "cost_usd": total.cost_usd,
+            "input_tokens": total.input_tokens,
+            "output_tokens": total.output_tokens,
+            "cache_read_tokens": total.cache_read_tokens,
+            "cache_creation_tokens": total.cache_creation_tokens,
+            "web_search_requests": total.web_search_requests,
+        },
+        "models": models,
+        "top_projects": top_projects,
+    }))
+}
+
+fn file_source_status(
+    id: &str,
+    kind: &str,
+    label: &str,
+    path: &std::path::Path,
+    capabilities: &[&str],
+) -> serde_json::Value {
+    if !path.exists() {
+        return serde_json::json!({
+            "id": id,
+            "kind": kind,
+            "label": label,
+            "enabled": true,
+            "state": "missing",
+            "message": format!(
+                "{} not found",
+                path.file_name().and_then(|s| s.to_str()).unwrap_or("source")
+            ),
+            "capabilities": capabilities,
+        });
+    }
+
+    let last_read_at = std::fs::metadata(path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+
+    serde_json::json!({
+        "id": id,
+        "kind": kind,
+        "label": label,
+        "enabled": true,
+        "state": "ok",
+        "last_read_at": last_read_at,
+        "capabilities": capabilities,
+    })
+}
+
+pub async fn api_command_demo() -> axum::Json<serde_json::Value> {
+    let local = api_local_usage().await.0;
+    let local_state = local
+        .get("status")
+        .and_then(|s| s.get("state"))
+        .and_then(|s| s.as_str())
+        .unwrap_or("missing");
+    let healthy_local = local
+        .get("configured")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+        && local_state == "ok";
+
+    let summary = local
+        .get("summary")
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!({}));
+    let cost = json_f64(&summary, "cost_usd");
+    let total_tokens = json_i64(&summary, "input_tokens")
+        + json_i64(&summary, "output_tokens")
+        + json_i64(&summary, "cache_read_tokens")
+        + json_i64(&summary, "cache_creation_tokens");
+    let project_count = json_i64(&summary, "project_count");
+
+    let mut sources = Vec::new();
+    sources.push(serde_json::json!({
+        "id": "claude-code-local",
+        "kind": "claude_code_local",
+        "label": "Claude Code 本地聚合",
+        "enabled": true,
+        "state": if healthy_local { "ok" } else { local_state },
+        "message": if healthy_local {
+            "只读 .claude.json projects 聚合字段".to_string()
+        } else {
+            local.get("status")
+                .and_then(|s| s.get("message"))
+                .and_then(|m| m.as_str())
+                .unwrap_or("未读取")
+                .to_string()
+        },
+        "last_read_at": local.get("status").and_then(|s| s.get("last_modified")).cloned(),
+        "capabilities": ["agent_usage", "model_usage", "project_usage"],
+    }));
+
+    if let Some(home) = dirs::home_dir() {
+        sources.push(file_source_status(
+            "codex-local",
+            "codex_local",
+            "Codex 本地状态",
+            &home.join(".codex").join("state_5.sqlite"),
+            &["session_health", "model_usage"],
+        ));
+        sources.push(file_source_status(
+            "cc-switch",
+            "cc_switch",
+            "CC Switch",
+            &home.join(".cc-switch").join("cc-switch.db"),
+            &["agent_usage", "provider_health", "model_pricing"],
+        ));
+    } else {
+        sources.push(serde_json::json!({
+            "id": "codex-local",
+            "kind": "codex_local",
+            "label": "Codex 本地状态",
+            "enabled": true,
+            "state": "missing",
+            "message": "home directory unavailable",
+            "capabilities": ["session_health", "model_usage"],
+        }));
+        sources.push(serde_json::json!({
+            "id": "cc-switch",
+            "kind": "cc_switch",
+            "label": "CC Switch",
+            "enabled": true,
+            "state": "missing",
+            "message": "home directory unavailable",
+            "capabilities": ["agent_usage", "provider_health", "model_pricing"],
+        }));
+    }
+
+    sources.push(serde_json::json!({
+        "id": "newapi-main",
+        "kind": "newapi",
+        "label": "NewAPI",
+        "enabled": false,
+        "state": "disabled",
+        "message": "等待个人访问令牌与端点配置",
+        "capabilities": ["api_balance", "api_quota", "api_key_status"],
+    }));
+    sources.push(serde_json::json!({
+        "id": "sub2api-main",
+        "kind": "sub2api",
+        "label": "Sub2API",
+        "enabled": false,
+        "state": "disabled",
+        "message": "等待 token 与端点配置",
+        "capabilities": ["api_balance", "provider_health"],
+    }));
+    sources.push(serde_json::json!({
+        "id": "windows-power",
+        "kind": "system_api",
+        "label": "Windows 电源",
+        "enabled": true,
+        "state": "planned",
+        "message": "已在统一模型预留；demo 暂不读取系统 API",
+        "capabilities": ["device_power"],
+    }));
+
+    let mut source_counts = serde_json::Map::new();
+    for source in &sources {
+        let state = source
+            .get("state")
+            .and_then(|s| s.as_str())
+            .unwrap_or("unknown");
+        let count = source_counts
+            .get(state)
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0)
+            + 1;
+        source_counts.insert(state.to_string(), serde_json::json!(count));
+    }
+
+    let signals = vec![
+        serde_json::json!({
+            "id": "signal-agent-cost",
+            "path": "agent.usage.cost.aggregate",
+            "domain": "agent",
+            "kind": "usage",
+            "subject": "claude-code-local",
+            "value": cost,
+            "unit": "usd",
+            "confidence": "observed",
+            "sourceId": "claude-code-local",
+        }),
+        serde_json::json!({
+            "id": "signal-agent-tokens",
+            "path": "agent.usage.tokens.total.aggregate",
+            "domain": "agent",
+            "kind": "usage",
+            "subject": "claude-code-local",
+            "value": total_tokens,
+            "unit": "token",
+            "confidence": "observed",
+            "sourceId": "claude-code-local",
+        }),
+        serde_json::json!({
+            "id": "signal-project-count",
+            "path": "agent.usage.projects.count",
+            "domain": "agent",
+            "kind": "inventory",
+            "subject": "claude-code-local",
+            "value": project_count,
+            "unit": "count",
+            "confidence": "observed",
+            "sourceId": "claude-code-local",
+        }),
+        serde_json::json!({
+            "id": "signal-source-ok",
+            "path": "system.sources.ok.count",
+            "domain": "system",
+            "kind": "health",
+            "subject": "sources",
+            "value": source_counts.get("ok").and_then(|v| v.as_i64()).unwrap_or(0),
+            "unit": "count",
+            "confidence": "derived",
+            "sourceId": "command-demo",
+        }),
+    ];
+
+    let mut alerts = Vec::new();
+    if !healthy_local {
+        alerts.push(serde_json::json!({
+            "level": "warning",
+            "title": "本地 usage 未读取",
+            "detail": local.get("status")
+                .and_then(|s| s.get("message"))
+                .and_then(|m| m.as_str())
+                .unwrap_or("Claude Code 聚合源不可用")
+        }));
+    }
+    for source in &sources {
+        let state = source.get("state").and_then(|s| s.as_str()).unwrap_or("");
+        if state == "missing" || state == "disabled" {
+            alerts.push(serde_json::json!({
+                "level": "info",
+                "title": format!("{} {}", source.get("label").and_then(|v| v.as_str()).unwrap_or("来源"), if state == "missing" { "缺失" } else { "未启用" }),
+                "detail": source.get("message").and_then(|v| v.as_str()).unwrap_or("--"),
+            }));
+        }
+    }
+    if healthy_local && alerts.is_empty() {
+        alerts.push(serde_json::json!({
+            "level": "ok",
+            "title": "态势正常",
+            "detail": "首批本地聚合来源已可读。",
+        }));
+    }
+
+    axum::Json(serde_json::json!({
+        "generated_at": chrono::Utc::now().to_rfc3339(),
+        "intent": {
+            "title": "个人作战仪表盘 Demo",
+            "mode": "read_heavy_light_write",
+            "scope": "Agent/API first, extensible to device/system/workflow",
+            "privacy": "aggregate_only",
+        },
+        "verdict": {
+            "state": if healthy_local { "watchable" } else { "partial" },
+            "label": if healthy_local { "状态可观察" } else { "部分可观察" },
+            "summary": if healthy_local {
+                format!("已读取 {project_count} 个工作区聚合，当前 demo 可展示实际本地 usage。")
+            } else {
+                "本地 usage 缺失，demo 仍展示 source/signal 结构。".to_string()
+            },
+        },
+        "sources": sources,
+        "source_counts": source_counts,
+        "signals": signals,
+        "datasets": {
+            "alerts": alerts,
+            "top_models": local.get("models").cloned().unwrap_or_else(|| serde_json::json!([])),
+            "top_projects": local.get("top_projects").cloned().unwrap_or_else(|| serde_json::json!([])),
+        },
     }))
 }
 

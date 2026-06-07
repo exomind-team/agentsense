@@ -4,3 +4,7 @@ quota.db
 tests/fixtures/
 *.log
 .worktrees
+.codegraph/
+config.*local*.toml
+config.*placeholder*.toml
+quota.*.db

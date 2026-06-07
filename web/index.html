@@ -3,14 +3,14 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>AI Quota Monitor</title>
+  <title>AI 作战仪表盘</title>
   <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
 
 <header>
-  <span class="title">⬡ AI Quota Monitor</span>
+  <span class="title">⬡ AI 作战仪表盘</span>
   <div class="header-right">
     <div class="countdown" id="countdown">
       <span class="badge-refreshing" id="badge"></span>
@@ -28,8 +28,166 @@
 <!-- Service tabs -->
 <div class="service-tabs" id="service-tabs"></div>
 
+<!-- ═══════ Command Dashboard Demo ═══════ -->
+<div class="service-section active" id="sec-command">
+  <div class="command-hero">
+    <div>
+      <div class="command-kicker">read-heavy · light-write · aggregate-only</div>
+      <h1>个人作战态势台</h1>
+      <p id="command-verdict-sub">正在汇总本地 Agent/API 使用态势。</p>
+    </div>
+    <div class="command-verdict">
+      <span id="command-verdict">--</span>
+      <small id="command-generated">--</small>
+    </div>
+  </div>
+
+  <div class="command-metrics">
+    <div class="consumption-card">
+      <div class="card-label">本地聚合成本</div>
+      <div class="card-value" id="command-cost">--</div>
+      <div class="card-sub">Claude Code observed</div>
+    </div>
+    <div class="consumption-card">
+      <div class="card-label">聚合 Token</div>
+      <div class="card-value" id="command-tokens">--</div>
+      <div class="card-sub">input + output + cache</div>
+    </div>
+    <div class="consumption-card">
+      <div class="card-label">来源状态</div>
+      <div class="card-value" id="command-sources">--</div>
+      <div class="card-sub">ok / missing / disabled</div>
+    </div>
+    <div class="consumption-card">
+      <div class="card-label">隐私边界</div>
+      <div class="card-value">聚合</div>
+      <div class="card-sub">不读取正文/标题/token</div>
+    </div>
+  </div>
+
+  <div class="command-layout">
+    <div class="table-section command-panel">
+      <div class="section-title">态势提示</div>
+      <div id="command-alerts" class="command-alerts"></div>
+    </div>
+    <div class="table-section command-panel">
+      <div class="section-title">统一 Signal 样例</div>
+      <table>
+        <thead>
+          <tr>
+            <th>Path</th>
+            <th>值</th>
+            <th>置信</th>
+          </tr>
+        </thead>
+        <tbody id="command-signal-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="table-section command-panel">
+    <div class="section-title">Source Adapter 状态</div>
+    <table>
+      <thead>
+        <tr>
+          <th>来源</th>
+          <th>类型</th>
+          <th>状态</th>
+          <th>说明</th>
+        </tr>
+      </thead>
+      <tbody id="command-source-body"></tbody>
+    </table>
+  </div>
+
+  <div class="command-layout">
+    <div class="table-section command-panel">
+      <div class="section-title">模型消耗 Top</div>
+      <table>
+        <thead>
+          <tr>
+            <th>模型</th>
+            <th>成本</th>
+            <th>Token</th>
+          </tr>
+        </thead>
+        <tbody id="command-model-body"></tbody>
+      </table>
+    </div>
+    <div class="table-section command-panel">
+      <div class="section-title">工作区消耗 Top</div>
+      <table>
+        <thead>
+          <tr>
+            <th>工作区</th>
+            <th>成本</th>
+            <th>模型数</th>
+          </tr>
+        </thead>
+        <tbody id="command-project-body"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════ Local Usage Section ═══════ -->
+<div class="service-section" id="sec-local">
+  <div class="consumption-summary local-usage-summary">
+    <div class="consumption-card">
+      <div class="card-label">本地聚合成本</div>
+      <div class="card-value" id="local-cost">--</div>
+      <div class="card-sub" id="local-cost-sub">Claude Code projects</div>
+    </div>
+    <div class="consumption-card">
+      <div class="card-label">输入 / 输出 Token</div>
+      <div class="card-value" id="local-tokens">--</div>
+      <div class="card-sub" id="local-token-sub">last project aggregates</div>
+    </div>
+    <div class="consumption-card">
+      <div class="card-label">缓存 Token</div>
+      <div class="card-value" id="local-cache">--</div>
+      <div class="card-sub" id="local-cache-sub">cache read + creation</div>
+    </div>
+  </div>
+
+  <div class="table-section local-usage-block">
+    <div class="section-title">模型消耗聚合</div>
+    <table>
+      <thead>
+        <tr>
+          <th>模型</th>
+          <th>成本</th>
+          <th>输入</th>
+          <th>输出</th>
+          <th>缓存</th>
+          <th>Web</th>
+        </tr>
+      </thead>
+      <tbody id="local-model-body"></tbody>
+    </table>
+  </div>
+
+  <div class="table-section local-usage-block">
+    <div class="section-title">高消耗工作区</div>
+    <table>
+      <thead>
+        <tr>
+          <th>工作区</th>
+          <th>成本</th>
+          <th>输入</th>
+          <th>输出</th>
+          <th>模型数</th>
+        </tr>
+      </thead>
+      <tbody id="local-project-body"></tbody>
+    </table>
+  </div>
+
+  <div class="local-usage-note" id="local-usage-note"></div>
+</div>
+
 <!-- ═══════ MiniMax Section ═══════ -->
-<div class="service-section active" id="sec-minimax">
+<div class="service-section" id="sec-minimax">
   <div class="filter-bar" id="filterBar"></div>
   <div id="model-list"></div>
 

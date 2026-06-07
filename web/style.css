@@ -18,6 +18,7 @@
       --claude-color: #d97757;
       --psu-color: #f59e0b;
       --mimo-color: #818cf8;
+      --local-color: #14b8a6;
     }
 
     [data-theme="light"] {
@@ -40,6 +41,7 @@
       --claude-color: #bd5d3a;
       --psu-color: #d97706;
       --mimo-color: #6366f1;
+      --local-color: #0f766e;
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -164,6 +166,9 @@
       background-color: var(--mimo-color);
       background-image: url("data:image/svg+xml;base64,PHN2ZyBmaWxsPSIjZmZmZmZmIiByb2xlPSJpbWciIHZpZXdCb3g9IjAgMCAyNCAyNCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48dGl0bGU+TWlNbzwvdGl0bGU+PHBhdGggZD0iTTUgN2gxMnYxMEg1eiIvPjwvc3ZnPg==");
     }
+    .ov-avatar.local {
+      background-color: var(--local-color);
+    }
 
     .ov-label {
       font-size: 12px;
@@ -238,6 +243,114 @@
 
     .service-section { display: none; }
     .service-section.active { display: block; }
+
+    /* ── Command dashboard demo ── */
+    .command-hero {
+      display: flex;
+      justify-content: space-between;
+      gap: 18px;
+      align-items: stretch;
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--accent);
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 14px;
+    }
+    .command-kicker {
+      color: var(--muted);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 6px;
+    }
+    .command-hero h1 {
+      margin: 0 0 8px;
+      font-size: 24px;
+      line-height: 1.15;
+      color: var(--text);
+      letter-spacing: 0;
+    }
+    .command-hero p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    .command-verdict {
+      min-width: 180px;
+      background: var(--bg3);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      text-align: right;
+    }
+    .command-verdict span {
+      color: var(--green);
+      font-size: 20px;
+      font-weight: 700;
+    }
+    .command-verdict small {
+      color: var(--muted);
+      margin-top: 6px;
+      font-size: 11px;
+    }
+    .command-metrics {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+    .command-layout {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+    }
+    .command-panel {
+      margin-bottom: 14px;
+    }
+    .command-alerts {
+      display: grid;
+      gap: 8px;
+    }
+    .command-alert {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--bg3);
+      padding: 10px 12px;
+      display: grid;
+      gap: 4px;
+    }
+    .command-alert strong {
+      font-size: 13px;
+      color: var(--text);
+    }
+    .command-alert span {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+    .command-alert.warning { border-left: 3px solid var(--yellow); }
+    .command-alert.info { border-left: 3px solid var(--accent); }
+    .command-alert.ok { border-left: 3px solid var(--green); }
+    .source-state {
+      display: inline-flex;
+      align-items: center;
+      border-radius: 999px;
+      padding: 2px 8px;
+      border: 1px solid var(--border);
+      background: var(--bg3);
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .source-state.ok { color: var(--green); }
+    .source-state.missing { color: var(--yellow); }
+    .source-state.disabled, .source-state.planned { color: var(--muted); }
+    .source-state.error { color: var(--red); }
 
     /* ── Filter tabs (MiniMax) ── */
     .filter-bar {
@@ -519,6 +632,20 @@
       vertical-align: middle;
     }
 
+    .local-usage-summary {
+      grid-template-columns: repeat(3, 1fr);
+    }
+
+    .local-usage-block {
+      margin-bottom: 14px;
+    }
+
+    .local-usage-note {
+      color: var(--muted);
+      font-size: 11px;
+      margin: 4px 2px 14px;
+    }
+
     /* ── PSU Power ── */
     .psu-card { border-left: 3px solid var(--psu-color); }
     .ov-dot.psu { background: var(--psu-color); }
@@ -660,6 +787,9 @@
       .quota-info { width: 100px; }
       .quota-label { width: 50px; font-size: 11px; }
       .filter-tab { padding: 2px 6px; font-size: 11px; }
+      .command-hero { flex-direction: column; }
+      .command-verdict { text-align: left; }
+      .command-metrics, .command-layout { grid-template-columns: 1fr; }
       .consumption-summary { grid-template-columns: 1fr; }
       .card-value { font-size: 20px; }
     }

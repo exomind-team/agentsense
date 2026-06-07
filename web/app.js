@@ -31,13 +31,15 @@ const API_BASE = '';
 
 let rawData = [];
 let activeFilter = null;
-let activeService = 'minimax';
+let activeService = 'command';
 let activeAccountLabel = ''; // filtered by account label for multi-account
 let activeAccountIdx = 0;    // account index within provider (0=first)
 let dsAccountsData = null;   // cached DeepSeek accounts response
 let zaiAccountsData = null;  // cached ZAI accounts response
 let mimoAccountsData = null; // cached MiMo accounts response
 let zaiModelsData = null;    // cached ZAI models data
+let commandDemoData = null;  // cached personal command dashboard demo data
+let localUsageData = null;   // cached local Claude Code aggregate usage
 let chart = null;
 let weeklyBarChart = null;
 let dsUsageChart = null;
@@ -124,6 +126,9 @@ let tabsGenerated = false;
 function generateServiceTabs() {
   // Build tab list from API data
   const tabs = []; // {provider, label, display, accountIdx}
+
+  tabs.push({ provider: 'command', label: '', display: '态势台', accountIdx: 0 });
+  tabs.push({ provider: 'local', label: '', display: 'Local Usage', accountIdx: 0 });
 
   const mmxAccounts = Array.isArray(lastOverviewData?.minimax) ? lastOverviewData.minimax : [];
   mmxAccounts.forEach((a, i) => tabs.push({
@@ -232,9 +237,15 @@ function switchSection(provider) {
 
 function refreshActiveSection() {
   switch (activeService) {
+    case 'command':
+      renderCommandDemo(commandDemoData);
+      break;
     case 'minimax':
       renderCards(activeFilter);
       renderTable();
+      break;
+    case 'local':
+      renderLocalUsage(localUsageData);
       break;
     case 'deepseek':
       if (dsAccountsData) renderDeepSeek(dsAccountsData, activeAccountIdx);
@@ -675,7 +686,9 @@ function initFanCurveEditor() {
 
 async function fetchAll() {
   await Promise.all([
+    fetchCommandDemo(),
     fetchOverview(),
+    fetchLocalUsage(),
     fetchMiniMaxDetail(),
     fetchDeepSeekDetail(),
     fetchDeepSeekPlatformDetail(),
@@ -695,6 +708,16 @@ async function fetchAll() {
 
 let lastOverviewData = null;
 
+async function fetchCommandDemo() {
+  try {
+    const res = await fetch(`${API_BASE}/api/command-demo`);
+    commandDemoData = await res.json();
+    renderCommandDemo(commandDemoData);
+  } catch (err) {
+    console.error('fetchCommandDemo error:', err);
+  }
+}
+
 async function fetchOverview() {
   try {
     const res = await fetch(`${API_BASE}/api/all`);
@@ -707,6 +730,16 @@ async function fetchOverview() {
     }
   } catch (err) {
     console.error('fetchOverview error:', err);
+  }
+}
+
+async function fetchLocalUsage() {
+  try {
+    const res = await fetch(`${API_BASE}/api/local-usage`);
+    localUsageData = await res.json();
+    renderLocalUsage(localUsageData);
+  } catch (err) {
+    console.error('fetchLocalUsage error:', err);
   }
 }
 
@@ -883,6 +916,22 @@ function ovCard(avatarCls, providerName, accountLabel, st, value, sub, barPct, b
 function renderOverview(data) {
   const cards = [];
 
+  // --- Local observed usage: Claude Code project aggregates from .claude.json ---
+  {
+    const summary = localUsageData?.summary;
+    const ok = localUsageData?.configured && localUsageData?.status?.state === 'ok' && summary;
+    const st = ok ? { text: '本机', cls: 'ok' } : { text: '未读取', cls: 'no_key' };
+    const value = ok ? '$' + Number(summary.cost_usd || 0).toFixed(2) : '--';
+    const sub = ok
+      ? `${summary.project_count || 0} 个工作区 · ${fmtTokens(summary.input_tokens || 0)} in / ${fmtTokens(summary.output_tokens || 0)} out`
+      : '本地聚合未读取';
+    const cache = ok ? fmtTokens((summary.cache_read_tokens || 0) + (summary.cache_creation_tokens || 0)) : '--';
+    const extra = ok
+      ? `<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);display:flex;justify-content:space-between;"><div><div style="font-size:14px;font-weight:700;color:var(--text)">${cache}</div><div style="font-size:11px;color:var(--muted)">缓存 token</div></div><div style="text-align:right;"><div style="font-size:14px;font-weight:700;color:var(--text)">${summary.web_search_requests || 0}</div><div style="font-size:11px;color:var(--muted)">Web 搜索</div></div></div>`
+      : '';
+    cards.push(ovCard('local', '本地实际使用', null, st, value, sub, null, null, extra));
+  }
+
   // --- MiniMax: one card per account ---
   const mmxAccounts = Array.isArray(data.minimax) ? data.minimax : [];
   for (const acct of mmxAccounts) {
@@ -1005,6 +1054,158 @@ function renderOverview(data) {
   layoutOverview();
 
   updateFooter(data);
+}
+
+// ── Render Local Usage ──────────────────────────────────────────────────────
+
+function fmtUsd(v) {
+  return '$' + Number(v || 0).toFixed(2);
+}
+
+function sourceStateLabel(state) {
+  if (state === 'ok') return '<span class="source-state ok">ok</span>';
+  if (state === 'missing') return '<span class="source-state missing">missing</span>';
+  if (state === 'disabled') return '<span class="source-state disabled">disabled</span>';
+  if (state === 'planned') return '<span class="source-state planned">planned</span>';
+  if (state === 'error') return '<span class="source-state error">error</span>';
+  return `<span class="source-state">${escapeHtml(state || '--')}</span>`;
+}
+
+function signalValue(signal) {
+  if (!signal || signal.value === null || signal.value === undefined) return '--';
+  if (signal.unit === 'usd') return fmtUsd(signal.value);
+  if (signal.unit === 'token') return fmtTokens(signal.value);
+  if (signal.unit === 'count') return Number(signal.value || 0).toLocaleString();
+  return String(signal.value);
+}
+
+function renderCommandDemo(data) {
+  const verdict = document.getElementById('command-verdict');
+  const sub = document.getElementById('command-verdict-sub');
+  const generated = document.getElementById('command-generated');
+  if (!verdict || !sub || !generated) return;
+
+  if (!data || data.status?.state === 'error') {
+    verdict.textContent = '未就绪';
+    sub.textContent = data?.status?.message || 'demo 数据接口暂不可用。';
+    generated.textContent = '--';
+    return;
+  }
+
+  const signals = data.signals || [];
+  const cost = signals.find(s => s.path === 'agent.usage.cost.aggregate');
+  const tokens = signals.find(s => s.path === 'agent.usage.tokens.total.aggregate');
+  const sources = data.sources || [];
+  const counts = data.source_counts || {};
+
+  verdict.textContent = data.verdict?.label || '--';
+  sub.textContent = data.verdict?.summary || data.intent?.title || '个人态势观察 demo';
+  generated.textContent = data.generated_at ? new Date(data.generated_at).toLocaleString('zh-CN') : '--';
+  document.getElementById('command-cost').textContent = signalValue(cost);
+  document.getElementById('command-tokens').textContent = signalValue(tokens);
+  document.getElementById('command-sources').textContent =
+    `${counts.ok || 0} / ${sources.length || 0}`;
+
+  const alertBox = document.getElementById('command-alerts');
+  const alerts = data.datasets?.alerts || [];
+  alertBox.innerHTML = alerts.length ? alerts.map(a => `
+    <div class="command-alert ${escapeHtml(a.level || 'info')}">
+      <strong>${escapeHtml(a.title || '--')}</strong>
+      <span>${escapeHtml(a.detail || '')}</span>
+    </div>
+  `).join('') : '<div class="command-alert ok"><strong>无告警</strong><span>当前 demo 未发现需要展示的异常。</span></div>';
+
+  document.getElementById('command-signal-body').innerHTML = signals.length ? signals.map(s => `
+    <tr>
+      <td>${escapeHtml(s.path || '--')}</td>
+      <td>${escapeHtml(signalValue(s))}</td>
+      <td>${escapeHtml(s.confidence || '--')}</td>
+    </tr>
+  `).join('') : '<tr><td colspan="3" style="color:var(--muted)">暂无 signal</td></tr>';
+
+  document.getElementById('command-source-body').innerHTML = sources.length ? sources.map(s => `
+    <tr>
+      <td>${escapeHtml(s.label || s.id || '--')}</td>
+      <td>${escapeHtml(s.kind || '--')}</td>
+      <td>${sourceStateLabel(s.state)}</td>
+      <td>${escapeHtml(s.message || (s.capabilities || []).join(', ') || '--')}</td>
+    </tr>
+  `).join('') : '<tr><td colspan="4" style="color:var(--muted)">暂无 source</td></tr>';
+
+  const models = data.datasets?.top_models || [];
+  document.getElementById('command-model-body').innerHTML = models.length ? models.slice(0, 6).map(m => {
+    const total = (m.input_tokens || 0) + (m.output_tokens || 0) + (m.cache_read_tokens || 0) + (m.cache_creation_tokens || 0);
+    return `
+      <tr>
+        <td>${escapeHtml(m.model || '--')}</td>
+        <td>${fmtUsd(m.cost_usd)}</td>
+        <td>${fmtTokens(total)}</td>
+      </tr>
+    `;
+  }).join('') : '<tr><td colspan="3" style="color:var(--muted)">暂无模型数据</td></tr>';
+
+  const projects = data.datasets?.top_projects || [];
+  document.getElementById('command-project-body').innerHTML = projects.length ? projects.slice(0, 6).map(p => `
+    <tr>
+      <td>${escapeHtml(p.workspace || '--')}</td>
+      <td>${fmtUsd(p.cost_usd)}</td>
+      <td>${p.model_count || 0}</td>
+    </tr>
+  `).join('') : '<tr><td colspan="3" style="color:var(--muted)">暂无工作区数据</td></tr>';
+}
+
+function renderLocalUsage(data) {
+  const note = document.getElementById('local-usage-note');
+  const modelBody = document.getElementById('local-model-body');
+  const projectBody = document.getElementById('local-project-body');
+  if (!note || !modelBody || !projectBody) return;
+
+  if (!data || !data.configured || data.status?.state !== 'ok') {
+    document.getElementById('local-cost').textContent = '--';
+    document.getElementById('local-tokens').textContent = '--';
+    document.getElementById('local-cache').textContent = '--';
+    modelBody.innerHTML = '<tr><td colspan="6" style="color:var(--muted)">暂无本地聚合数据</td></tr>';
+    projectBody.innerHTML = '<tr><td colspan="5" style="color:var(--muted)">暂无本地聚合数据</td></tr>';
+    note.textContent = data?.status?.message || '未读取到 .claude.json 聚合字段。';
+    return;
+  }
+
+  const s = data.summary || {};
+  const input = s.input_tokens || 0;
+  const output = s.output_tokens || 0;
+  const cache = (s.cache_read_tokens || 0) + (s.cache_creation_tokens || 0);
+  document.getElementById('local-cost').textContent = fmtUsd(s.cost_usd);
+  document.getElementById('local-cost-sub').textContent = `${s.project_count || 0} 个工作区`;
+  document.getElementById('local-tokens').textContent = `${fmtTokens(input)} / ${fmtTokens(output)}`;
+  document.getElementById('local-token-sub').textContent = '输入 / 输出';
+  document.getElementById('local-cache').textContent = fmtTokens(cache);
+  document.getElementById('local-cache-sub').textContent = `${s.web_search_requests || 0} 次 Web 搜索`;
+
+  const models = data.models || [];
+  modelBody.innerHTML = models.length ? models.map(m => `
+    <tr>
+      <td>${escapeHtml(m.model || '--')}</td>
+      <td>${fmtUsd(m.cost_usd)}</td>
+      <td>${fmtTokens(m.input_tokens || 0)}</td>
+      <td>${fmtTokens(m.output_tokens || 0)}</td>
+      <td>${fmtTokens((m.cache_read_tokens || 0) + (m.cache_creation_tokens || 0))}</td>
+      <td>${m.web_search_requests || 0}</td>
+    </tr>
+  `).join('') : '<tr><td colspan="6" style="color:var(--muted)">暂无模型数据</td></tr>';
+
+  const projects = data.top_projects || [];
+  projectBody.innerHTML = projects.length ? projects.map(p => `
+    <tr>
+      <td>${escapeHtml(p.workspace || '--')}</td>
+      <td>${fmtUsd(p.cost_usd)}</td>
+      <td>${fmtTokens(p.input_tokens || 0)}</td>
+      <td>${fmtTokens(p.output_tokens || 0)}</td>
+      <td>${p.model_count || 0}</td>
+    </tr>
+  `).join('') : '<tr><td colspan="5" style="color:var(--muted)">暂无工作区数据</td></tr>';
+
+  const modified = data.status?.last_modified ? new Date(data.status.last_modified).toLocaleString('zh-CN') : '--';
+  note.textContent = `来源: ${data.source || '.claude.json'} · 文件更新时间: ${modified} · 只展示聚合字段。`;
 }
 
 // ── Render DeepSeek Detail ──────────────────────────────────────────────────
