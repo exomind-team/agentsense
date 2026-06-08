@@ -76,17 +76,43 @@
         <div class="section-title">实时采样趋势</div>
         <span id="command-trend-window">近 6 小时</span>
       </div>
-      <div id="command-trend-chart" class="command-chart" role="img" aria-label="Agent 使用实时采样趋势图"></div>
+      <div class="command-trend-grid">
+        <div class="command-mini-trend">
+          <div class="command-mini-title">成本 / USD</div>
+          <div id="command-cost-trend-chart" class="command-mini-chart" role="img" aria-label="成本实时采样趋势图"></div>
+        </div>
+        <div class="command-mini-trend">
+          <div class="command-mini-title">Token</div>
+          <div id="command-token-trend-chart" class="command-mini-chart" role="img" aria-label="Token 实时采样趋势图"></div>
+        </div>
+        <div class="command-mini-trend">
+          <div class="command-mini-title">NewAPI 中转</div>
+          <div id="command-newapi-trend-chart" class="command-mini-chart" role="img" aria-label="NewAPI 中转趋势图"></div>
+        </div>
+        <div class="command-mini-trend">
+          <div class="command-mini-title">Sub2API 中转</div>
+          <div id="command-sub2api-trend-chart" class="command-mini-chart" role="img" aria-label="Sub2API 中转趋势图"></div>
+        </div>
+      </div>
       <div class="command-chart-note" id="command-trend-note">等待首次采样。</div>
     </div>
     <div class="table-section command-panel command-chart-panel">
       <div class="command-chart-title">
-        <div class="section-title">模型成本分布</div>
-        <span>当前聚合</span>
+        <div class="section-title">模型消耗分布</div>
+        <span id="command-model-chart-sort">成本优先</span>
       </div>
       <div id="command-model-chart" class="command-chart" role="img" aria-label="模型成本分布图"></div>
       <div class="command-chart-note" id="command-model-note">等待模型聚合数据。</div>
     </div>
+  </div>
+
+  <div class="table-section command-panel command-wide-chart-panel">
+    <div class="command-chart-title">
+      <div class="section-title">模型 Token / 成本趋势</div>
+      <span id="command-model-trend-window">近 7 天</span>
+    </div>
+    <div id="command-model-trend-chart" class="command-wide-chart" role="img" aria-label="模型 Token 与成本趋势图"></div>
+    <div class="command-chart-note" id="command-model-trend-note">等待模型趋势数据。</div>
   </div>
 
   <div class="command-layout">
@@ -126,7 +152,18 @@
 
   <div class="command-layout">
     <div class="table-section command-panel">
-      <div class="section-title">模型消耗 Top</div>
+      <div class="command-table-title">
+        <div class="section-title">模型消耗 Top</div>
+        <label class="command-sort-control">
+          <span>排序</span>
+          <select id="command-model-sort">
+            <option value="cost">成本优先</option>
+            <option value="tokens">Token优先</option>
+            <option value="requests">请求优先</option>
+            <option value="source">来源分组</option>
+          </select>
+        </label>
+      </div>
       <table>
         <thead>
           <tr>

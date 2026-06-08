@@ -862,6 +862,62 @@ function ccSwitchUsage() {
   }
 }
 
+function ccSwitchModelDailyTrend() {
+  const file = path.join(os.homedir(), '.cc-switch', 'cc-switch.db');
+  if (!fs.existsSync(file)) {
+    return { source: 'cc-switch', days: [], models: [], rows: [] };
+  }
+
+  try {
+    const rows = sqliteReadOnly(file, db => db.prepare(`
+      with bounds as (
+        select max(created_at) as max_ts
+        from proxy_request_logs
+        where created_at is not null
+      )
+      select date(created_at, 'unixepoch', 'localtime') as date,
+             coalesce(model, request_model, 'unknown') as model,
+             count(*) as requests,
+             sum(coalesce(input_tokens,0)+coalesce(output_tokens,0)+coalesce(cache_read_tokens,0)+coalesce(cache_creation_tokens,0)) as tokens,
+             sum(coalesce(total_cost_usd, 0)) as cost
+      from proxy_request_logs, bounds
+      where created_at is not null
+        and bounds.max_ts is not null
+        and created_at >= bounds.max_ts - 6 * 86400
+      group by date, model
+      order by date asc, cost desc, tokens desc
+    `).all());
+    const modelTotals = new Map();
+    const days = [...new Set(rows.map(row => row.date).filter(Boolean))].sort();
+    for (const row of rows) {
+      const model = String(row.model || 'unknown');
+      const current = modelTotals.get(model) || { model, tokens: 0, cost: 0, requests: 0 };
+      current.tokens += Number(row.tokens || 0);
+      current.cost += Number(row.cost || 0);
+      current.requests += Number(row.requests || 0);
+      modelTotals.set(model, current);
+    }
+
+    return {
+      source: 'cc-switch',
+      label: 'CC Switch 请求日志',
+      days,
+      models: [...modelTotals.values()]
+        .sort((a, b) => (b.cost - a.cost) || (b.tokens - a.tokens) || (b.requests - a.requests))
+        .slice(0, 8),
+      rows: rows.map(row => ({
+        date: row.date,
+        model: String(row.model || 'unknown'),
+        requests: Number(row.requests || 0),
+        tokens: Number(row.tokens || 0),
+        cost: Number(row.cost || 0),
+      })),
+    };
+  } catch {
+    return { source: 'cc-switch', days: [], models: [], rows: [] };
+  }
+}
+
 function localUsage() {
   const file = path.join(os.homedir(), '.claude.json');
   if (!fs.existsSync(file)) {
@@ -947,6 +1003,7 @@ async function commandDemo() {
   const usage = localUsage();
   const codex = codexLocalUsage();
   const ccSwitch = ccSwitchUsage();
+  const modelDailyTrend = ccSwitchModelDailyTrend();
   const newApi = await newApiStatus();
   const sub2Api = await sub2ApiStatus();
   const summary = usage.configured && usage.status?.state === 'ok' ? usage.summary : null;
@@ -1113,6 +1170,7 @@ async function commandDemo() {
       sub2api_model_stats: sub2Api.datasets?.model_stats || [],
       codex_model_stats: codex.models || [],
       cc_switch_model_stats: ccSwitch.models || [],
+      model_daily_trend: modelDailyTrend,
     },
   };
 }

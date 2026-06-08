@@ -315,6 +315,10 @@
     .command-chart-panel {
       min-height: 278px;
     }
+    .command-wide-chart-panel {
+      min-height: 430px;
+      margin-bottom: 14px;
+    }
     .command-chart-title {
       display: flex;
       justify-content: space-between;
@@ -330,9 +334,62 @@
       font-size: 11px;
       white-space: nowrap;
     }
+    .command-table-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 10px;
+    }
+    .command-table-title .section-title {
+      margin-bottom: 0;
+    }
+    .command-sort-control {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--muted);
+      font-size: 11px;
+      white-space: nowrap;
+    }
+    .command-sort-control select {
+      height: 26px;
+      min-width: 92px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--bg2);
+      color: var(--fg);
+      font: inherit;
+      padding: 0 8px;
+    }
     .command-chart {
       width: 100%;
       height: 220px;
+    }
+    .command-trend-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+    .command-mini-trend {
+      min-width: 0;
+      padding: 8px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--bg2);
+    }
+    .command-mini-title {
+      color: var(--muted);
+      font-size: 11px;
+      margin-bottom: 4px;
+    }
+    .command-mini-chart {
+      width: 100%;
+      height: 130px;
+    }
+    .command-wide-chart {
+      width: 100%;
+      height: 360px;
     }
     .command-chart-note {
       color: var(--muted);
@@ -818,7 +875,7 @@
       .filter-tab { padding: 2px 6px; font-size: 11px; }
       .command-hero { flex-direction: column; }
       .command-verdict { text-align: left; }
-      .command-metrics, .command-layout { grid-template-columns: 1fr; }
+      .command-metrics, .command-layout, .command-trend-grid { grid-template-columns: 1fr; }
       .consumption-summary { grid-template-columns: 1fr; }
       .card-value { font-size: 20px; }
     }
