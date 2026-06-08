@@ -278,7 +278,8 @@
       line-height: 1.5;
     }
     .command-verdict {
-      min-width: 180px;
+      width: max-content;
+      max-width: 100%;
       background: var(--bg3);
       border: 1px solid var(--border);
       border-radius: 8px;
@@ -340,6 +341,129 @@
       color: var(--muted);
       font-size: 11px;
       white-space: nowrap;
+    }
+    .command-relay-toolbar {
+      display: inline-flex;
+      gap: 4px;
+      padding: 3px;
+      margin: 0 0 10px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--bg2);
+    }
+    .command-relay-view-btn {
+      min-height: 26px;
+      border: 0;
+      border-radius: 4px;
+      background: transparent;
+      color: var(--muted);
+      font: inherit;
+      font-size: 11px;
+      padding: 3px 9px;
+      cursor: pointer;
+    }
+    .command-relay-view-btn:hover,
+    .command-relay-view-btn.active {
+      background: var(--bg3);
+      color: var(--accent);
+    }
+    .command-relay-summary {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+    .command-relay-summary.metric-view {
+      grid-template-columns: 1fr;
+    }
+    .command-relay-summary-card,
+    .command-relay-matrix-row {
+      min-width: 0;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--bg2);
+      padding: 10px;
+    }
+    .command-relay-card-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 8px;
+    }
+    .command-relay-card-head strong,
+    .command-relay-matrix-title strong {
+      display: block;
+      color: var(--text);
+      font-size: 12px;
+    }
+    .command-relay-card-head small,
+    .command-relay-matrix-title span {
+      display: block;
+      margin-top: 2px;
+      color: var(--muted);
+      font-size: 10px;
+      line-height: 1.35;
+    }
+    .command-relay-metric-list {
+      display: grid;
+      gap: 6px;
+    }
+    .command-relay-metric,
+    .command-relay-source-value {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 10px;
+      border-top: 1px solid var(--border);
+      padding-top: 6px;
+    }
+    .command-relay-metric span,
+    .command-relay-source-value span {
+      color: var(--muted);
+      font-size: 11px;
+    }
+    .command-relay-metric small {
+      display: block;
+      color: var(--muted);
+      font-size: 10px;
+      opacity: 0.8;
+    }
+    .command-relay-metric strong,
+    .command-relay-source-value strong {
+      color: var(--text);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+    .command-relay-matrix-row {
+      display: grid;
+      grid-template-columns: 130px minmax(0, 1fr);
+      gap: 10px;
+      align-items: stretch;
+    }
+    .command-relay-source-values {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+    }
+    .command-relay-source-value {
+      min-width: 0;
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      background: var(--bg3);
+      padding: 7px 8px;
+    }
+    .command-relay-source-value.empty {
+      opacity: 0.48;
+    }
+    .command-relay-empty {
+      grid-column: 1 / -1;
+      border: 1px dashed var(--border);
+      border-radius: 6px;
+      color: var(--muted);
+      font-size: 11px;
+      padding: 12px;
+      text-align: center;
     }
     .command-table-title {
       display: flex;
@@ -917,8 +1041,13 @@
       .quota-label { width: 50px; font-size: 11px; }
       .filter-tab { padding: 2px 6px; font-size: 11px; }
       .command-hero { flex-direction: column; }
-      .command-verdict { text-align: left; }
+      .command-verdict { width: auto; text-align: left; }
       .command-metrics, .command-layout, .command-trend-grid, .command-relay-grid { grid-template-columns: 1fr; }
+      .command-relay-toolbar { display: flex; width: 100%; box-sizing: border-box; }
+      .command-relay-view-btn { flex: 1; }
+      .command-relay-summary { grid-template-columns: 1fr; }
+      .command-relay-matrix-row { grid-template-columns: 1fr; }
+      .command-relay-source-values { grid-template-columns: 1fr; }
       .consumption-summary { grid-template-columns: 1fr; }
       .card-value { font-size: 20px; }
     }

@@ -30,6 +30,7 @@ const COMMAND_HISTORY_KEY = 'command_usage_snapshots_v1';
 const COMMAND_HISTORY_WINDOW_MS = 6 * 60 * 60 * 1000;
 const MAX_COMMAND_HISTORY_PTS = 720;
 const COMMAND_MODEL_SORT_KEY = 'command_model_sort_v1';
+const COMMAND_RELAY_VIEW_KEY = 'command_relay_view_v1';
 const COMMAND_MODEL_SORT_LABELS = {
   cost: '成本优先',
   tokens: 'Token优先',
@@ -60,6 +61,7 @@ let commandModelChart = null;
 let commandModelTrendChart = null;
 let commandHistoryStorage = [];
 let commandModelSort = 'cost';
+let commandRelayView = 'source';
 let chart = null;
 let weeklyBarChart = null;
 let dsUsageChart = null;
@@ -105,6 +107,23 @@ function init() {
       renderCommandDemo(commandDemoData);
     });
   }
+  commandRelayView = localStorage.getItem(COMMAND_RELAY_VIEW_KEY) || 'source';
+  if (!['source', 'metric'].includes(commandRelayView)) commandRelayView = 'source';
+  document.querySelectorAll('.command-relay-view-btn').forEach(btn => {
+    const active = btn.dataset.relayView === commandRelayView;
+    btn.classList.toggle('active', active);
+    btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+    btn.addEventListener('click', () => {
+      commandRelayView = btn.dataset.relayView || 'source';
+      localStorage.setItem(COMMAND_RELAY_VIEW_KEY, commandRelayView);
+      document.querySelectorAll('.command-relay-view-btn').forEach(item => {
+        const isActive = item.dataset.relayView === commandRelayView;
+        item.classList.toggle('active', isActive);
+        item.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+      });
+      renderCommandRelaySummary(commandDemoData);
+    });
+  });
   try { powerLocalStorage = JSON.parse(localStorage.getItem(POWER_LS_KEY) || '[]'); } catch(e) { powerLocalStorage = []; }
 
   initTheme();
@@ -1248,6 +1267,246 @@ function buildUnifiedCommandModelRows(data) {
   }));
 }
 
+const COMMAND_RELAY_METRIC_LABELS = {
+  quota_total: '总额度',
+  quota_used: '已用额度',
+  quota_available: '可用额度',
+  usage_percent: '使用率',
+  balance_available: '钱包余额',
+  requests_today: '今日请求',
+  requests_total: '累计请求',
+  tokens_today: '今日 Token',
+  tokens_total: '累计 Token',
+  cost_today: '今日成本',
+  cost_total: '累计成本',
+  model_tokens: '模型 Token',
+  model_cost: '模型成本',
+  model_requests: '模型请求',
+};
+
+const COMMAND_RELAY_METRIC_ORDER = [
+  'quota_available',
+  'quota_used',
+  'quota_total',
+  'usage_percent',
+  'balance_available',
+  'tokens_today',
+  'tokens_total',
+  'cost_today',
+  'cost_total',
+  'requests_today',
+  'requests_total',
+  'model_tokens',
+  'model_cost',
+  'model_requests',
+];
+
+function relayMetricRank(metric) {
+  const idx = COMMAND_RELAY_METRIC_ORDER.indexOf(metric);
+  return idx === -1 ? COMMAND_RELAY_METRIC_ORDER.length : idx;
+}
+
+function relayMetricLabel(metric) {
+  return COMMAND_RELAY_METRIC_LABELS[metric] || metric;
+}
+
+function relayMetricFromPath(pathName) {
+  if (pathName === 'api.newapi.quota.total') return 'quota_total';
+  if (pathName === 'api.newapi.quota.used') return 'quota_used';
+  if (pathName === 'api.newapi.quota.available') return 'quota_available';
+  if (pathName === 'api.newapi.usage.percent') return 'usage_percent';
+  if (pathName === 'api.newapi.requests.total') return 'requests_total';
+  if (pathName === 'api.sub2api.balance.available') return 'balance_available';
+  if (pathName === 'api.sub2api.requests.today') return 'requests_today';
+  if (pathName === 'api.sub2api.requests.total') return 'requests_total';
+  if (pathName === 'api.sub2api.tokens.today') return 'tokens_today';
+  if (pathName === 'api.sub2api.tokens.total') return 'tokens_total';
+  if (pathName === 'api.sub2api.cost.today') return 'cost_today';
+  if (pathName === 'api.sub2api.cost.total') return 'cost_total';
+  return null;
+}
+
+function relayMetricGroup(metric, unit) {
+  if (unit === 'token' || metric.includes('tokens')) return 'token';
+  if (unit === 'percent' || metric === 'usage_percent') return 'percent';
+  if (unit === 'usd' || unit === 'cny' || metric.includes('cost') || metric.includes('quota') || metric.includes('balance')) return 'money';
+  if (unit === 'count' || metric.includes('requests')) return 'count';
+  return unit || 'value';
+}
+
+function relayGroupLabel(group, unit) {
+  if (group === 'money') return unit === 'cny' ? '金额/CNY' : unit === 'quota' ? '额度' : '金额/USD';
+  if (group === 'token') return 'Token';
+  if (group === 'count') return '次数';
+  if (group === 'percent') return '百分比';
+  return String(unit || group || '数值').toUpperCase();
+}
+
+function formatRelayMetricValue(metric) {
+  if (!metric || metric.value === null || metric.value === undefined) return '--';
+  return signalValue(metric);
+}
+
+function collectRelayMetrics(data) {
+  const sources = (data?.sources || [])
+    .filter(s => s.kind === 'newapi' || s.kind === 'sub2api')
+    .map(s => ({
+      id: s.id,
+      kind: s.kind,
+      label: s.label || (s.kind === 'newapi' ? 'NewAPI' : 'Sub2API'),
+      state: s.state || '--',
+      message: s.message || '',
+    }));
+  const sourceMap = new Map(sources.map(s => [s.id, s]));
+  const sourceIdByKind = new Map(sources.map(s => [s.kind, s.id]));
+  const metrics = [];
+
+  for (const signal of data?.signals || []) {
+    const metric = relayMetricFromPath(signal.path);
+    const source = sourceMap.get(signal.sourceId);
+    if (!metric || !source) continue;
+    metrics.push({
+      ...signal,
+      metric,
+      label: relayMetricLabel(metric),
+      source,
+      group: relayMetricGroup(metric, signal.unit),
+    });
+  }
+
+  const addModelMetric = (sourceId, metric, value, unit) => {
+    const source = sourceMap.get(sourceId);
+    if (!source || value === null || value === undefined) return;
+    metrics.push({
+      id: `${sourceId}-${metric}`,
+      path: `api.${source.kind}.models.${metric}`,
+      domain: 'api',
+      kind: 'usage',
+      subject: sourceId,
+      sourceId,
+      source,
+      metric,
+      label: relayMetricLabel(metric),
+      value,
+      unit,
+      confidence: 'derived',
+      group: relayMetricGroup(metric, unit),
+    });
+  };
+  const sumDataset = items => (Array.isArray(items) ? items : []).reduce((acc, item) => {
+    acc.requests += Number(item.requests || 0);
+    acc.tokens += Number(item.total_tokens || 0);
+    acc.cost += Number(item.cost || 0);
+    return acc;
+  }, { requests: 0, tokens: 0, cost: 0 });
+  const newApiModels = sumDataset(data?.datasets?.newapi_model_stats);
+  const sub2ApiModels = sumDataset(data?.datasets?.sub2api_model_stats);
+  const newApiSourceId = sourceIdByKind.get('newapi');
+  const sub2ApiSourceId = sourceIdByKind.get('sub2api');
+  addModelMetric(newApiSourceId, 'model_tokens', newApiModels.tokens, 'token');
+  addModelMetric(newApiSourceId, 'model_cost', newApiModels.cost, 'usd');
+  addModelMetric(newApiSourceId, 'model_requests', newApiModels.requests, 'count');
+  addModelMetric(sub2ApiSourceId, 'model_tokens', sub2ApiModels.tokens, 'token');
+  addModelMetric(sub2ApiSourceId, 'model_cost', sub2ApiModels.cost, 'usd');
+  addModelMetric(sub2ApiSourceId, 'model_requests', sub2ApiModels.requests, 'count');
+
+  return { sources, metrics };
+}
+
+function renderRelayStatus(source) {
+  if (!source) return '<span class="source-state missing">missing</span>';
+  return sourceStateLabel(source.state);
+}
+
+function renderCommandRelayBySource(sources, metrics) {
+  return sources.map(source => {
+    const sourceMetrics = metrics
+      .filter(m => m.sourceId === source.id)
+      .sort((a, b) => relayMetricRank(a.metric) - relayMetricRank(b.metric) || String(a.label).localeCompare(String(b.label)));
+    const rows = sourceMetrics.length ? sourceMetrics.map(metric => `
+      <div class="command-relay-metric">
+        <div>
+          <span>${escapeHtml(metric.label)}</span>
+          <small>${escapeHtml(relayGroupLabel(metric.group, metric.unit))}</small>
+        </div>
+        <strong>${escapeHtml(formatRelayMetricValue(metric))}</strong>
+      </div>
+    `).join('') : '<div class="command-relay-empty">暂无可聚合指标</div>';
+    return `
+      <section class="command-relay-summary-card">
+        <div class="command-relay-card-head">
+          <div>
+            <strong>${escapeHtml(source.label)}</strong>
+            <small>${escapeHtml(source.message || '等待数据源响应')}</small>
+          </div>
+          ${renderRelayStatus(source)}
+        </div>
+        <div class="command-relay-metric-list">${rows}</div>
+      </section>
+    `;
+  }).join('');
+}
+
+function renderCommandRelayByMetric(sources, metrics) {
+  const metricMap = new Map();
+  for (const metric of metrics) {
+    const key = `${metric.metric}::${metric.unit || ''}`;
+    const entry = metricMap.get(key) || {
+      metric: metric.metric,
+      label: metric.label,
+      unit: metric.unit,
+      group: metric.group,
+      bySource: new Map(),
+    };
+    entry.bySource.set(metric.sourceId, metric);
+    metricMap.set(key, entry);
+  }
+  const groups = [...metricMap.values()]
+    .sort((a, b) => relayMetricRank(a.metric) - relayMetricRank(b.metric) || String(a.label).localeCompare(String(b.label)));
+  if (!groups.length) return '<div class="command-relay-empty">暂无可横向对比的中转指标</div>';
+
+  return groups.map(group => `
+    <section class="command-relay-matrix-row">
+      <div class="command-relay-matrix-title">
+        <strong>${escapeHtml(group.label)}</strong>
+        <span>${escapeHtml(relayGroupLabel(group.group, group.unit))}</span>
+      </div>
+      <div class="command-relay-source-values">
+        ${sources.map(source => {
+          const metric = group.bySource.get(source.id);
+          return `
+            <div class="command-relay-source-value ${metric ? '' : 'empty'}">
+              <span>${escapeHtml(source.label)}</span>
+              <strong>${metric ? escapeHtml(formatRelayMetricValue(metric)) : '--'}</strong>
+            </div>
+          `;
+        }).join('')}
+      </div>
+    </section>
+  `).join('');
+}
+
+function renderCommandRelaySummary(data) {
+  const container = document.getElementById('command-relay-summary');
+  if (!container) return;
+  document.querySelectorAll('.command-relay-view-btn').forEach(btn => {
+    const isActive = btn.dataset.relayView === commandRelayView;
+    btn.classList.toggle('active', isActive);
+    btn.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+  });
+
+  const { sources, metrics } = collectRelayMetrics(data);
+  if (!sources.length) {
+    container.innerHTML = '<div class="command-relay-empty">暂无 NewAPI / Sub2API 来源；配置后会展示中转指标聚合。</div>';
+    return;
+  }
+
+  container.innerHTML = commandRelayView === 'metric'
+    ? renderCommandRelayByMetric(sources, metrics)
+    : renderCommandRelayBySource(sources, metrics);
+  container.classList.toggle('metric-view', commandRelayView === 'metric');
+}
+
 function sortCommandModelRows(rows, sortMode = commandModelSort) {
   const byCost = (a, b) =>
     Number(b.costKnown) - Number(a.costKnown) ||
@@ -1367,6 +1626,7 @@ function renderCommandDemo(data) {
   `).join('') : '<tr><td colspan="3" style="color:var(--muted)">暂无工作区数据</td></tr>';
 
   recordCommandSnapshot(data);
+  renderCommandRelaySummary(data);
   renderCommandTrend();
   renderCommandModelChart(modelRows);
   renderCommandModelDailyTrend(data.datasets?.model_daily_trend);
