@@ -101,6 +101,7 @@ cargo build --release
 - 本地来源：Claude Code `.claude.json` 聚合、Codex `.codex/state_5.sqlite` 白名单字段、CC Switch `.cc-switch/cc-switch.db` 聚合字段。
 - 远端来源：NewAPI 与 Sub2API 通过显式环境变量或 `.agentsense.local.env` 接入。
 - 展示重点：多源模型消耗混排、多源工作区 Token 排行、模型 Token/成本趋势、按量纲拆分的采样趋势、NewAPI/Sub2API 中转专区趋势。
+- 密集排行表优先完整宽度承载；窄屏时只在表格容器内滚动，避免裁掉右侧来源/记录列。
 
 本地凭据只放在 `.agentsense.local.env` 或环境变量里，该文件已被 `.gitignore` 排除。提交物只应记录变量名和 `secret_ref`，不能写入真实 token、API key、cookie 或 Authorization header。
 
