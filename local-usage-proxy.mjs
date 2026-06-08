@@ -2,6 +2,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 
 const root = process.cwd();
 loadLocalEnvFile(path.join(root, '.agentsense.local.env'));
@@ -68,6 +69,22 @@ function fileSourceStatus(id, kind, label, file, capabilities) {
     last_read_at: new Date(stat.mtimeMs).toISOString(),
     capabilities,
   };
+}
+
+function timestampToIso(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return undefined;
+  const ms = n > 1_000_000_000_000 ? n : n * 1000;
+  return new Date(ms).toISOString();
+}
+
+function sqliteReadOnly(file, callback) {
+  const db = new DatabaseSync(file, { readOnly: true });
+  try {
+    return callback(db);
+  } finally {
+    db.close();
+  }
 }
 
 function trimTrailingSlash(value) {
@@ -308,6 +325,46 @@ function newApiSignals(summary, collectedAt) {
   return signals;
 }
 
+async function newApiModelStats(baseUrl, authHeader, extraHeaders, display) {
+  try {
+    const result = await fetchNewApiJson(baseUrl, '/api/log/self?p=0&size=100', authHeader, extraHeaders);
+    if (!result.ok || !businessOk(result.data)) return [];
+    const payload = unwrapApiData(result.data);
+    const items = Array.isArray(payload?.items) ? payload.items : [];
+    const map = new Map();
+
+    for (const item of items) {
+      if (!isObject(item)) continue;
+      const model = String(item.model_name || item.model || item.request_model || 'unknown').trim() || 'unknown';
+      const current = map.get(model) || {
+        source: 'NewAPI',
+        model,
+        requests: 0,
+        input_tokens: 0,
+        output_tokens: 0,
+        total_tokens: 0,
+        cost: 0,
+        latest_at: undefined,
+      };
+      const input = firstFiniteNumber(item.prompt_tokens, item.input_tokens) || 0;
+      const output = firstFiniteNumber(item.completion_tokens, item.output_tokens) || 0;
+      const quota = convertQuotaValue(firstFiniteNumber(item.quota, item.used_quota), display) || 0;
+      current.requests += 1;
+      current.input_tokens += input;
+      current.output_tokens += output;
+      current.total_tokens += input + output;
+      current.cost += quota;
+      const created = timestampToIso(item.created_at || item.createdAt || item.created_time || item.timestamp);
+      if (created && (!current.latest_at || created > current.latest_at)) current.latest_at = created;
+      map.set(model, current);
+    }
+
+    return [...map.values()].sort((a, b) => (b.cost - a.cost) || (b.total_tokens - a.total_tokens));
+  } catch {
+    return [];
+  }
+}
+
 async function newApiStatus() {
   const baseUrl = trimTrailingSlash(process.env.AGENTSENSE_NEWAPI_BASE_URL);
   const token = String(process.env.AGENTSENSE_NEWAPI_TOKEN || '').trim();
@@ -385,6 +442,7 @@ async function newApiStatus() {
       userHeaders
     );
     if (userSummary) {
+      const modelStats = await newApiModelStats(baseUrl, auth.value, userHeaders, display);
       source.enabled = true;
       source.state = 'ok';
       source.message = `${host} 用户额度已读取`;
@@ -396,7 +454,7 @@ async function newApiStatus() {
         summary: userSummary.summary,
         signals: newApiSignals(userSummary.summary, collectedAt),
         alerts: [{ level: 'ok', title: `${label} 已接入`, detail: '已通过系统访问令牌读取用户级额度。' }],
-        datasets: { attempts },
+        datasets: { attempts, model_stats: modelStats },
       };
     }
   }
@@ -409,6 +467,7 @@ async function newApiStatus() {
       data => summarizeNewApiTokenUsage(data, display)
     );
     if (tokenSummary) {
+      const modelStats = await newApiModelStats(baseUrl, auth.value, {}, display);
       source.enabled = true;
       source.state = 'ok';
       source.message = `${host} API key 额度已读取`;
@@ -420,7 +479,7 @@ async function newApiStatus() {
         summary: tokenSummary.summary,
         signals: newApiSignals(tokenSummary.summary, collectedAt),
         alerts: [{ level: 'ok', title: `${label} 已接入`, detail: '已通过 API key 读取 token 额度。' }],
-        datasets: { attempts },
+        datasets: { attempts, model_stats: modelStats },
       };
     }
 
@@ -709,6 +768,100 @@ async function sub2ApiStatus() {
   }
 }
 
+function codexLocalUsage() {
+  const file = path.join(os.homedir(), '.codex', 'state_5.sqlite');
+  if (!fs.existsSync(file)) {
+    return { configured: false, status: { state: 'missing', message: 'state_5.sqlite not found' }, models: [] };
+  }
+
+  try {
+    const stat = fs.statSync(file);
+    const rows = sqliteReadOnly(file, db => db.prepare(`
+      select coalesce(model_provider, 'unknown') as provider,
+             coalesce(model, 'unknown') as model,
+             count(*) as sessions,
+             sum(coalesce(tokens_used, 0)) as tokens,
+             max(updated_at) as latest_updated_at
+      from threads
+      group by provider, model
+      order by tokens desc, sessions desc
+      limit 20
+    `).all());
+    return {
+      configured: true,
+      status: { state: 'ok', last_modified: stat.mtimeMs },
+      models: rows.map(row => ({
+        source: 'Codex',
+        provider: row.provider,
+        model: row.model,
+        sessions: Number(row.sessions || 0),
+        requests: Number(row.sessions || 0),
+        total_tokens: Number(row.tokens || 0),
+        cost: null,
+        latest_at: timestampToIso(row.latest_updated_at),
+      })),
+    };
+  } catch (error) {
+    return {
+      configured: true,
+      status: { state: 'error', message: `Codex SQLite 读取失败: ${safeErrorKind(error)}` },
+      models: [],
+    };
+  }
+}
+
+function ccSwitchUsage() {
+  const file = path.join(os.homedir(), '.cc-switch', 'cc-switch.db');
+  if (!fs.existsSync(file)) {
+    return { configured: false, status: { state: 'missing', message: 'cc-switch.db not found' }, models: [] };
+  }
+
+  try {
+    const stat = fs.statSync(file);
+    const rows = sqliteReadOnly(file, db => db.prepare(`
+      select coalesce(app_type, 'unknown') as app,
+             coalesce(provider_id, 'unknown') as provider,
+             coalesce(model, request_model, 'unknown') as model,
+             count(*) as requests,
+             sum(coalesce(input_tokens, 0)) as input_tokens,
+             sum(coalesce(output_tokens, 0)) as output_tokens,
+             sum(coalesce(cache_read_tokens, 0)) as cache_read_tokens,
+             sum(coalesce(cache_creation_tokens, 0)) as cache_creation_tokens,
+             sum(coalesce(input_tokens,0)+coalesce(output_tokens,0)+coalesce(cache_read_tokens,0)+coalesce(cache_creation_tokens,0)) as total_tokens,
+             sum(coalesce(total_cost_usd, 0)) as cost,
+             max(created_at) as latest_created_at
+      from proxy_request_logs
+      group by app, provider, model
+      order by cost desc, total_tokens desc
+      limit 30
+    `).all());
+    return {
+      configured: true,
+      status: { state: 'ok', last_modified: stat.mtimeMs },
+      models: rows.map(row => ({
+        source: 'CC Switch',
+        app: row.app,
+        provider: row.provider,
+        model: row.model,
+        requests: Number(row.requests || 0),
+        input_tokens: Number(row.input_tokens || 0),
+        output_tokens: Number(row.output_tokens || 0),
+        cache_read_tokens: Number(row.cache_read_tokens || 0),
+        cache_creation_tokens: Number(row.cache_creation_tokens || 0),
+        total_tokens: Number(row.total_tokens || 0),
+        cost: Number(row.cost || 0),
+        latest_at: timestampToIso(row.latest_created_at),
+      })),
+    };
+  } catch (error) {
+    return {
+      configured: true,
+      status: { state: 'error', message: `CC Switch SQLite 读取失败: ${safeErrorKind(error)}` },
+      models: [],
+    };
+  }
+}
+
 function localUsage() {
   const file = path.join(os.homedir(), '.claude.json');
   if (!fs.existsSync(file)) {
@@ -792,6 +945,8 @@ function localUsage() {
 async function commandDemo() {
   const home = os.homedir();
   const usage = localUsage();
+  const codex = codexLocalUsage();
+  const ccSwitch = ccSwitchUsage();
   const newApi = await newApiStatus();
   const sub2Api = await sub2ApiStatus();
   const summary = usage.configured && usage.status?.state === 'ok' ? usage.summary : null;
@@ -837,6 +992,22 @@ async function commandDemo() {
       capabilities: ['device_power'],
     },
   ];
+  const codexSource = sources.find(source => source.id === 'codex-local');
+  if (codexSource && codex.status?.state) {
+    codexSource.state = codex.status.state;
+    codexSource.message = codex.status.state === 'ok'
+      ? `已聚合 ${codex.models.length} 个 Codex 模型/provider 组合`
+      : codex.status.message;
+    codexSource.last_read_at = codex.status.last_modified ? new Date(codex.status.last_modified).toISOString() : codexSource.last_read_at;
+  }
+  const ccSwitchSource = sources.find(source => source.id === 'cc-switch');
+  if (ccSwitchSource && ccSwitch.status?.state) {
+    ccSwitchSource.state = ccSwitch.status.state;
+    ccSwitchSource.message = ccSwitch.status.state === 'ok'
+      ? `已聚合 ${ccSwitch.models.length} 个代理请求模型/provider 组合`
+      : ccSwitch.status.message;
+    ccSwitchSource.last_read_at = ccSwitch.status.last_modified ? new Date(ccSwitch.status.last_modified).toISOString() : ccSwitchSource.last_read_at;
+  }
 
   const sourceCounts = sources.reduce((acc, source) => {
     acc[source.state] = (acc[source.state] || 0) + 1;
@@ -938,7 +1109,10 @@ async function commandDemo() {
       top_models: usage.models || [],
       top_projects: usage.top_projects || [],
       newapi_attempts: newApi.datasets?.attempts || [],
+      newapi_model_stats: newApi.datasets?.model_stats || [],
       sub2api_model_stats: sub2Api.datasets?.model_stats || [],
+      codex_model_stats: codex.models || [],
+      cc_switch_model_stats: ccSwitch.models || [],
     },
   };
 }

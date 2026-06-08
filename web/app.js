@@ -1070,6 +1070,7 @@ function renderOverview(data) {
 // ── Render Local Usage ──────────────────────────────────────────────────────
 
 function fmtUsd(v) {
+  if (v === null || v === undefined || v === '') return '--';
   return '$' + Number(v || 0).toFixed(2);
 }
 
@@ -1180,23 +1181,59 @@ function renderCommandDemo(data) {
 
   const models = data.datasets?.top_models || [];
   const sub2Models = data.datasets?.sub2api_model_stats || [];
+  const newApiModels = data.datasets?.newapi_model_stats || [];
+  const codexModels = data.datasets?.codex_model_stats || [];
+  const ccSwitchModels = data.datasets?.cc_switch_model_stats || [];
   const modelRows = [
     ...models.map(m => {
       const total = (m.input_tokens || 0) + (m.output_tokens || 0) + (m.cache_read_tokens || 0) + (m.cache_creation_tokens || 0);
-      return { source: 'Claude', model: m.model, cost: m.cost_usd, tokens: total };
+      return { source: 'Claude', model: m.model, cost: m.cost_usd, tokens: total, requests: null };
     }),
+    ...codexModels.map(m => ({
+      source: 'Codex',
+      model: `${m.provider || 'unknown'} / ${m.model || 'unknown'}`,
+      cost: null,
+      tokens: m.total_tokens,
+      requests: m.sessions,
+    })),
+    ...ccSwitchModels.map(m => ({
+      source: `CC ${m.app || ''}`.trim(),
+      model: m.model,
+      cost: m.cost,
+      tokens: m.total_tokens,
+      requests: m.requests,
+    })),
+    ...newApiModels.map(m => ({
+      source: 'NewAPI',
+      model: m.model,
+      cost: m.cost,
+      tokens: m.total_tokens,
+      requests: m.requests,
+    })),
     ...sub2Models.map(m => ({
       source: 'Sub2API',
       model: m.model,
       cost: m.cost,
       tokens: m.total_tokens,
+      requests: m.requests,
     })),
-  ].sort((a, b) => (b.cost || 0) - (a.cost || 0) || (b.tokens || 0) - (a.tokens || 0));
-  document.getElementById('command-model-body').innerHTML = modelRows.length ? modelRows.slice(0, 8).map(m => {
+  ];
+  const sourceOrder = ['Claude', 'Codex', 'CC codex', 'CC claude', 'CC unknown', 'NewAPI', 'Sub2API'];
+  const groupedRows = sourceOrder.flatMap(source => modelRows
+    .filter(row => row.source === source)
+    .sort((a, b) => (b.cost || 0) - (a.cost || 0) || (b.tokens || 0) - (a.tokens || 0))
+    .slice(0, source === 'CC claude' ? 3 : 4));
+  const fallbackRows = modelRows
+    .filter(row => !sourceOrder.includes(row.source))
+    .sort((a, b) => (b.cost || 0) - (a.cost || 0) || (b.tokens || 0) - (a.tokens || 0))
+    .slice(0, 4);
+  const displayRows = [...groupedRows, ...fallbackRows].slice(0, 22);
+  document.getElementById('command-model-body').innerHTML = displayRows.length ? displayRows.map(m => {
     const source = m.source ? `<span class="acct-badge">${escapeHtml(m.source)}</span>` : '';
+    const requests = Number.isFinite(Number(m.requests)) ? ` · ${Number(m.requests).toLocaleString()} 次` : '';
     return `
       <tr>
-        <td>${source}${escapeHtml(m.model || '--')}</td>
+        <td>${source}${escapeHtml(m.model || '--')}${requests}</td>
         <td>${fmtUsd(m.cost)}</td>
         <td>${fmtTokens(m.tokens)}</td>
       </tr>
