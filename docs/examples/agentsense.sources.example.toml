@@ -57,14 +57,17 @@ refresh_interval_seconds = 300
 capabilities = ["api_balance", "api_quota", "api_key_status", "provider_health"]
 
 [sources.auth]
-type = "pat"
-secret_ref = "env:NEWAPI_TOKEN"
+type = "auto"
+secret_ref = "env:AGENTSENSE_NEWAPI_TOKEN"
+user_id_ref = "env:AGENTSENSE_NEWAPI_USER_ID"
 
 [sources.endpoints]
 status = "/api/status"
-quota = "/api/quota"
-keys = "/api/keys"
-channels = "/api/channels"
+user_self = "/api/user/self"
+token_usage = "/api/usage/token/"
+billing_subscription = "/dashboard/billing/subscription"
+billing_usage = "/dashboard/billing/usage"
+token_logs = "/api/log/token"
 
 [[sources]]
 id = "sub2api-main"

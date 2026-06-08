@@ -1073,11 +1073,28 @@ function fmtUsd(v) {
   return '$' + Number(v || 0).toFixed(2);
 }
 
+function fmtCny(v) {
+  return '¥' + Number(v || 0).toFixed(2);
+}
+
+function fmtQuota(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return '--';
+  const abs = Math.abs(n);
+  if (abs >= 1e9) return (n / 1e9).toFixed(2) + 'B';
+  if (abs >= 1e6) return (n / 1e6).toFixed(2) + 'M';
+  if (abs >= 1e4) return (n / 1e4).toFixed(2) + '万';
+  return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
+}
+
 function sourceStateLabel(state) {
   if (state === 'ok') return '<span class="source-state ok">ok</span>';
   if (state === 'missing') return '<span class="source-state missing">missing</span>';
   if (state === 'disabled') return '<span class="source-state disabled">disabled</span>';
   if (state === 'planned') return '<span class="source-state planned">planned</span>';
+  if (state === 'stale') return '<span class="source-state stale">stale</span>';
+  if (state === 'auth_failed') return '<span class="source-state auth-failed">auth_failed</span>';
+  if (state === 'unavailable') return '<span class="source-state unavailable">unavailable</span>';
   if (state === 'error') return '<span class="source-state error">error</span>';
   return `<span class="source-state">${escapeHtml(state || '--')}</span>`;
 }
@@ -1085,7 +1102,10 @@ function sourceStateLabel(state) {
 function signalValue(signal) {
   if (!signal || signal.value === null || signal.value === undefined) return '--';
   if (signal.unit === 'usd') return fmtUsd(signal.value);
+  if (signal.unit === 'cny') return fmtCny(signal.value);
   if (signal.unit === 'token') return fmtTokens(signal.value);
+  if (signal.unit === 'quota' || signal.unit === 'credit') return fmtQuota(signal.value);
+  if (signal.unit === 'percent') return Number(signal.value || 0).toFixed(2) + '%';
   if (signal.unit === 'count') return Number(signal.value || 0).toLocaleString();
   return String(signal.value);
 }
@@ -1108,6 +1128,7 @@ function renderCommandDemo(data) {
   const tokens = signals.find(s => s.path === 'agent.usage.tokens.total.aggregate');
   const sources = data.sources || [];
   const counts = data.source_counts || {};
+  const newApiSource = sources.find(s => s.id === 'newapi-main' || s.kind === 'newapi');
 
   verdict.textContent = data.verdict?.label || '--';
   sub.textContent = data.verdict?.summary || data.intent?.title || '个人态势观察 demo';
@@ -1116,6 +1137,12 @@ function renderCommandDemo(data) {
   document.getElementById('command-tokens').textContent = signalValue(tokens);
   document.getElementById('command-sources').textContent =
     `${counts.ok || 0} / ${sources.length || 0}`;
+  const newApiValue = document.getElementById('command-newapi');
+  const newApiSub = document.getElementById('command-newapi-sub');
+  if (newApiValue && newApiSub) {
+    newApiValue.textContent = newApiSource?.state || '--';
+    newApiSub.textContent = newApiSource?.message || '未配置 NewAPI source';
+  }
 
   const alertBox = document.getElementById('command-alerts');
   const alerts = data.datasets?.alerts || [];
@@ -1175,6 +1202,12 @@ function signalNumber(signals, path) {
   return Number.isFinite(value) ? value : null;
 }
 
+function nullableNumber(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
 function sanitizeCommandHistory(items) {
   const cutoff = Date.now() - COMMAND_HISTORY_WINDOW_MS;
   return (Array.isArray(items) ? items : [])
@@ -1186,6 +1219,10 @@ function sanitizeCommandHistory(items) {
       projects: Number(p.projects || 0),
       sourcesOk: Number(p.sourcesOk || 0),
       sourcesTotal: Number(p.sourcesTotal || 0),
+      apiQuotaAvailable: nullableNumber(p.apiQuotaAvailable),
+      apiQuotaUsed: nullableNumber(p.apiQuotaUsed),
+      apiUsagePercent: nullableNumber(p.apiUsagePercent),
+      apiQuotaUnit: typeof p.apiQuotaUnit === 'string' ? p.apiQuotaUnit : 'quota',
     }))
     .slice(-MAX_COMMAND_HISTORY_PTS);
 }
@@ -1195,6 +1232,11 @@ function recordCommandSnapshot(data) {
   const cost = signalNumber(signals, 'agent.usage.cost.aggregate');
   const tokens = signalNumber(signals, 'agent.usage.tokens.total.aggregate');
   const projects = signalNumber(signals, 'agent.usage.projects.count');
+  const apiQuotaAvailableSignal = signals.find(s => s.path === 'api.newapi.quota.available');
+  const apiQuotaUsedSignal = signals.find(s => s.path === 'api.newapi.quota.used');
+  const apiQuotaAvailable = signalNumber(signals, 'api.newapi.quota.available');
+  const apiQuotaUsed = signalNumber(signals, 'api.newapi.quota.used');
+  const apiUsagePercent = signalNumber(signals, 'api.newapi.usage.percent');
   const sources = data?.sources || [];
   const counts = data?.source_counts || {};
   if (cost === null && tokens === null && projects === null && sources.length === 0) return;
@@ -1207,6 +1249,10 @@ function recordCommandSnapshot(data) {
     projects: projects || 0,
     sourcesOk: counts.ok || 0,
     sourcesTotal: sources.length || 0,
+    apiQuotaAvailable,
+    apiQuotaUsed,
+    apiUsagePercent,
+    apiQuotaUnit: apiQuotaAvailableSignal?.unit || apiQuotaUsedSignal?.unit || 'quota',
   };
 
   const history = sanitizeCommandHistory(commandHistoryStorage);
@@ -1229,15 +1275,77 @@ function renderCommandTrend() {
   const splitColor = isDark ? '#21262d' : '#eaeef2';
   const lineColor = '#14b8a6';
   const tokenColor = '#388bfd';
+  const apiAvailableColor = '#a371f7';
+  const apiUsedColor = '#f0883e';
+  const hasApiQuota = history.some(p => p.apiQuotaAvailable !== null || p.apiQuotaUsed !== null);
+  const latestApiUnit = [...history].reverse().find(p => p.apiQuotaUnit)?.apiQuotaUnit || 'quota';
+  const formatApiQuota = value => {
+    if (latestApiUnit === 'usd') return fmtUsd(value);
+    if (latestApiUnit === 'cny') return fmtCny(value);
+    if (latestApiUnit === 'token') return fmtTokens(value);
+    return fmtQuota(value);
+  };
 
   if (note) {
     if (history.length < 2) {
-      note.textContent = '已开始记录当前浏览器的聚合快照；第二次刷新后会形成走势。';
+      note.textContent = '已开始记录当前浏览器的聚合快照；第二次刷新后会形成走势。NewAPI 可用时会同步记录额度趋势。';
     } else {
       const first = new Date(history[0].ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
       const last = new Date(history.at(-1).ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
-      note.textContent = `${history.length} 个采样点 · ${first} - ${last} · 只保存聚合数值。`;
+      note.textContent = `${history.length} 个采样点 · ${first} - ${last} · ${hasApiQuota ? '已包含 NewAPI 额度趋势' : 'NewAPI 额度等待可用令牌'} · 只保存聚合数值。`;
     }
+  }
+
+  const series = [
+    {
+      name: '成本',
+      type: 'line',
+      smooth: true,
+      symbol: history.length < 8 ? 'circle' : 'none',
+      yAxisIndex: 0,
+      lineStyle: { color: lineColor, width: 2 },
+      itemStyle: { color: lineColor },
+      areaStyle: { color: { type: 'linear', x: 0, y: 0, x2: 0, y2: 1, colorStops: [
+        { offset: 0, color: 'rgba(20,184,166,0.22)' },
+        { offset: 1, color: 'rgba(20,184,166,0.02)' },
+      ]}},
+      data: history.map(p => [p.ts, p.cost]),
+    },
+    {
+      name: 'Token',
+      type: 'line',
+      smooth: true,
+      symbol: history.length < 8 ? 'circle' : 'none',
+      yAxisIndex: 1,
+      lineStyle: { color: tokenColor, width: 2 },
+      itemStyle: { color: tokenColor },
+      data: history.map(p => [p.ts, p.tokens]),
+    },
+  ];
+
+  if (history.some(p => p.apiQuotaAvailable !== null)) {
+    series.push({
+      name: 'NewAPI可用',
+      type: 'line',
+      smooth: true,
+      symbol: history.length < 8 ? 'circle' : 'none',
+      yAxisIndex: 1,
+      lineStyle: { color: apiAvailableColor, width: 2 },
+      itemStyle: { color: apiAvailableColor },
+      data: history.map(p => [p.ts, p.apiQuotaAvailable]),
+    });
+  }
+  if (history.some(p => p.apiQuotaUsed !== null)) {
+    series.push({
+      name: 'NewAPI已用',
+      type: 'line',
+      smooth: true,
+      symbol: history.length < 8 ? 'circle' : 'none',
+      yAxisIndex: 1,
+      lineStyle: { color: apiUsedColor, width: 2 },
+      itemStyle: { color: apiUsedColor },
+      data: history.map(p => [p.ts, p.apiQuotaUsed]),
+    });
   }
 
   commandTrendChart.setOption({
@@ -1251,7 +1359,14 @@ function renderCommandTrend() {
       textStyle: { color: isDark ? '#e6edf3' : '#1f2328', fontSize: 12 },
       formatter: params => {
         const t = new Date(params[0].value[0]).toLocaleString('zh-CN');
-        const rows = params.map(p => `${p.marker}${p.seriesName}: <b>${p.seriesName === '成本' ? fmtUsd(p.value[1]) : fmtTokens(p.value[1])}</b>`);
+        const rows = params.map(p => {
+          const value = p.seriesName === '成本'
+            ? fmtUsd(p.value[1])
+            : p.seriesName === 'Token'
+              ? fmtTokens(p.value[1])
+              : formatApiQuota(p.value[1]);
+          return `${p.marker}${p.seriesName}: <b>${value}</b>`;
+        });
         return `${rows.join('<br>')}<div style="color:${textColor};font-size:10px;margin-top:4px">${t}</div>`;
       },
     },
@@ -1273,39 +1388,14 @@ function renderCommandTrend() {
       },
       {
         type: 'value',
-        name: 'Token',
+        name: 'Token / 额度',
         nameTextStyle: { color: textColor, fontSize: 10 },
         axisLine: { show: false },
-        axisLabel: { color: textColor, fontSize: 10, formatter: v => fmtTokens(v) },
+        axisLabel: { color: textColor, fontSize: 10, formatter: v => fmtQuota(v) },
         splitLine: { show: false },
       },
     ],
-    series: [
-      {
-        name: '成本',
-        type: 'line',
-        smooth: true,
-        symbol: history.length < 8 ? 'circle' : 'none',
-        yAxisIndex: 0,
-        lineStyle: { color: lineColor, width: 2 },
-        itemStyle: { color: lineColor },
-        areaStyle: { color: { type: 'linear', x: 0, y: 0, x2: 0, y2: 1, colorStops: [
-          { offset: 0, color: 'rgba(20,184,166,0.22)' },
-          { offset: 1, color: 'rgba(20,184,166,0.02)' },
-        ]}},
-        data: history.map(p => [p.ts, p.cost]),
-      },
-      {
-        name: 'Token',
-        type: 'line',
-        smooth: true,
-        symbol: history.length < 8 ? 'circle' : 'none',
-        yAxisIndex: 1,
-        lineStyle: { color: tokenColor, width: 2 },
-        itemStyle: { color: tokenColor },
-        data: history.map(p => [p.ts, p.tokens]),
-      },
-    ],
+    series,
   }, { notMerge: true });
 }
 

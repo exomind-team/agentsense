@@ -819,6 +819,56 @@ fn file_source_status(
     })
 }
 
+fn env_newapi_source_status() -> serde_json::Value {
+    let base_url = std::env::var("AGENTSENSE_NEWAPI_BASE_URL")
+        .unwrap_or_default()
+        .trim()
+        .trim_end_matches('/')
+        .to_string();
+    let token_present = std::env::var("AGENTSENSE_NEWAPI_TOKEN")
+        .map(|v| !v.trim().is_empty())
+        .unwrap_or(false);
+    let user_id_present = std::env::var("AGENTSENSE_NEWAPI_USER_ID")
+        .map(|v| !v.trim().is_empty())
+        .unwrap_or(false);
+    let label = std::env::var("AGENTSENSE_NEWAPI_LABEL").unwrap_or_else(|_| "NewAPI".to_string());
+
+    if base_url.is_empty() || !token_present {
+        return serde_json::json!({
+            "id": "newapi-main",
+            "kind": "newapi",
+            "label": label,
+            "enabled": false,
+            "state": "disabled",
+            "message": "设置 AGENTSENSE_NEWAPI_BASE_URL 与 AGENTSENSE_NEWAPI_TOKEN 后启用",
+            "capabilities": ["api_balance", "api_quota", "api_key_status", "provider_health"],
+        });
+    }
+
+    let host = base_url
+        .split("://")
+        .nth(1)
+        .unwrap_or(&base_url)
+        .split('/')
+        .next()
+        .filter(|value| !value.is_empty())
+        .unwrap_or("NewAPI");
+
+    serde_json::json!({
+        "id": "newapi-main",
+        "kind": "newapi",
+        "label": label,
+        "enabled": true,
+        "state": "stale",
+        "message": if user_id_present {
+            format!("{host} 已配置；完整鉴权探测由 local usage proxy 执行")
+        } else {
+            format!("{host} 已配置 token；系统访问令牌还需 AGENTSENSE_NEWAPI_USER_ID")
+        },
+        "capabilities": ["api_balance", "api_quota", "api_key_status", "provider_health"],
+    })
+}
+
 pub async fn api_command_demo() -> axum::Json<serde_json::Value> {
     let local = api_local_usage().await.0;
     let local_state = local
@@ -899,15 +949,7 @@ pub async fn api_command_demo() -> axum::Json<serde_json::Value> {
         }));
     }
 
-    sources.push(serde_json::json!({
-        "id": "newapi-main",
-        "kind": "newapi",
-        "label": "NewAPI",
-        "enabled": false,
-        "state": "disabled",
-        "message": "等待个人访问令牌与端点配置",
-        "capabilities": ["api_balance", "api_quota", "api_key_status"],
-    }));
+    sources.push(env_newapi_source_status());
     sources.push(serde_json::json!({
         "id": "sub2api-main",
         "kind": "sub2api",

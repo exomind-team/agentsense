@@ -378,6 +378,7 @@
     .source-state.ok { color: var(--green); }
     .source-state.missing { color: var(--yellow); }
     .source-state.disabled, .source-state.planned { color: var(--muted); }
+    .source-state.stale, .source-state.auth-failed, .source-state.unavailable { color: var(--yellow); }
     .source-state.error { color: var(--red); }
 
     /* ── Filter tabs (MiniMax) ── */

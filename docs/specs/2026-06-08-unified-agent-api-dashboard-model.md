@@ -177,7 +177,7 @@ type SourceDefinition = {
     intervalSeconds?: number
   }
   auth?: {
-    type: "none" | "bearer" | "pat" | "oauth" | "custom_header"
+    type: "none" | "bearer" | "pat" | "oauth" | "custom_header" | "auto"
     secretRef?: string
     headerName?: string
   }
@@ -482,6 +482,15 @@ workflow.tasks.blocked.count
 - token usage endpoint
 - key list endpoint
 - channel health endpoint
+
+2026-06-08 实测补充:
+
+- NewAPI 默认 React 前端通过 cookie 登录态访问 `/api/user/self`、`/api/token/`、`/api/log/self` 等用户面板接口。
+- “个人资料”里的系统访问令牌用于用户面板接口，源码路径是 `middleware.UserAuth()`；请求头通常是 `Authorization: <access_token>`，源码也会兼容去掉 `Bearer ` 前缀。
+- 系统访问令牌路径还必须带 `New-Api-User: <user_id>`。这个值是 NewAPI 前端从本地 `uid` 传给后端的用户 ID；没有该头会在令牌有效时仍返回 401。
+- API Key 令牌用于 OpenAI 兼容接口、`/api/usage/token/`、`/api/log/token`、`/dashboard/billing/*`，通常是 `Authorization: Bearer sk-...`。
+- Adapter 第一版应使用 `auth.type = "auto"` 自动探测 user access token 与 API key 两类路径；系统访问令牌需要 `user_id_ref`，鉴权失败返回 `SourceStatus.state = "auth_failed"`，不得让页面崩溃。
+- 站点公开 `/api/status` 只能证明实例可达，不能代表用户额度可读。
 
 主要产出:
 
