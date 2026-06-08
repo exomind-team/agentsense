@@ -71,27 +71,19 @@
   </div>
 
   <div class="command-layout">
-    <div class="table-section command-panel command-chart-panel">
+    <div class="table-section command-panel command-chart-panel command-dimension-panel">
       <div class="command-chart-title">
-        <div class="section-title">实时采样趋势</div>
+        <div class="section-title">采样趋势 · 量纲分组</div>
         <span id="command-trend-window">近 6 小时</span>
       </div>
-      <div class="command-trend-grid">
+      <div class="command-trend-grid command-dimension-grid">
         <div class="command-mini-trend">
-          <div class="command-mini-title">成本 / USD</div>
-          <div id="command-cost-trend-chart" class="command-mini-chart" role="img" aria-label="成本实时采样趋势图"></div>
+          <div class="command-mini-title">本地 Agent 成本 / USD</div>
+          <div id="command-cost-trend-chart" class="command-mini-chart" role="img" aria-label="本地 Agent 成本采样趋势图"></div>
         </div>
         <div class="command-mini-trend">
-          <div class="command-mini-title">Token</div>
-          <div id="command-token-trend-chart" class="command-mini-chart" role="img" aria-label="Token 实时采样趋势图"></div>
-        </div>
-        <div class="command-mini-trend">
-          <div class="command-mini-title">NewAPI 中转</div>
-          <div id="command-newapi-trend-chart" class="command-mini-chart" role="img" aria-label="NewAPI 中转趋势图"></div>
-        </div>
-        <div class="command-mini-trend">
-          <div class="command-mini-title">Sub2API 中转</div>
-          <div id="command-sub2api-trend-chart" class="command-mini-chart" role="img" aria-label="Sub2API 中转趋势图"></div>
+          <div class="command-mini-title">Token 消耗</div>
+          <div id="command-token-trend-chart" class="command-mini-chart" role="img" aria-label="Token 消耗采样趋势图"></div>
         </div>
       </div>
       <div class="command-chart-note" id="command-trend-note">等待首次采样。</div>
@@ -103,6 +95,31 @@
       </div>
       <div id="command-model-chart" class="command-chart" role="img" aria-label="模型成本分布图"></div>
       <div class="command-chart-note" id="command-model-note">等待模型聚合数据。</div>
+    </div>
+  </div>
+
+  <div class="table-section command-panel command-relay-trend-panel">
+    <div class="command-chart-title">
+      <div class="section-title">中转专区趋势</div>
+      <span>NewAPI / Sub2API</span>
+    </div>
+    <div class="command-relay-grid">
+      <div class="command-relay-card">
+        <div class="command-relay-heading">
+          <div>NewAPI</div>
+          <span>额度</span>
+        </div>
+        <div id="command-newapi-trend-chart" class="command-relay-chart" role="img" aria-label="NewAPI 中转额度趋势图"></div>
+        <div class="command-chart-note" id="command-newapi-trend-note">等待 NewAPI 采样。</div>
+      </div>
+      <div class="command-relay-card">
+        <div class="command-relay-heading">
+          <div>Sub2API</div>
+          <span>钱包 / 成本</span>
+        </div>
+        <div id="command-sub2api-trend-chart" class="command-relay-chart" role="img" aria-label="Sub2API 中转钱包与成本趋势图"></div>
+        <div class="command-chart-note" id="command-sub2api-trend-note">等待 Sub2API 采样。</div>
+      </div>
     </div>
   </div>
 

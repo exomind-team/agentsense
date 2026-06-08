@@ -1458,6 +1458,8 @@ function recordCommandSnapshot(data) {
 function renderCommandTrend() {
   const history = sanitizeCommandHistory(commandHistoryStorage);
   const note = document.getElementById('command-trend-note');
+  const newApiNote = document.getElementById('command-newapi-trend-note');
+  const sub2ApiNote = document.getElementById('command-sub2api-trend-note');
   const isDark = document.documentElement.getAttribute('data-theme') !== 'light';
   const textColor = isDark ? '#8b949e' : '#656d76';
   const splitColor = isDark ? '#21262d' : '#eaeef2';
@@ -1479,10 +1481,13 @@ function renderCommandTrend() {
     if (latestSub2Unit === 'token') return fmtTokens(value);
     return fmtQuota(value);
   };
+  const hasNumber = value => value !== null && value !== undefined && Number.isFinite(Number(value));
+  const formatApiQuotaValue = value => hasNumber(value) ? formatApiQuota(value) : '--';
+  const formatSub2TrendValue = value => hasNumber(value) ? formatSub2Value(value) : '--';
 
   if (note) {
     if (history.length < 2) {
-      note.textContent = '已开始记录当前浏览器的聚合快照；第二次刷新后会形成走势。NewAPI/Sub2API 可用时会同步记录额度趋势。';
+      note.textContent = '已开始记录当前浏览器的聚合快照；第二次刷新后会形成走势。成本、Token 与中转额度分开计量。';
     } else {
       const first = new Date(history[0].ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
       const last = new Date(history.at(-1).ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
@@ -1490,16 +1495,58 @@ function renderCommandTrend() {
         hasApiQuota ? 'NewAPI' : null,
         hasSub2Api ? 'Sub2API' : null,
       ].filter(Boolean).join(' + ') || '远端额度等待可用 key';
-      note.textContent = `${history.length} 个采样点 · ${first} - ${last} · ${remote} · 只保存聚合数值。`;
+      note.textContent = `${history.length} 个采样点 · ${first} - ${last} · ${remote} · 按 USD / Token / 中转额度分区保存聚合数值。`;
     }
   }
 
-  const setSmallTrendChart = (chart, series, formatter, axisName) => {
+  if (newApiNote) {
+    if (!hasApiQuota) {
+      newApiNote.textContent = '暂无 NewAPI 额度采样；可用后会展示可用/已用额度。';
+    } else {
+      const latest = [...history].reverse().find(p => p.apiQuotaAvailable !== null || p.apiQuotaUsed !== null);
+      const available = formatApiQuotaValue(latest?.apiQuotaAvailable);
+      const used = formatApiQuotaValue(latest?.apiQuotaUsed);
+      newApiNote.textContent = `单位 ${latestApiUnit.toUpperCase()} · 可用 ${available} · 已用 ${used}。`;
+    }
+  }
+
+  if (sub2ApiNote) {
+    if (!hasSub2Api) {
+      sub2ApiNote.textContent = '暂无 Sub2API 采样；钱包数据可用后会展示余额与累计成本。';
+    } else {
+      const latest = [...history].reverse().find(p =>
+        p.sub2ApiBalance !== null || p.sub2ApiTodayTokens !== null || p.sub2ApiTotalCost !== null
+      );
+      const balance = formatSub2TrendValue(latest?.sub2ApiBalance);
+      const totalCost = formatSub2TrendValue(latest?.sub2ApiTotalCost);
+      const todayTokens = hasNumber(latest?.sub2ApiTodayTokens) ? fmtTokens(latest?.sub2ApiTodayTokens) : '--';
+      sub2ApiNote.textContent = `单位 ${latestSub2Unit.toUpperCase()} · 余额 ${balance} · 累计成本 ${totalCost} · 今日 ${todayTokens} Token。`;
+    }
+  }
+
+  const setSmallTrendChart = (chart, series, formatter, axisName, emptyText = '等待采样') => {
     if (!chart) return;
+    const formatValue = value => (
+      !hasNumber(value) ? '--' : formatter(value)
+    );
+    const visibleSeries = series.filter(s =>
+      Array.isArray(s.data) && s.data.some(point => hasNumber(point?.[1]))
+    );
     chart.setOption({
       backgroundColor: 'transparent',
       textStyle: { color: textColor, fontFamily: 'Cascadia Code, Consolas, monospace' },
       grid: { left: 46, right: 12, top: 18, bottom: 24 },
+      graphic: visibleSeries.length ? [] : [{
+        type: 'text',
+        left: 'center',
+        top: 'middle',
+        style: {
+          text: emptyText,
+          fill: textColor,
+          fontSize: 11,
+          fontFamily: 'Cascadia Code, Consolas, monospace',
+        },
+      }],
       tooltip: {
         trigger: 'axis',
         backgroundColor: isDark ? '#21262d' : '#f6f8fa',
@@ -1507,7 +1554,7 @@ function renderCommandTrend() {
         textStyle: { color: isDark ? '#e6edf3' : '#1f2328', fontSize: 12 },
         formatter: params => {
           const t = new Date(params[0].value[0]).toLocaleString('zh-CN');
-          const rows = params.map(p => `${p.marker}${p.seriesName}: <b>${formatter(p.value[1])}</b>`);
+          const rows = params.map(p => `${p.marker}${p.seriesName}: <b>${formatValue(p.value[1])}</b>`);
           return `${rows.join('<br>')}<div style="color:${textColor};font-size:10px;margin-top:4px">${t}</div>`;
         },
       },
@@ -1523,10 +1570,10 @@ function renderCommandTrend() {
         name: axisName,
         nameTextStyle: { color: textColor, fontSize: 9 },
         axisLine: { show: false },
-        axisLabel: { color: textColor, fontSize: 9, formatter },
+        axisLabel: { color: textColor, fontSize: 9, formatter: formatValue },
         splitLine: { lineStyle: { color: splitColor } },
       },
-      series,
+      series: visibleSeries,
     }, { notMerge: true });
   };
   const line = (name, color, data) => ({
@@ -1541,18 +1588,20 @@ function renderCommandTrend() {
 
   setSmallTrendChart(
     commandCostTrendChart,
-    [line('本地成本', '#14b8a6', history.map(p => [p.ts, p.cost]))],
+    [line('本地 Agent 成本', '#14b8a6', history.map(p => [p.ts, p.cost]))],
     fmtUsd,
-    'USD'
+    'USD',
+    '等待成本采样'
   );
   setSmallTrendChart(
     commandTokenTrendChart,
     [
-      line('本地Token', '#388bfd', history.map(p => [p.ts, p.tokens])),
+      line('本地聚合Token', '#388bfd', history.map(p => [p.ts, p.tokens])),
       ...(history.some(p => p.sub2ApiTodayTokens !== null) ? [line('Sub2API今日Token', '#d29922', history.map(p => [p.ts, p.sub2ApiTodayTokens]))] : []),
     ],
     fmtTokens,
-    'Token'
+    'Token',
+    '等待 Token 采样'
   );
   setSmallTrendChart(
     commandNewApiTrendChart,
@@ -1561,7 +1610,8 @@ function renderCommandTrend() {
       ...(history.some(p => p.apiQuotaUsed !== null) ? [line('已用', '#f0883e', history.map(p => [p.ts, p.apiQuotaUsed]))] : []),
     ],
     formatApiQuota,
-    latestApiUnit.toUpperCase()
+    latestApiUnit.toUpperCase(),
+    '等待 NewAPI 额度'
   );
   setSmallTrendChart(
     commandSub2ApiTrendChart,
@@ -1570,7 +1620,8 @@ function renderCommandTrend() {
       ...(history.some(p => p.sub2ApiTotalCost !== null) ? [line('累计成本', '#db61a2', history.map(p => [p.ts, p.sub2ApiTotalCost]))] : []),
     ],
     formatSub2Value,
-    latestSub2Unit.toUpperCase()
+    latestSub2Unit.toUpperCase(),
+    '等待 Sub2API 钱包'
   );
 }
 

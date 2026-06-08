@@ -2,7 +2,7 @@
 
 日期: 2026-06-08
 
-状态: 第一版规格草案
+状态: 第一版规格草案 + demo 实践记录
 
 适用仓库: AgentSense 魔改分支 `dev-improve-2026-06-08`
 
@@ -39,15 +39,41 @@ Source Adapter -> Unified Signal/Dataset Model -> Widget Registry -> Dashboard L
 
 ## 当前进展意味着什么
 
-上一轮已经证明三件关键事实:
+当前阶段已经证明五件关键事实:
 
 1. AgentSense 可以在本机跑起来，原有 Rust + Axum + 静态前端结构可继续复用。
 2. 本地真实 usage 可以被接入页面，至少 `.claude.json` 中的 Claude Code 聚合字段已经能安全白名单读取。
 3. 原项目的 provider quota 模型可用但不够通用；它适合展示“某个 provider 的额度”，不适合承载“个人 Agent/API 使用控制台”。
+4. Codex、CC Switch、NewAPI、Sub2API 可以进入同一个模型消耗视图，模型排序不应默认按来源分块。
+5. 趋势图必须按量纲拆分，美元成本、Token 数量、额度/余额不能混在同一个坐标轴里。
 
 这意味着我们可以基于 AgentSense 魔改，而不是重写一套系统。但必须新增一个统一模型层，否则前端会继续变成一堆硬编码卡片。
 
 更重要的是: Agent/API 只是第一批高价值来源，不应把系统命名、模型、组件和配置锁死在“API quota”这个单一问题上。
+
+## 2026-06-08 Demo 实践结果
+
+当前 demo 通过 `local-usage-proxy.mjs` 暂时承接统一模型层，提供 `/api/command-demo` 给静态前端使用。这个实现是过渡层，但已经验证了正式模型 API 需要保留的字段语义。
+
+已验证 source:
+
+| Source | 当前状态 | 主要产出 | 安全边界 |
+|--------|----------|----------|----------|
+| `claude-code-local` | 已接入 | 项目聚合成本、模型 token、工作区排行 | 只读 `.claude.json` 聚合字段 |
+| `codex-local` | 已接入 | Codex 模型/provider token 聚合 | 只读 `state_5.sqlite` 白名单字段，不读 preview/title/message |
+| `cc-switch` | 已接入 | 模型请求、tokens、成本、近 7 天模型趋势 | 聚合读取，不展示 prompt/response/header |
+| `newapi-main` | 已接入 | 用户额度、请求统计、模型聚合 | 显式 token + user id，不提交凭据 |
+| `sub2api-main` | 已接入 | key 级余额、今日/累计 usage、模型统计 | 显式 API key，不提交凭据 |
+
+当前前端已经落地的统一视角:
+
+- “模型消耗 Top”按模型名聚合多来源数据，默认成本优先，可切换 Token、请求、来源分组。
+- “模型消耗分布”使用统一多源模型数据，不再只看 Claude Code。
+- “模型 Token / 成本趋势”使用上下分区图，Token 与 USD 成本分别使用独立 y 轴空间。
+- “采样趋势”拆成量纲分组: 本地 Agent 成本/USD、Token 消耗分开呈现。
+- “中转专区趋势”把 NewAPI 与 Sub2API 各自做成独立趋势图，避免额度、余额、成本、Token 混在同一张小图里。
+
+这些结论应反向约束正式 widget registry: widget 可以共享容器与交互，但不得把不同单位的数据强行合并到一个趋势坐标轴。
 
 ## 目标
 
@@ -219,7 +245,7 @@ type SourceStatus = {
 - `schema_mismatch`: 本地库存在但版本结构不符合白名单查询。
 - `auth_failed`: token/PAT/OAuth 无效。
 - `unavailable`: 网络或服务不可达。
-- `stale`: 最近一次成功数据过旧，但仍可展示。
+- `stale`: 上一次成功数据过旧，但仍可展示。
 
 ### Entity / Subject
 
@@ -443,7 +469,7 @@ workflow.tasks.blocked.count
 
 主要产出:
 
-- Codex 最近活动
+- Codex 近期活动
 - Codex token 使用
 - Codex 模型分布
 - Codex 会话健康状态
@@ -623,6 +649,25 @@ Widget 只关心“需要什么数据”和“如何展示”，不关心数据�
 
 布局上先支持固定 grid 配置，不做可视化拖拽。配置中保留 `x/y/w/h`，以后可以升级为拖拽布局。
 
+### 趋势 Widget 量纲规则
+
+趋势图应先按数据单位分组，再考虑来源和模型。当前 demo 的分组规则应成为正式 widget registry 的默认约束:
+
+| 量纲 | 推荐 widget | 可混排对象 | 不应混排对象 |
+|------|-------------|------------|--------------|
+| USD / CNY 成本 | `trend-chart` 或上下分区 trend | 本地成本、Sub2API 今日成本、累计成本 | Token、请求数、百分比 |
+| Token | `trend-chart` | 本地 Token、Sub2API 今日 Token、模型 Token 趋势 | 美元成本、余额 |
+| 请求数 | `trend-chart` / `bar-chart` | 请求、成功请求、错误请求 | Token、余额 |
+| 额度 / 余额 | provider 专区趋势 | NewAPI 可用/已用额度、Sub2API 余额 | 模型 token、模型成本排行 |
+| 百分比 | `quota-ring` / `trend-chart` | 使用率、健康率、电量百分比 | 货币、Token 原始量 |
+
+展示策略:
+
+1. 模型维度可以统一混排，但 tooltip 必须展示来源列表和已知/未知成本状态。
+2. 趋势维度优先分量纲；需要同屏比较时使用上下分区、双图或小 multiples，不使用单轴硬塞。
+3. 中转类来源可以有自己的专区趋势图，重点看额度、余额、有效性和 key 级 usage。
+4. 成本未知时显示 `--`，不把未知成本渲染成 `$0.00`。
+
 ## Dashboard Layout 草案
 
 ```yaml
@@ -719,7 +764,7 @@ path = "${USERPROFILE}\\.codex\\state_5.sqlite"
 
 ### 第 0 片: 规格与样例
 
-状态: 本文档。
+状态: 已完成并经过 demo 反向校准。
 
 交付:
 
@@ -731,6 +776,8 @@ path = "${USERPROFILE}\\.codex\\state_5.sqlite"
 - sources 配置样例
 
 ### 第 1 片: 后端模型骨架
+
+状态: demo proxy 已验证契约，Rust 正式模块待实现。
 
 目标:
 
@@ -748,6 +795,8 @@ path = "${USERPROFILE}\\.codex\\state_5.sqlite"
 
 ### 第 2 片: 本地 Adapter
 
+状态: demo proxy 已接入 Claude Code、Codex、CC Switch 聚合源；Rust 正式 adapter 待实现。
+
 目标:
 
 - `claude_code_local`
@@ -762,6 +811,8 @@ path = "${USERPROFILE}\\.codex\\state_5.sqlite"
 
 ### 第 3 片: NewAPI / Sub2API Adapter
 
+状态: demo proxy 已接入 NewAPI 与 Sub2API，凭据留在本地 ignored 配置；Rust 正式 adapter 待实现。
+
 目标:
 
 - 支持 base URL + token/PAT。
@@ -775,6 +826,8 @@ path = "${USERPROFILE}\\.codex\\state_5.sqlite"
 - 支持多个 NewAPI/Sub2API 实例。
 
 ### 第 4 片: 前端 Dashboard Runtime
+
+状态: 已完成过渡版。当前仍是 vanilla + ECharts，但已经有统一模型排行、模型趋势、量纲拆分趋势和中转专区趋势。
 
 目标:
 
@@ -804,10 +857,10 @@ path = "${USERPROFILE}\\.codex\\state_5.sqlite"
 | 事项 | Impact | Confidence | Ease | 判断 |
 |------|--------|------------|------|------|
 | 统一数据模型文档与样例 | 9 | 9 | 9 | 立即做 |
-| `/api/sources` 与 `/api/signals` 类型骨架 | 8 | 8 | 7 | 下一步 |
-| Claude/Codex/CC Switch 本地 adapter | 9 | 7 | 5 | 高优先 |
-| NewAPI/Sub2API adapter | 8 | 6 | 5 | 高优先但需端点实测 |
-| 前端 widget registry | 9 | 8 | 6 | 高优先 |
+| `/api/sources` 与 `/api/signals` 类型骨架 | 8 | 8 | 7 | 下一步固化 |
+| Claude/Codex/CC Switch 本地 adapter | 9 | 8 | 5 | demo 已验证，高优先固化 |
+| NewAPI/Sub2API adapter | 8 | 8 | 5 | demo 已验证，高优先固化 |
+| 前端 widget registry | 9 | 8 | 6 | 过渡版已验证，继续模块化 |
 | workflow/timeblock 预留模型 | 6 | 8 | 8 | 文档预留，暂缓实现 |
 | 拖拽布局编辑器 | 5 | 6 | 3 | 暂缓 |
 | React/Vite 迁移 | 6 | 7 | 4 | 条件触发 |
@@ -824,6 +877,10 @@ path = "${USERPROFILE}\\.codex\\state_5.sqlite"
 
 ## 下一步
 
-建议下一步做第 1 片: 后端模型骨架。
+建议下一步做“demo 契约固化”:
 
-这一步不需要接真实 NewAPI，也不需要动复杂前端。它只建立统一 JSON 契约，让后续 Claude Code、Codex、CC Switch、NewAPI/Sub2API、设备电量都能接到同一个语义层里。
+1. 从 `/api/command-demo` 中抽出正式的 SourceStatus、Signal、Dataset Rust 类型。
+2. 增加 `/api/sources`、`/api/signals`、`/api/datasets/:id`，先返回当前 demo 已验证的数据。
+3. 把 `local-usage-proxy.mjs` 中 NewAPI/Sub2API 的解析逻辑迁入正式 adapter，保留 Node 代理作为开发辅助。
+4. 前端把当前硬编码 dashboard 区块逐步收敛到 widget registry，先做只读固定 layout，不做拖拽编辑器。
+5. 增加模型/来源/Top N 趋势筛选，并把 NewAPI/Sub2API 的日粒度聚合纳入模型趋势大图。

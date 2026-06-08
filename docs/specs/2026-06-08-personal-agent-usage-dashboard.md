@@ -2,7 +2,7 @@
 
 日期: 2026-06-08
 
-状态: 阶段性设计稿
+状态: 阶段性设计 + demo 已落地
 
 补充文档:
 
@@ -28,9 +28,30 @@ Agent/API 使用和额度是第一阶段主域，因为它最贴近当前痛点�
 6. 迁移只做配置迁移，不同步历史 usage 数据。
 7. 写操作只限配置、布局、刷新、显示别名等低风险动作。
 
+## 2026-06-08 Demo 落地状态
+
+当前分支已经跑通一版可看的个人作战仪表盘 demo。它不是最终架构形态，但已经验证了 AgentSense 可以承载“本地只读聚合 + 远端显式 token 来源 + 统一前端态势面板”这条路线。
+
+已落地能力:
+
+- `local-usage-proxy.mjs` 提供 `/api/command-demo`，并把页面代理到本地前端。
+- 浏览器入口使用 `http://127.0.0.1:7894/`。
+- 已接入并验证四类核心来源: Codex 本地状态、CC Switch、本地 Claude Code 聚合、NewAPI、Sub2API。
+- NewAPI 使用用户访问令牌路径，配置项包括 `AGENTSENSE_NEWAPI_BASE_URL`、`AGENTSENSE_NEWAPI_TOKEN`、`AGENTSENSE_NEWAPI_USER_ID`。
+- Sub2API 使用模型 API key 查询 `GET /v1/usage`，配置项包括 `AGENTSENSE_SUB2API_BASE_URL`、`AGENTSENSE_SUB2API_API_KEY`。
+- 真实凭据只进入 `.agentsense.local.env` 或环境变量，文档和提交物只记录变量名，不记录密钥值。
+- 前端已经把“模型消耗 Top”和“模型消耗分布”改成多源统一模型视角，支持按成本、Token、请求或来源分组排序。
+- 趋势展示已经按量纲拆分: 成本/USD 单独成图，Token 单独成图，NewAPI/Sub2API 各自进入中转专区趋势图。
+
+当前 demo 的定位:
+
+- 它是对统一模型意图的实践验证，不是长期正式 API 的最终边界。
+- 它优先服务个人本机常驻观察，所以接受 Node 代理作为过渡层。
+- 后续应把已验证的数据结构固化进 Rust 后端的正式 Source/Signal/Dataset API。
+
 ## 目标
 
-把 AgentSense 改造成一个本地优先的个人作战仪表盘。第一阶段聚焦 Agent/API 状态与使用情况：它应当能把“我正在使用哪些 Agent、各 API/代理的额度和健康情况、最近实际消耗趋势”汇总到一个常驻页面里。长期来看，它应当成为个人态势观察底座，可以继续接入设备、系统、任务、时间块和其他工作流状态。
+把 AgentSense 改造成一个本地优先的个人作战仪表盘。第一阶段聚焦 Agent/API 状态与使用情况：它应当能把“我正在使用哪些 Agent、各 API/代理的额度和健康情况、近期实际消耗趋势”汇总到一个常驻页面里。长期来看，它应当成为个人态势观察底座，可以继续接入设备、系统、任务、时间块和其他工作流状态。
 
 核心判断: 这个系统要分成三层，而不是把“获取信息、综合数据、前台展示”揉在一起。
 
@@ -488,6 +509,10 @@ const DASHBOARD_SCHEMA = {
 
 ## 下一步建议
 
-先做第 1 片: cc-switch observed usage 后端。
+当前已经先用 Node 代理跑通了多源 demo。下一步不再是从零做 cc-switch 单源，而是把 demo 中已经验证过的契约正式化:
 
-它的投入最小、收益最高，也最符合 AgentSense 当前结构。做完后，前端即便还没重构，也能先把本地实际使用量展示出来；同时它会为 Codex/Claude 聚合源和 dashboard runtime 提供稳定数据契约。
+1. 把 `/api/command-demo` 中的 SourceStatus、Signal、Dataset 形态迁入 Rust 后端正式模块。
+2. 先实现只读 `/api/sources`、`/api/signals`、`/api/datasets/:id`，保留 `/api/all` 兼容旧 provider quota 页面。
+3. 把 Codex、CC Switch、NewAPI、Sub2API adapter 从 demo proxy 固化为可配置 source。
+4. 前端继续保留当前 vanilla + ECharts 路线，但按 widget registry 拆出 metric、trend、model table、source table 等可复用渲染单元。
+5. 继续强化趋势层: 模型日趋势接入 NewAPI/Sub2API 日粒度聚合，支持来源筛选和 Top N 控制。

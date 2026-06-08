@@ -315,8 +315,15 @@
     .command-chart-panel {
       min-height: 278px;
     }
+    .command-dimension-panel {
+      min-height: 384px;
+    }
     .command-wide-chart-panel {
       min-height: 430px;
+      margin-bottom: 14px;
+    }
+    .command-relay-trend-panel {
+      min-height: 306px;
       margin-bottom: 14px;
     }
     .command-chart-title {
@@ -371,6 +378,9 @@
       grid-template-columns: 1fr 1fr;
       gap: 10px;
     }
+    .command-dimension-grid {
+      grid-template-columns: 1fr;
+    }
     .command-mini-trend {
       min-width: 0;
       padding: 8px;
@@ -385,7 +395,40 @@
     }
     .command-mini-chart {
       width: 100%;
-      height: 130px;
+      height: 150px;
+    }
+    .command-relay-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+    .command-relay-card {
+      min-width: 0;
+      padding: 10px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--bg2);
+    }
+    .command-relay-heading {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 10px;
+      margin-bottom: 4px;
+    }
+    .command-relay-heading div {
+      color: var(--text);
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .command-relay-heading span {
+      color: var(--muted);
+      font-size: 11px;
+      white-space: nowrap;
+    }
+    .command-relay-chart {
+      width: 100%;
+      height: 220px;
     }
     .command-wide-chart {
       width: 100%;
@@ -875,7 +918,7 @@
       .filter-tab { padding: 2px 6px; font-size: 11px; }
       .command-hero { flex-direction: column; }
       .command-verdict { text-align: left; }
-      .command-metrics, .command-layout, .command-trend-grid { grid-template-columns: 1fr; }
+      .command-metrics, .command-layout, .command-trend-grid, .command-relay-grid { grid-template-columns: 1fr; }
       .consumption-summary { grid-template-columns: 1fr; }
       .card-value { font-size: 20px; }
     }

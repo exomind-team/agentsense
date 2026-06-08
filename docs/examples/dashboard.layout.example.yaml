@@ -55,17 +55,34 @@ dashboards:
       - id: usage
         title: 使用分析
         widgets:
-          - id: usage-trend
+          - id: cost-trend
             type: trend-chart
-            title: 近 7 天成本趋势
+            title: 成本趋势
             bind:
               kind: dataset
-              id: agent.usage.by_day
+              id: agent.usage.cost.by_day
               window: 7d
             series:
               x: date
               y: total_cost_usd
-            layout: { x: 0, y: 2, w: 6, h: 4 }
+            format:
+              unit: usd
+            layout: { x: 0, y: 2, w: 6, h: 3 }
+
+          - id: token-trend
+            type: trend-chart
+            title: Token 趋势
+            bind:
+              kind: dataset
+              id: agent.usage.tokens.by_day
+              window: 7d
+            series:
+              x: date
+              y: total_tokens
+            format:
+              unit: token
+              compact: true
+            layout: { x: 6, y: 2, w: 6, h: 3 }
 
           - id: model-usage
             type: stacked-bar
@@ -77,7 +94,23 @@ dashboards:
             series:
               category: model
               value: total_cost_usd
-            layout: { x: 6, y: 2, w: 6, h: 4 }
+            layout: { x: 0, y: 5, w: 6, h: 4 }
+
+          - id: model-token-cost-trend
+            type: split-trend-chart
+            title: 模型 Token / 成本趋势
+            bind:
+              kind: dataset
+              id: agent.usage.model_daily_trend
+              window: 7d
+            panes:
+              - title: Token
+                y: tokens
+                unit: token
+              - title: 成本
+                y: total_cost_usd
+                unit: usd
+            layout: { x: 6, y: 5, w: 6, h: 4 }
 
           - id: project-table
             type: entity-table
@@ -98,7 +131,42 @@ dashboards:
               - key: output_tokens
                 label: 输出
                 format: compact-number
-            layout: { x: 0, y: 6, w: 12, h: 4 }
+            layout: { x: 0, y: 9, w: 12, h: 4 }
+
+      - id: relay
+        title: 中转专区
+        widgets:
+          - id: newapi-relay-trend
+            type: trend-chart
+            title: NewAPI 额度趋势
+            bind:
+              kind: dataset
+              id: api.newapi.quota.samples
+              window: 6h
+            series:
+              x: sampled_at
+              y:
+                - available
+                - used
+            format:
+              unit: quota
+            layout: { x: 0, y: 13, w: 6, h: 3 }
+
+          - id: sub2api-relay-trend
+            type: trend-chart
+            title: Sub2API 钱包趋势
+            bind:
+              kind: dataset
+              id: api.sub2api.wallet.samples
+              window: 6h
+            series:
+              x: sampled_at
+              y:
+                - balance
+                - total_cost
+            format:
+              unit: usd
+            layout: { x: 6, y: 13, w: 6, h: 3 }
 
   - id: sources
     title: 来源
@@ -125,7 +193,7 @@ dashboards:
                 label: 状态
                 format: status
               - key: last_read_at
-                label: 最近读取
+                label: 最新读取
                 format: datetime
             layout: { x: 0, y: 0, w: 12, h: 5 }
 
