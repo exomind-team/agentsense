@@ -4,8 +4,34 @@ import os from 'node:os';
 import path from 'node:path';
 
 const root = process.cwd();
+loadLocalEnvFile(path.join(root, '.agentsense.local.env'));
 const upstream = 'http://127.0.0.1:7892';
 const port = Number(process.env.AGENTSENSE_PROXY_PORT || 7893);
+
+function loadLocalEnvFile(file) {
+  if (!fs.existsSync(file)) return;
+
+  try {
+    const text = fs.readFileSync(file, 'utf8');
+    for (const rawLine of text.split(/\r?\n/)) {
+      const line = rawLine.trim();
+      if (!line || line.startsWith('#')) continue;
+      const match = line.match(/^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/);
+      if (!match) continue;
+
+      const [, key, rawValue] = match;
+      if (process.env[key] !== undefined) continue;
+      let value = rawValue.trim();
+      const quote = value[0];
+      if ((quote === '"' || quote === "'") && value.endsWith(quote)) {
+        value = value.slice(1, -1);
+      }
+      process.env[key] = value;
+    }
+  } catch {
+    // 本地配置只作为便捷入口；读取失败时保持显式环境变量优先。
+  }
+}
 
 function asNumber(value) {
   return Number.isFinite(Number(value)) ? Number(value) : 0;
@@ -450,6 +476,239 @@ async function newApiStatus() {
   };
 }
 
+function normalizeApiUnit(value) {
+  const raw = String(value || '').trim().toLowerCase();
+  if (raw === 'usd' || raw.includes('dollar')) return 'usd';
+  if (raw === 'cny' || raw.includes('yuan') || raw.includes('rmb')) return 'cny';
+  if (raw.includes('token')) return 'token';
+  return raw || 'quota';
+}
+
+function sub2ApiAuthHeader(apiKey) {
+  const key = String(apiKey || '').trim();
+  return /^bearer\s+/i.test(key) ? key : `Bearer ${key}`;
+}
+
+async function fetchSub2ApiJson(baseUrl, endpoint, apiKey) {
+  const url = new URL(endpoint, `${baseUrl}/`);
+  const started = Date.now();
+  const response = await fetch(url, {
+    headers: {
+      accept: 'application/json',
+      Authorization: sub2ApiAuthHeader(apiKey),
+    },
+    cache: 'no-store',
+    signal: AbortSignal.timeout(15_000),
+  });
+  const text = await response.text();
+  let data = null;
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = { text: text.slice(0, 200) };
+    }
+  }
+
+  return {
+    ok: response.ok,
+    status: response.status,
+    data,
+    latency_ms: Date.now() - started,
+  };
+}
+
+function summarizeSub2ApiModelStats(items) {
+  if (!Array.isArray(items)) return [];
+
+  return items
+    .map(item => {
+      if (!isObject(item)) return null;
+      return {
+        model: String(item.model || item.name || item.model_name || item.id || 'unknown'),
+        requests: firstFiniteNumber(item.requests, item.request_count) || 0,
+        input_tokens: firstFiniteNumber(item.input_tokens) || 0,
+        output_tokens: firstFiniteNumber(item.output_tokens) || 0,
+        cache_creation_tokens: firstFiniteNumber(item.cache_creation_tokens) || 0,
+        cache_read_tokens: firstFiniteNumber(item.cache_read_tokens) || 0,
+        total_tokens: firstFiniteNumber(item.total_tokens, item.tokens) || 0,
+        cost: firstFiniteNumber(item.actual_cost, item.cost) || 0,
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => (b.cost - a.cost) || (b.total_tokens - a.total_tokens) || (b.requests - a.requests));
+}
+
+function summarizeSub2ApiUsage(data) {
+  const payload = unwrapApiData(data);
+  if (!isObject(payload)) return null;
+
+  const usage = isObject(payload.usage) ? payload.usage : {};
+  const today = isObject(usage.today) ? usage.today : {};
+  const total = isObject(usage.total) ? usage.total : {};
+  const unit = normalizeApiUnit(payload.unit);
+  const available = firstFiniteNumber(payload.remaining, payload.balance, payload.wallet_balance);
+  const totalCost = firstFiniteNumber(total.actual_cost, total.cost);
+  const todayCost = firstFiniteNumber(today.actual_cost, today.cost);
+  const totalTokens = firstFiniteNumber(total.total_tokens, total.tokens);
+  const todayTokens = firstFiniteNumber(today.total_tokens, today.tokens);
+  const totalRequests = firstFiniteNumber(total.requests, total.request_count);
+  const todayRequests = firstFiniteNumber(today.requests, today.request_count);
+  const modelStats = summarizeSub2ApiModelStats(payload.model_stats);
+
+  if (
+    available === null &&
+    totalCost === null &&
+    todayCost === null &&
+    totalTokens === null &&
+    todayTokens === null &&
+    totalRequests === null &&
+    todayRequests === null &&
+    modelStats.length === 0
+  ) {
+    return null;
+  }
+
+  return {
+    auth_kind: 'api_key',
+    valid: payload.isValid !== false && payload.valid !== false,
+    mode: typeof payload.mode === 'string' ? payload.mode : undefined,
+    plan_name: typeof payload.planName === 'string' ? payload.planName : undefined,
+    available_balance: available,
+    unit,
+    today: {
+      requests: todayRequests,
+      tokens: todayTokens,
+      cost: todayCost,
+      input_tokens: firstFiniteNumber(today.input_tokens),
+      output_tokens: firstFiniteNumber(today.output_tokens),
+      cache_creation_tokens: firstFiniteNumber(today.cache_creation_tokens),
+      cache_read_tokens: firstFiniteNumber(today.cache_read_tokens),
+    },
+    total: {
+      requests: totalRequests,
+      tokens: totalTokens,
+      cost: totalCost,
+      input_tokens: firstFiniteNumber(total.input_tokens),
+      output_tokens: firstFiniteNumber(total.output_tokens),
+      cache_creation_tokens: firstFiniteNumber(total.cache_creation_tokens),
+      cache_read_tokens: firstFiniteNumber(total.cache_read_tokens),
+    },
+    throughput: {
+      rpm: firstFiniteNumber(usage.rpm),
+      tpm: firstFiniteNumber(usage.tpm),
+      average_duration_ms: firstFiniteNumber(usage.average_duration_ms),
+    },
+    model_stats: modelStats,
+  };
+}
+
+function sub2ApiSignals(summary, collectedAt) {
+  if (!summary) return [];
+  const sourceId = 'sub2api-main';
+  const signals = [];
+  const freshness = { collectedAt, staleAfterSeconds: 300 };
+  const add = (id, pathName, kind, value, unit, confidence = 'reported') => {
+    if (value === null || value === undefined) return;
+    signals.push({
+      id,
+      path: pathName,
+      domain: 'api',
+      kind,
+      subject: sourceId,
+      value,
+      unit,
+      confidence,
+      sourceId,
+      freshness,
+    });
+  };
+
+  add('signal-sub2api-balance-available', 'api.sub2api.balance.available', 'quota', summary.available_balance, summary.unit);
+  add('signal-sub2api-requests-today', 'api.sub2api.requests.today', 'usage', summary.today.requests, 'count');
+  add('signal-sub2api-tokens-today', 'api.sub2api.tokens.today', 'usage', summary.today.tokens, 'token');
+  add('signal-sub2api-cost-today', 'api.sub2api.cost.today', 'usage', summary.today.cost, summary.unit);
+  add('signal-sub2api-requests-total', 'api.sub2api.requests.total', 'usage', summary.total.requests, 'count');
+  add('signal-sub2api-tokens-total', 'api.sub2api.tokens.total', 'usage', summary.total.tokens, 'token');
+  add('signal-sub2api-cost-total', 'api.sub2api.cost.total', 'usage', summary.total.cost, summary.unit);
+  add('signal-sub2api-models-count', 'api.sub2api.models.count', 'inventory', summary.model_stats.length, 'count', 'derived');
+  add('signal-sub2api-rpm', 'api.sub2api.rpm', 'rate', summary.throughput.rpm, 'count');
+  add('signal-sub2api-tpm', 'api.sub2api.tpm', 'rate', summary.throughput.tpm, 'token');
+
+  return signals;
+}
+
+async function sub2ApiStatus() {
+  const baseUrl = trimTrailingSlash(process.env.AGENTSENSE_SUB2API_BASE_URL || 'https://sub2api.exo-mind.ai');
+  const apiKey = String(process.env.AGENTSENSE_SUB2API_API_KEY || process.env.AGENTSENSE_SUB2API_KEY || '').trim();
+  const label = process.env.AGENTSENSE_SUB2API_LABEL || 'Sub2API';
+  const host = safeHost(baseUrl);
+  const source = {
+    id: 'sub2api-main',
+    kind: 'sub2api',
+    label,
+    enabled: Boolean(baseUrl && apiKey),
+    state: 'disabled',
+    message: '设置 AGENTSENSE_SUB2API_API_KEY 后启用',
+    capabilities: ['api_balance', 'api_usage', 'model_usage', 'api_key_status', 'provider_health'],
+  };
+
+  if (!baseUrl || !apiKey) {
+    return {
+      configured: false,
+      source,
+      signals: [],
+      alerts: [{ level: 'info', title: `${label} 未启用`, detail: source.message }],
+      datasets: { model_stats: [] },
+    };
+  }
+
+  const collectedAt = new Date().toISOString();
+  try {
+    const result = await fetchSub2ApiJson(baseUrl, '/v1/usage', apiKey);
+    const summary = result.ok && businessOk(result.data) ? summarizeSub2ApiUsage(result.data) : null;
+    source.enabled = true;
+    source.last_read_at = collectedAt;
+    source.latency_ms = result.latency_ms;
+
+    if (summary?.valid) {
+      source.state = 'ok';
+      source.message = `${host || 'Sub2API'} key 用量已读取`;
+      return {
+        configured: true,
+        source,
+        summary,
+        signals: sub2ApiSignals(summary, collectedAt),
+        alerts: [{ level: 'ok', title: `${label} 已接入`, detail: '已通过模型 API key 读取 key 级用量。' }],
+        datasets: { model_stats: summary.model_stats },
+      };
+    }
+
+    source.state = result.status === 401 || result.status === 403 || summary?.valid === false ? 'auth_failed' : 'unavailable';
+    source.message = source.state === 'auth_failed'
+      ? `${host || 'Sub2API'} key 未通过鉴权`
+      : `${host || 'Sub2API'} /v1/usage 返回 ${result.status}`;
+    return {
+      configured: true,
+      source,
+      signals: [],
+      alerts: [{ level: 'warning', title: `${label} 不可用`, detail: source.message }],
+      datasets: { model_stats: [] },
+    };
+  } catch (error) {
+    source.enabled = true;
+    source.state = 'unavailable';
+    source.message = `无法访问 ${host || 'Sub2API'}: ${safeErrorKind(error)}`;
+    return {
+      configured: true,
+      source,
+      signals: [],
+      alerts: [{ level: 'warning', title: `${label} 不可达`, detail: source.message }],
+      datasets: { model_stats: [] },
+    };
+  }
+}
+
 function localUsage() {
   const file = path.join(os.homedir(), '.claude.json');
   if (!fs.existsSync(file)) {
@@ -534,6 +793,7 @@ async function commandDemo() {
   const home = os.homedir();
   const usage = localUsage();
   const newApi = await newApiStatus();
+  const sub2Api = await sub2ApiStatus();
   const summary = usage.configured && usage.status?.state === 'ok' ? usage.summary : null;
   const totalTokens = summary
     ? summary.input_tokens + summary.output_tokens + summary.cache_read_tokens + summary.cache_creation_tokens
@@ -566,15 +826,7 @@ async function commandDemo() {
       ['agent_usage', 'provider_health', 'model_pricing']
     ),
     newApi.source,
-    {
-      id: 'sub2api-main',
-      kind: 'sub2api',
-      label: 'Sub2API',
-      enabled: false,
-      state: 'disabled',
-      message: '等待 token 与端点配置',
-      capabilities: ['api_balance', 'provider_health'],
-    },
+    sub2Api.source,
     {
       id: 'windows-power',
       kind: 'system_api',
@@ -637,14 +889,15 @@ async function commandDemo() {
       sourceId: 'command-demo',
     },
     ...newApi.signals,
+    ...sub2Api.signals,
   ];
 
-  const alerts = [...(newApi.alerts || [])];
+  const alerts = [...(newApi.alerts || []), ...(sub2Api.alerts || [])];
   if (!healthyLocal) {
     alerts.push({ level: 'warning', title: '本地 usage 未读取', detail: usage.status?.message || 'Claude Code 聚合源不可用' });
   }
   for (const source of sources) {
-    if (source.id === 'newapi-main') continue;
+    if (source.id === 'newapi-main' || source.id === 'sub2api-main') continue;
     if (source.state === 'missing') {
       alerts.push({ level: 'info', title: `${source.label} 缺失`, detail: source.message });
     }
@@ -685,6 +938,7 @@ async function commandDemo() {
       top_models: usage.models || [],
       top_projects: usage.top_projects || [],
       newapi_attempts: newApi.datasets?.attempts || [],
+      sub2api_model_stats: sub2Api.datasets?.model_stats || [],
     },
   };
 }

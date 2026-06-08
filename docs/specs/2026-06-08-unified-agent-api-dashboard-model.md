@@ -492,6 +492,14 @@ workflow.tasks.blocked.count
 - Adapter 第一版应使用 `auth.type = "auto"` 自动探测 user access token 与 API key 两类路径；系统访问令牌需要 `user_id_ref`，鉴权失败返回 `SourceStatus.state = "auth_failed"`，不得让页面崩溃。
 - 站点公开 `/api/status` 只能证明实例可达，不能代表用户额度可读。
 
+Sub2API 2026-06-08 实测补充:
+
+- Sub2API 当前按模型 API Key 维度计数，没有发现 NewAPI 式用户级 PAT。
+- key 级查询接口为 `GET /v1/usage`，鉴权为 `Authorization: Bearer <API Key>`。
+- 返回结构包含 `isValid`、`mode`、`balance` / `remaining`、`usage.today`、`usage.total`、`model_stats` 等聚合字段。
+- AgentSense 第一版把 Sub2API 建模为 `api_key` scope 的远端数据源，展示 key 是否有效、余额、今日请求/token/成本、累计请求/token/成本、模型排行。
+- 真实 key 只允许放在环境变量或 `.agentsense.local.env` 这类本地 ignore 文件里，提交物只记录 `secret_ref`。
+
 主要产出:
 
 - `api.balance.usd.remaining`

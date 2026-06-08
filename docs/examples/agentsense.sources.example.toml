@@ -75,14 +75,17 @@ kind = "sub2api"
 label = "Sub2API main"
 enabled = false
 scope = "remote"
-base_url = "https://example-sub2api.local"
+base_url = "https://sub2api.exo-mind.ai"
 refresh_mode = "interval"
 refresh_interval_seconds = 300
-capabilities = ["api_balance", "api_quota", "provider_health"]
+capabilities = ["api_balance", "api_usage", "model_usage", "api_key_status", "provider_health"]
 
 [sources.auth]
 type = "bearer"
-secret_ref = "env:SUB2API_TOKEN"
+secret_ref = "env:AGENTSENSE_SUB2API_API_KEY"
+
+[sources.endpoints]
+usage = "/v1/usage"
 
 [[sources]]
 id = "windows-power"

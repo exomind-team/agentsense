@@ -869,6 +869,51 @@ fn env_newapi_source_status() -> serde_json::Value {
     })
 }
 
+fn env_sub2api_source_status() -> serde_json::Value {
+    let base_url = std::env::var("AGENTSENSE_SUB2API_BASE_URL")
+        .unwrap_or_else(|_| "https://sub2api.exo-mind.ai".to_string())
+        .trim()
+        .trim_end_matches('/')
+        .to_string();
+    let key_present = std::env::var("AGENTSENSE_SUB2API_API_KEY")
+        .or_else(|_| std::env::var("AGENTSENSE_SUB2API_KEY"))
+        .map(|v| !v.trim().is_empty())
+        .unwrap_or(false);
+    let label =
+        std::env::var("AGENTSENSE_SUB2API_LABEL").unwrap_or_else(|_| "Sub2API".to_string());
+
+    if base_url.is_empty() || !key_present {
+        return serde_json::json!({
+            "id": "sub2api-main",
+            "kind": "sub2api",
+            "label": label,
+            "enabled": false,
+            "state": "disabled",
+            "message": "设置 AGENTSENSE_SUB2API_API_KEY 后启用",
+            "capabilities": ["api_balance", "api_usage", "model_usage", "api_key_status", "provider_health"],
+        });
+    }
+
+    let host = base_url
+        .split("://")
+        .nth(1)
+        .unwrap_or(&base_url)
+        .split('/')
+        .next()
+        .filter(|value| !value.is_empty())
+        .unwrap_or("Sub2API");
+
+    serde_json::json!({
+        "id": "sub2api-main",
+        "kind": "sub2api",
+        "label": label,
+        "enabled": true,
+        "state": "stale",
+        "message": format!("{host} 已配置 key；完整用量探测由 local usage proxy 执行"),
+        "capabilities": ["api_balance", "api_usage", "model_usage", "api_key_status", "provider_health"],
+    })
+}
+
 pub async fn api_command_demo() -> axum::Json<serde_json::Value> {
     let local = api_local_usage().await.0;
     let local_state = local
@@ -950,15 +995,7 @@ pub async fn api_command_demo() -> axum::Json<serde_json::Value> {
     }
 
     sources.push(env_newapi_source_status());
-    sources.push(serde_json::json!({
-        "id": "sub2api-main",
-        "kind": "sub2api",
-        "label": "Sub2API",
-        "enabled": false,
-        "state": "disabled",
-        "message": "等待 token 与端点配置",
-        "capabilities": ["api_balance", "provider_health"],
-    }));
+    sources.push(env_sub2api_source_status());
     sources.push(serde_json::json!({
         "id": "windows-power",
         "kind": "system_api",

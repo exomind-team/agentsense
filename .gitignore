@@ -3,6 +3,7 @@ config.toml
 quota.db
 tests/fixtures/
 *.log
+.agentsense.local.env
 .worktrees
 .codegraph/
 config.*local*.toml
