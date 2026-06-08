@@ -190,7 +190,7 @@
     </table>
   </div>
 
-  <div class="command-layout">
+  <div class="command-layout command-ranked-tables">
     <div class="table-section command-panel">
       <div class="command-table-title">
         <div class="section-title">模型消耗 Top</div>
@@ -215,9 +215,16 @@
         <tbody id="command-model-body"></tbody>
       </table>
     </div>
-    <div class="table-section command-panel">
+    <div class="table-section command-panel command-workspace-panel">
       <div class="section-title">工作区消耗 Top</div>
-      <table>
+      <table class="command-workspace-table">
+        <colgroup>
+          <col class="workspace-col">
+          <col class="cost-col">
+          <col class="token-col">
+          <col class="record-col">
+          <col class="source-col">
+        </colgroup>
         <thead>
             <tr>
               <th>工作区</th>

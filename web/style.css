@@ -309,8 +309,14 @@
     }
     .command-layout {
       display: grid;
-      grid-template-columns: 1fr 1fr;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
       gap: 14px;
+    }
+    .command-layout > * {
+      min-width: 0;
+    }
+    .command-ranked-tables {
+      grid-template-columns: 1fr;
     }
     .command-panel {
       margin-bottom: 14px;
@@ -898,6 +904,69 @@
       padding: 5px 12px;
       font-size: 12px;
       border-bottom: 1px solid var(--border);
+    }
+
+    .command-workspace-panel {
+      min-width: 0;
+      overflow-x: auto;
+      overflow-y: hidden;
+    }
+
+    .command-workspace-table {
+      table-layout: fixed;
+      min-width: 680px;
+    }
+
+    .command-workspace-table .workspace-col { width: 33%; }
+    .command-workspace-table .cost-col { width: 14%; }
+    .command-workspace-table .token-col { width: 15%; }
+    .command-workspace-table .record-col { width: 25%; }
+    .command-workspace-table .source-col { width: 13%; }
+
+    .command-workspace-table th,
+    .command-workspace-table td {
+      padding-left: 8px;
+      padding-right: 8px;
+      vertical-align: top;
+      min-width: 0;
+    }
+
+    .command-workspace-table td {
+      overflow: hidden;
+    }
+
+    .command-workspace-table td:nth-child(2),
+    .command-workspace-table td:nth-child(3) {
+      white-space: nowrap;
+    }
+
+    .command-workspace-table .workspace-name,
+    .command-workspace-table .workspace-path,
+    .command-workspace-table .workspace-record small {
+      display: block;
+      max-width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .command-workspace-table .workspace-record {
+      min-width: 0;
+    }
+
+    .command-workspace-table .workspace-record strong {
+      display: block;
+      line-height: 1.35;
+      overflow-wrap: anywhere;
+      white-space: normal;
+    }
+
+    .command-workspace-table td:nth-child(5) {
+      overflow-wrap: anywhere;
+    }
+
+    .command-workspace-table .acct-badge {
+      margin-bottom: 3px;
     }
 
     tr:last-child td { border-bottom: none; }
