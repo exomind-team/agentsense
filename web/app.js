@@ -31,11 +31,18 @@ const COMMAND_HISTORY_WINDOW_MS = 6 * 60 * 60 * 1000;
 const MAX_COMMAND_HISTORY_PTS = 720;
 const COMMAND_MODEL_SORT_KEY = 'command_model_sort_v1';
 const COMMAND_RELAY_VIEW_KEY = 'command_relay_view_v1';
+const COMMAND_RELAY_DETAILS_COLLAPSED_KEY = 'command_relay_details_collapsed_v1';
+const COMMAND_MODEL_TREND_WINDOW_KEY = 'command_model_trend_window_v1';
 const COMMAND_MODEL_SORT_LABELS = {
   cost: '成本优先',
   tokens: 'Token优先',
   requests: '请求优先',
   source: '来源分组',
+};
+const COMMAND_MODEL_TREND_LABELS = {
+  '6h': '近 6 小时',
+  '1d': '近 1 天',
+  '7d': '近 7 天',
 };
 const COMMAND_MODEL_SOURCE_ORDER = ['Claude', 'Codex', 'CC codex', 'CC claude', 'CC unknown', 'NewAPI', 'Sub2API'];
 const COMMAND_MODEL_COLORS = ['#14b8a6', '#388bfd', '#818cf8', '#3fb950', '#f59e0b', '#d97757', '#db61a2', '#a371f7'];
@@ -57,11 +64,14 @@ let commandCostTrendChart = null;
 let commandTokenTrendChart = null;
 let commandNewApiTrendChart = null;
 let commandSub2ApiTrendChart = null;
+let commandSub2ApiCostTrendChart = null;
 let commandModelChart = null;
 let commandModelTrendChart = null;
 let commandHistoryStorage = [];
 let commandModelSort = 'cost';
 let commandRelayView = 'source';
+let commandRelayDetailsCollapsed = true;
+let commandModelTrendWindow = '7d';
 let chart = null;
 let weeklyBarChart = null;
 let dsUsageChart = null;
@@ -86,6 +96,7 @@ function init() {
   commandTokenTrendChart = echarts.init(document.getElementById('command-token-trend-chart'), null, { renderer: 'canvas' });
   commandNewApiTrendChart = echarts.init(document.getElementById('command-newapi-trend-chart'), null, { renderer: 'canvas' });
   commandSub2ApiTrendChart = echarts.init(document.getElementById('command-sub2api-trend-chart'), null, { renderer: 'canvas' });
+  commandSub2ApiCostTrendChart = echarts.init(document.getElementById('command-sub2api-cost-trend-chart'), null, { renderer: 'canvas' });
   commandModelChart = echarts.init(document.getElementById('command-model-chart'), null, { renderer: 'canvas' });
   commandModelTrendChart = echarts.init(document.getElementById('command-model-trend-chart'), null, { renderer: 'canvas' });
   chart = echarts.init(document.getElementById('trend-chart'), null, { renderer: 'canvas' });
@@ -109,19 +120,53 @@ function init() {
   }
   commandRelayView = localStorage.getItem(COMMAND_RELAY_VIEW_KEY) || 'source';
   if (!['source', 'metric'].includes(commandRelayView)) commandRelayView = 'source';
-  document.querySelectorAll('.command-relay-view-btn').forEach(btn => {
+  commandRelayDetailsCollapsed = localStorage.getItem(COMMAND_RELAY_DETAILS_COLLAPSED_KEY) !== 'false';
+  const commandRelayDetailsToggle = document.getElementById('command-relay-details-toggle');
+  if (commandRelayDetailsToggle) {
+    commandRelayDetailsToggle.addEventListener('click', () => {
+      commandRelayDetailsCollapsed = !commandRelayDetailsCollapsed;
+      localStorage.setItem(COMMAND_RELAY_DETAILS_COLLAPSED_KEY, commandRelayDetailsCollapsed ? 'true' : 'false');
+      renderCommandRelayDetailsState();
+      requestAnimationFrame(() => {
+        commandNewApiTrendChart?.resize();
+        commandSub2ApiTrendChart?.resize();
+        commandSub2ApiCostTrendChart?.resize();
+      });
+    });
+  }
+  document.querySelectorAll('.command-relay-view-btn[data-relay-view]').forEach(btn => {
     const active = btn.dataset.relayView === commandRelayView;
     btn.classList.toggle('active', active);
     btn.setAttribute('aria-pressed', active ? 'true' : 'false');
     btn.addEventListener('click', () => {
       commandRelayView = btn.dataset.relayView || 'source';
       localStorage.setItem(COMMAND_RELAY_VIEW_KEY, commandRelayView);
-      document.querySelectorAll('.command-relay-view-btn').forEach(item => {
+      document.querySelectorAll('.command-relay-view-btn[data-relay-view]').forEach(item => {
         const isActive = item.dataset.relayView === commandRelayView;
         item.classList.toggle('active', isActive);
         item.setAttribute('aria-pressed', isActive ? 'true' : 'false');
       });
       renderCommandRelaySummary(commandDemoData);
+      renderCommandTrend();
+    });
+  });
+  renderCommandRelayDetailsState();
+  commandModelTrendWindow = localStorage.getItem(COMMAND_MODEL_TREND_WINDOW_KEY) || '7d';
+  if (!COMMAND_MODEL_TREND_LABELS[commandModelTrendWindow]) commandModelTrendWindow = '7d';
+  document.querySelectorAll('.command-model-trend-window-btn').forEach(btn => {
+    const active = btn.dataset.modelTrendWindow === commandModelTrendWindow;
+    btn.classList.toggle('active', active);
+    btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+    btn.addEventListener('click', () => {
+      commandModelTrendWindow = btn.dataset.modelTrendWindow || '7d';
+      if (!COMMAND_MODEL_TREND_LABELS[commandModelTrendWindow]) commandModelTrendWindow = '7d';
+      localStorage.setItem(COMMAND_MODEL_TREND_WINDOW_KEY, commandModelTrendWindow);
+      document.querySelectorAll('.command-model-trend-window-btn').forEach(item => {
+        const isActive = item.dataset.modelTrendWindow === commandModelTrendWindow;
+        item.classList.toggle('active', isActive);
+        item.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+      });
+      renderCommandModelTrend(commandDemoData?.datasets);
     });
   });
   try { powerLocalStorage = JSON.parse(localStorage.getItem(POWER_LS_KEY) || '[]'); } catch(e) { powerLocalStorage = []; }
@@ -137,6 +182,7 @@ function init() {
     commandTokenTrendChart?.resize();
     commandNewApiTrendChart?.resize();
     commandSub2ApiTrendChart?.resize();
+    commandSub2ApiCostTrendChart?.resize();
     commandModelChart?.resize();
     commandModelTrendChart?.resize();
     chart?.resize();
@@ -1140,6 +1186,20 @@ function fmtQuota(v) {
   return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
 }
 
+function formatUnitAmount(value, unit = 'usd') {
+  if (value === null || value === undefined || value === '') return '--';
+  if (unit === 'usd') return fmtUsd(value);
+  if (unit === 'cny') return fmtCny(value);
+  if (unit === 'token') return fmtTokens(value);
+  if (unit === 'quota' || unit === 'credit') return fmtQuota(value);
+  if (unit === 'count') return Number(value || 0).toLocaleString();
+  return `${fmtQuota(value)} ${String(unit || '').toUpperCase()}`.trim();
+}
+
+function isUsdCost(unit) {
+  return String(unit || 'usd').toLowerCase() === 'usd';
+}
+
 function sourceStateLabel(state) {
   if (state === 'ok') return '<span class="source-state ok">ok</span>';
   if (state === 'missing') return '<span class="source-state missing">missing</span>';
@@ -1191,7 +1251,7 @@ function collectCommandModelInputRows(data) {
   return [
     ...models.map(m => {
       const total = (m.input_tokens || 0) + (m.output_tokens || 0) + (m.cache_read_tokens || 0) + (m.cache_creation_tokens || 0);
-      return { source: 'Claude', model: m.model, cost: m.cost_usd, tokens: total, requests: null };
+      return { source: 'Claude', model: m.model, cost: m.cost_usd, costUnit: 'usd', tokens: total, requests: null };
     }),
     ...codexModels.map(m => ({
       source: 'Codex',
@@ -1204,13 +1264,15 @@ function collectCommandModelInputRows(data) {
       source: `CC ${m.app || ''}`.trim(),
       model: normalizeCommandModelName('CC Switch', m.model, m.provider),
       cost: m.cost,
+      costUnit: 'usd',
       tokens: m.total_tokens,
       requests: m.requests,
     })),
     ...newApiModels.map(m => ({
       source: 'NewAPI',
       model: normalizeCommandModelName('NewAPI', m.model),
-      cost: m.cost,
+      quota: m.quota_used ?? m.cost,
+      quotaUnit: m.quota_unit || 'quota',
       tokens: m.total_tokens,
       requests: m.requests,
     })),
@@ -1218,6 +1280,7 @@ function collectCommandModelInputRows(data) {
       source: 'Sub2API',
       model: normalizeCommandModelName('Sub2API', m.model),
       cost: m.cost,
+      costUnit: m.cost_unit || 'usd',
       tokens: m.total_tokens,
       requests: m.requests,
     })),
@@ -1235,6 +1298,11 @@ function buildUnifiedCommandModelRows(data) {
       sourceSet: new Set(),
       cost: 0,
       costKnown: false,
+      costUnit: 'usd',
+      costComparable: false,
+      quota: 0,
+      quotaKnown: false,
+      quotaUnit: 'quota',
       tokens: 0,
       requests: 0,
       requestKnown: false,
@@ -1247,8 +1315,19 @@ function buildUnifiedCommandModelRows(data) {
 
     const cost = finiteOrNull(row.cost);
     if (cost !== null) {
+      const rowCostUnit = row.costUnit || 'usd';
+      const nextUnit = current.costKnown && current.costUnit !== rowCostUnit ? 'mixed' : rowCostUnit;
       current.cost += cost;
       current.costKnown = true;
+      current.costUnit = nextUnit;
+      current.costComparable = current.costComparable || isUsdCost(rowCostUnit);
+      if (current.costUnit === 'mixed') current.costComparable = false;
+    }
+    const quota = finiteOrNull(row.quota);
+    if (quota !== null) {
+      current.quota += quota;
+      current.quotaKnown = true;
+      current.quotaUnit = row.quotaUnit || current.quotaUnit || 'quota';
     }
     current.tokens += finiteOrNull(row.tokens) || 0;
     const requests = finiteOrNull(row.requests);
@@ -1262,6 +1341,7 @@ function buildUnifiedCommandModelRows(data) {
   return [...map.values()].map(row => ({
     ...row,
     cost: row.costKnown ? row.cost : null,
+    quota: row.quotaKnown ? row.quota : null,
     requests: row.requestKnown ? row.requests : null,
     primarySource: row.sources[0] || '',
   }));
@@ -1281,6 +1361,7 @@ const COMMAND_RELAY_METRIC_LABELS = {
   cost_total: '累计成本',
   model_tokens: '模型 Token',
   model_cost: '模型成本',
+  model_quota: '模型额度',
   model_requests: '模型请求',
 };
 
@@ -1298,6 +1379,7 @@ const COMMAND_RELAY_METRIC_ORDER = [
   'requests_total',
   'model_tokens',
   'model_cost',
+  'model_quota',
   'model_requests',
 ];
 
@@ -1329,13 +1411,17 @@ function relayMetricFromPath(pathName) {
 function relayMetricGroup(metric, unit) {
   if (unit === 'token' || metric.includes('tokens')) return 'token';
   if (unit === 'percent' || metric === 'usage_percent') return 'percent';
-  if (unit === 'usd' || unit === 'cny' || metric.includes('cost') || metric.includes('quota') || metric.includes('balance')) return 'money';
+  if (metric.includes('quota')) return 'quota';
+  if (metric.includes('balance')) return 'balance';
+  if (unit === 'usd' || unit === 'cny' || metric.includes('cost')) return 'money';
   if (unit === 'count' || metric.includes('requests')) return 'count';
   return unit || 'value';
 }
 
 function relayGroupLabel(group, unit) {
-  if (group === 'money') return unit === 'cny' ? '金额/CNY' : unit === 'quota' ? '额度' : '金额/USD';
+  if (group === 'quota') return unit === 'token' ? '额度单位 Token' : unit === 'cny' ? '额度单位 CNY' : unit === 'usd' ? '额度单位 USD' : '额度单位';
+  if (group === 'balance') return unit === 'cny' ? '钱包余额 CNY' : '钱包余额 USD';
+  if (group === 'money') return unit === 'cny' ? '成本 CNY' : '成本 USD';
   if (group === 'token') return 'Token';
   if (group === 'count') return '次数';
   if (group === 'percent') return '百分比';
@@ -1345,6 +1431,79 @@ function relayGroupLabel(group, unit) {
 function formatRelayMetricValue(metric) {
   if (!metric || metric.value === null || metric.value === undefined) return '--';
   return signalValue(metric);
+}
+
+function formatCostCell(costKnown, cost) {
+  return costKnown ? fmtUsd(cost) : '<span class="cost-unknown">成本未知</span>';
+}
+
+function formatModelSpendCell(row) {
+  const parts = [];
+  if (row?.costKnown) {
+    const label = row.costComparable ? 'USD 成本' : '成本';
+    parts.push(`<span>${escapeHtml(`${label} ${formatUnitAmount(row.cost, row.costUnit || 'usd')}`)}</span>`);
+  }
+  if (row?.quotaKnown) {
+    parts.push(`<small>${escapeHtml(`NewAPI 额度 ${formatUnitAmount(row.quota, row.quotaUnit || 'quota')}`)}</small>`);
+  }
+  if (!parts.length) {
+    return '<span class="cost-unknown">成本未知</span>';
+  }
+  return `<div class="model-spend-cell">${parts.join('')}</div>`;
+}
+
+function recordKindLabel(kind) {
+  if (kind === 'session') return '会话';
+  if (kind === 'project_aggregate') return '项目聚合';
+  return String(kind || '证据');
+}
+
+function formatWorkspaceRecord(project) {
+  if (Array.isArray(project?.record_breakdown) && project.record_breakdown.length) {
+    const rows = project.record_breakdown
+      .filter(item => Number(item?.count || 0) > 0)
+      .map(item => {
+        const source = item.source || item.label || 'unknown';
+        const kind = recordKindLabel(item.kind || item.record_kind);
+        const prefix = item.synthetic ? '推断 ' : '';
+        return `${prefix}${source} ${Number(item.count || 0).toLocaleString()} ${kind}`;
+      });
+    if (rows.length) {
+      const latestAt = project?.latest_at ? Date.parse(project.latest_at) : NaN;
+      const latest = Number.isFinite(latestAt)
+        ? new Date(latestAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+        : '';
+      return `
+        <div class="workspace-record">
+          <strong>${escapeHtml(rows.join(' · '))}</strong>
+          <small>${escapeHtml(latest ? `最近 ${latest}` : '由使用记录聚合')}</small>
+        </div>
+      `;
+    }
+  }
+  const sessions = Number(project?.sessions || 0);
+  const recordCount = Number(project?.record_count || 0);
+  const kinds = Array.isArray(project?.record_kinds) && project.record_kinds.length
+    ? project.record_kinds
+    : (project?.record_kind ? [project.record_kind] : []);
+  const kindLabels = kinds.map(recordKindLabel);
+  const latestAt = project?.latest_at ? Date.parse(project.latest_at) : NaN;
+  const latest = Number.isFinite(latestAt)
+    ? new Date(latestAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+    : '';
+  let primary = recordCount > 0 ? `${recordCount.toLocaleString()} 条证据` : '聚合记录';
+  if (kinds.length === 1 && kinds[0] === 'session') primary = `${(sessions || recordCount).toLocaleString()} 会话`;
+  if (kinds.length === 1 && kinds[0] === 'project_aggregate') primary = `${recordCount || 1} 项目聚合`;
+  const details = [
+    kindLabels.length ? kindLabels.join(' + ') : '聚合字段',
+    latest ? `最近 ${latest}` : null,
+  ].filter(Boolean).join(' · ');
+  return `
+    <div class="workspace-record">
+      <strong>${escapeHtml(primary)}</strong>
+      <small>${escapeHtml(details || '仅聚合字段')}</small>
+    </div>
+  `;
 }
 
 function collectRelayMetrics(data) {
@@ -1393,21 +1552,36 @@ function collectRelayMetrics(data) {
       group: relayMetricGroup(metric, unit),
     });
   };
-  const sumDataset = items => (Array.isArray(items) ? items : []).reduce((acc, item) => {
-    acc.requests += Number(item.requests || 0);
-    acc.tokens += Number(item.total_tokens || 0);
-    acc.cost += Number(item.cost || 0);
-    return acc;
-  }, { requests: 0, tokens: 0, cost: 0 });
+  const sumDataset = items => {
+    const rows = Array.isArray(items) ? items.filter(item => item && typeof item === 'object') : [];
+    if (!rows.length) return { hasRows: false, requests: null, tokens: null, cost: null, quota: null, costUnit: 'usd', quotaUnit: 'quota' };
+    return rows.reduce((acc, item) => {
+      const requests = finiteOrNull(item.requests);
+      const tokens = finiteOrNull(item.total_tokens);
+      const cost = finiteOrNull(item.cost);
+      const quota = finiteOrNull(item.quota_used);
+      if (requests !== null) acc.requests = (acc.requests || 0) + requests;
+      if (tokens !== null) acc.tokens = (acc.tokens || 0) + tokens;
+      if (cost !== null) {
+        acc.cost = (acc.cost || 0) + cost;
+        acc.costUnit = item.cost_unit || acc.costUnit || 'usd';
+      }
+      if (quota !== null) {
+        acc.quota = (acc.quota || 0) + quota;
+        acc.quotaUnit = item.quota_unit || acc.quotaUnit || 'quota';
+      }
+      return acc;
+    }, { hasRows: true, requests: null, tokens: null, cost: null, quota: null, costUnit: 'usd', quotaUnit: 'quota' });
+  };
   const newApiModels = sumDataset(data?.datasets?.newapi_model_stats);
   const sub2ApiModels = sumDataset(data?.datasets?.sub2api_model_stats);
   const newApiSourceId = sourceIdByKind.get('newapi');
   const sub2ApiSourceId = sourceIdByKind.get('sub2api');
   addModelMetric(newApiSourceId, 'model_tokens', newApiModels.tokens, 'token');
-  addModelMetric(newApiSourceId, 'model_cost', newApiModels.cost, 'usd');
+  addModelMetric(newApiSourceId, 'model_quota', newApiModels.quota, newApiModels.quotaUnit);
   addModelMetric(newApiSourceId, 'model_requests', newApiModels.requests, 'count');
   addModelMetric(sub2ApiSourceId, 'model_tokens', sub2ApiModels.tokens, 'token');
-  addModelMetric(sub2ApiSourceId, 'model_cost', sub2ApiModels.cost, 'usd');
+  addModelMetric(sub2ApiSourceId, 'model_cost', sub2ApiModels.cost, sub2ApiModels.costUnit);
   addModelMetric(sub2ApiSourceId, 'model_requests', sub2ApiModels.requests, 'count');
 
   return { sources, metrics };
@@ -1486,10 +1660,22 @@ function renderCommandRelayByMetric(sources, metrics) {
   `).join('');
 }
 
+function renderCommandRelayDetailsState() {
+  const container = document.getElementById('command-relay-summary');
+  const toggle = document.getElementById('command-relay-details-toggle');
+  if (container) {
+    container.classList.toggle('collapsed', commandRelayDetailsCollapsed);
+  }
+  if (toggle) {
+    toggle.textContent = commandRelayDetailsCollapsed ? '展开明细' : '折叠明细';
+    toggle.setAttribute('aria-expanded', commandRelayDetailsCollapsed ? 'false' : 'true');
+  }
+}
+
 function renderCommandRelaySummary(data) {
   const container = document.getElementById('command-relay-summary');
   if (!container) return;
-  document.querySelectorAll('.command-relay-view-btn').forEach(btn => {
+  document.querySelectorAll('.command-relay-view-btn[data-relay-view]').forEach(btn => {
     const isActive = btn.dataset.relayView === commandRelayView;
     btn.classList.toggle('active', isActive);
     btn.setAttribute('aria-pressed', isActive ? 'true' : 'false');
@@ -1498,6 +1684,7 @@ function renderCommandRelaySummary(data) {
   const { sources, metrics } = collectRelayMetrics(data);
   if (!sources.length) {
     container.innerHTML = '<div class="command-relay-empty">暂无 NewAPI / Sub2API 来源；配置后会展示中转指标聚合。</div>';
+    renderCommandRelayDetailsState();
     return;
   }
 
@@ -1505,12 +1692,15 @@ function renderCommandRelaySummary(data) {
     ? renderCommandRelayByMetric(sources, metrics)
     : renderCommandRelayBySource(sources, metrics);
   container.classList.toggle('metric-view', commandRelayView === 'metric');
+  renderCommandRelayDetailsState();
 }
 
 function sortCommandModelRows(rows, sortMode = commandModelSort) {
+  const comparableCost = row => row?.costComparable ? Number(row.cost || 0) : 0;
   const byCost = (a, b) =>
+    Number(b.costComparable) - Number(a.costComparable) ||
+    comparableCost(b) - comparableCost(a) ||
     Number(b.costKnown) - Number(a.costKnown) ||
-    (b.cost || 0) - (a.cost || 0) ||
     (b.tokens || 0) - (a.tokens || 0) ||
     String(a.model).localeCompare(String(b.model));
   const byTokens = (a, b) =>
@@ -1610,26 +1800,36 @@ function renderCommandDemo(data) {
     return `
       <tr>
         <td>${source}${escapeHtml(m.model || '--')}${requests}</td>
-        <td>${fmtUsd(m.cost)}</td>
+        <td>${formatModelSpendCell(m)}</td>
         <td>${fmtTokens(m.tokens)}</td>
       </tr>
     `;
   }).join('') : '<tr><td colspan="3" style="color:var(--muted)">暂无模型数据</td></tr>';
 
   const projects = data.datasets?.top_projects || [];
-  document.getElementById('command-project-body').innerHTML = projects.length ? projects.slice(0, 6).map(p => `
-    <tr>
-      <td>${escapeHtml(p.workspace || '--')}</td>
-      <td>${fmtUsd(p.cost_usd)}</td>
-      <td>${p.model_count || 0}</td>
-    </tr>
-  `).join('') : '<tr><td colspan="3" style="color:var(--muted)">暂无工作区数据</td></tr>';
+  document.getElementById('command-project-body').innerHTML = projects.length ? projects.slice(0, 8).map(p => {
+    const sources = (p.sources || []).map(s => `<span class="acct-badge">${escapeHtml(s)}</span>`).join('');
+    const costKnown = p.cost_known !== false && p.cost_usd !== null && p.cost_usd !== undefined;
+    const tokens = p.tokens ?? ((p.input_tokens || 0) + (p.output_tokens || 0) + (p.cache_read_tokens || 0) + (p.cache_creation_tokens || 0));
+    const pathText = p.workspace_path && p.workspace_path !== p.workspace
+      ? `<div class="workspace-path" title="${escapeHtml(p.workspace_path)}">${escapeHtml(p.workspace_path)}</div>`
+      : '';
+    return `
+      <tr>
+        <td><div class="workspace-name">${escapeHtml(p.workspace || '--')}</div>${pathText}</td>
+        <td>${formatCostCell(costKnown, p.cost_usd)}</td>
+        <td>${fmtTokens(tokens || 0)}</td>
+        <td>${formatWorkspaceRecord(p)}</td>
+        <td>${sources || '--'}</td>
+      </tr>
+    `;
+  }).join('') : '<tr><td colspan="5" style="color:var(--muted)">暂无工作区数据</td></tr>';
 
   recordCommandSnapshot(data);
   renderCommandRelaySummary(data);
   renderCommandTrend();
   renderCommandModelChart(modelRows);
-  renderCommandModelDailyTrend(data.datasets?.model_daily_trend);
+  renderCommandModelTrend(data.datasets);
 }
 
 function signalNumber(signals, path) {
@@ -1644,25 +1844,72 @@ function nullableNumber(value) {
   return Number.isFinite(n) ? n : null;
 }
 
+function sumCommandModelStats(items) {
+  return (Array.isArray(items) ? items : []).reduce((acc, item) => {
+    const requests = nullableNumber(item.requests);
+    const tokens = nullableNumber(item.total_tokens ?? item.tokens);
+    const cost = nullableNumber(item.cost ?? item.cost_usd);
+    const quota = nullableNumber(item.quota_used ?? item.quota);
+    if (requests !== null) {
+      acc.requests += requests;
+      acc.requestsKnown = true;
+    }
+    if (tokens !== null) {
+      acc.tokens += tokens;
+      acc.tokensKnown = true;
+    }
+    if (cost !== null) {
+      acc.cost += cost;
+      acc.costKnown = true;
+    }
+    if (quota !== null) {
+      acc.quota += quota;
+      acc.quotaKnown = true;
+    }
+    return acc;
+  }, { requests: 0, requestsKnown: false, tokens: 0, tokensKnown: false, cost: 0, costKnown: false, quota: 0, quotaKnown: false });
+}
+
 function sanitizeCommandHistory(items) {
   const cutoff = Date.now() - COMMAND_HISTORY_WINDOW_MS;
   return (Array.isArray(items) ? items : [])
     .filter(p => Number.isFinite(Number(p.ts)) && Number(p.ts) >= cutoff)
     .map(p => ({
       ts: Number(p.ts),
-      cost: Number(p.cost || 0),
+      cost: nullableNumber(p.cost),
       tokens: Number(p.tokens || 0),
       projects: Number(p.projects || 0),
       sourcesOk: Number(p.sourcesOk || 0),
       sourcesTotal: Number(p.sourcesTotal || 0),
       apiQuotaAvailable: nullableNumber(p.apiQuotaAvailable),
       apiQuotaUsed: nullableNumber(p.apiQuotaUsed),
+      apiQuotaTotal: nullableNumber(p.apiQuotaTotal),
       apiUsagePercent: nullableNumber(p.apiUsagePercent),
       apiQuotaUnit: typeof p.apiQuotaUnit === 'string' ? p.apiQuotaUnit : 'quota',
       sub2ApiBalance: nullableNumber(p.sub2ApiBalance),
       sub2ApiTodayTokens: nullableNumber(p.sub2ApiTodayTokens),
+      sub2ApiTodayCost: nullableNumber(p.sub2ApiTodayCost),
       sub2ApiTotalCost: nullableNumber(p.sub2ApiTotalCost),
       sub2ApiUnit: typeof p.sub2ApiUnit === 'string' ? p.sub2ApiUnit : 'usd',
+      sub2ApiBalanceUnit: typeof p.sub2ApiBalanceUnit === 'string'
+        ? p.sub2ApiBalanceUnit
+        : (typeof p.sub2ApiUnit === 'string' ? p.sub2ApiUnit : 'usd'),
+      sub2ApiCostUnit: typeof p.sub2ApiCostUnit === 'string'
+        ? p.sub2ApiCostUnit
+        : (typeof p.sub2ApiUnit === 'string' ? p.sub2ApiUnit : 'usd'),
+      sub2ApiModelCostUnit: typeof p.sub2ApiModelCostUnit === 'string'
+        ? p.sub2ApiModelCostUnit
+        : (
+            typeof p.sub2ApiCostUnit === 'string'
+              ? p.sub2ApiCostUnit
+              : (typeof p.sub2ApiUnit === 'string' ? p.sub2ApiUnit : 'usd')
+          ),
+      newApiModelTokens: nullableNumber(p.newApiModelTokens),
+      newApiModelQuota: nullableNumber(p.newApiModelQuota ?? p.newApiModelCost),
+      newApiModelRequests: nullableNumber(p.newApiModelRequests),
+      sub2ApiModelTokens: nullableNumber(p.sub2ApiModelTokens),
+      sub2ApiModelCost: nullableNumber(p.sub2ApiModelCost),
+      sub2ApiModelRequests: nullableNumber(p.sub2ApiModelRequests),
     }))
     .slice(-MAX_COMMAND_HISTORY_PTS);
 }
@@ -1674,14 +1921,25 @@ function recordCommandSnapshot(data) {
   const projects = signalNumber(signals, 'agent.usage.projects.count');
   const apiQuotaAvailableSignal = signals.find(s => s.path === 'api.newapi.quota.available');
   const apiQuotaUsedSignal = signals.find(s => s.path === 'api.newapi.quota.used');
+  const apiQuotaTotalSignal = signals.find(s => s.path === 'api.newapi.quota.total');
   const apiQuotaAvailable = signalNumber(signals, 'api.newapi.quota.available');
   const apiQuotaUsed = signalNumber(signals, 'api.newapi.quota.used');
+  const apiQuotaTotal = signalNumber(signals, 'api.newapi.quota.total');
   const apiUsagePercent = signalNumber(signals, 'api.newapi.usage.percent');
   const sub2ApiBalanceSignal = signals.find(s => s.path === 'api.sub2api.balance.available');
+  const sub2ApiTodayCostSignal = signals.find(s => s.path === 'api.sub2api.cost.today');
   const sub2ApiTotalCostSignal = signals.find(s => s.path === 'api.sub2api.cost.total');
   const sub2ApiBalance = signalNumber(signals, 'api.sub2api.balance.available');
   const sub2ApiTodayTokens = signalNumber(signals, 'api.sub2api.tokens.today');
+  const sub2ApiTodayCost = signalNumber(signals, 'api.sub2api.cost.today');
   const sub2ApiTotalCost = signalNumber(signals, 'api.sub2api.cost.total');
+  const newApiModels = sumCommandModelStats(data?.datasets?.newapi_model_stats);
+  const sub2ApiModels = sumCommandModelStats(data?.datasets?.sub2api_model_stats);
+  const sub2ApiModelCostRow = (Array.isArray(data?.datasets?.sub2api_model_stats) ? data.datasets.sub2api_model_stats : [])
+    .find(row => nullableNumber(row?.cost ?? row?.cost_usd) !== null && typeof row?.cost_unit === 'string');
+  const sub2ApiBalanceUnit = sub2ApiBalanceSignal?.unit || 'usd';
+  const sub2ApiCostUnit = sub2ApiTodayCostSignal?.unit || sub2ApiTotalCostSignal?.unit || 'usd';
+  const sub2ApiModelCostUnit = sub2ApiModelCostRow?.cost_unit || sub2ApiCostUnit;
   const sources = data?.sources || [];
   const counts = data?.source_counts || {};
   if (cost === null && tokens === null && projects === null && sources.length === 0) return;
@@ -1689,19 +1947,30 @@ function recordCommandSnapshot(data) {
   const generated = Date.parse(data?.generated_at || '');
   const point = {
     ts: Number.isFinite(generated) ? generated : Date.now(),
-    cost: cost || 0,
+    cost,
     tokens: tokens || 0,
     projects: projects || 0,
     sourcesOk: counts.ok || 0,
     sourcesTotal: sources.length || 0,
     apiQuotaAvailable,
     apiQuotaUsed,
+    apiQuotaTotal,
     apiUsagePercent,
-    apiQuotaUnit: apiQuotaAvailableSignal?.unit || apiQuotaUsedSignal?.unit || 'quota',
+    apiQuotaUnit: apiQuotaAvailableSignal?.unit || apiQuotaUsedSignal?.unit || apiQuotaTotalSignal?.unit || 'quota',
     sub2ApiBalance,
     sub2ApiTodayTokens,
+    sub2ApiTodayCost,
     sub2ApiTotalCost,
-    sub2ApiUnit: sub2ApiBalanceSignal?.unit || sub2ApiTotalCostSignal?.unit || 'usd',
+    sub2ApiUnit: sub2ApiCostUnit,
+    sub2ApiBalanceUnit,
+    sub2ApiCostUnit,
+    sub2ApiModelCostUnit,
+    newApiModelTokens: newApiModels.tokensKnown ? newApiModels.tokens : null,
+    newApiModelQuota: newApiModels.quotaKnown ? newApiModels.quota : null,
+    newApiModelRequests: newApiModels.requestsKnown ? newApiModels.requests : null,
+    sub2ApiModelTokens: sub2ApiModels.tokensKnown ? sub2ApiModels.tokens : null,
+    sub2ApiModelCost: sub2ApiModels.costKnown ? sub2ApiModels.cost : null,
+    sub2ApiModelRequests: sub2ApiModels.requestsKnown ? sub2ApiModels.requests : null,
   };
 
   const history = sanitizeCommandHistory(commandHistoryStorage);
@@ -1720,30 +1989,53 @@ function renderCommandTrend() {
   const note = document.getElementById('command-trend-note');
   const newApiNote = document.getElementById('command-newapi-trend-note');
   const sub2ApiNote = document.getElementById('command-sub2api-trend-note');
+  const sub2ApiCostNote = document.getElementById('command-sub2api-cost-trend-note');
+  const relayTitleA = document.getElementById('command-relay-trend-a-title');
+  const relayUnitA = document.getElementById('command-relay-trend-a-unit');
+  const relayTitleB = document.getElementById('command-relay-trend-b-title');
+  const relayUnitB = document.getElementById('command-relay-trend-b-unit');
+  const relayTitleC = document.getElementById('command-relay-trend-c-title');
+  const relayUnitC = document.getElementById('command-relay-trend-c-unit');
   const isDark = document.documentElement.getAttribute('data-theme') !== 'light';
   const textColor = isDark ? '#8b949e' : '#656d76';
   const splitColor = isDark ? '#21262d' : '#eaeef2';
   const hasApiQuota = history.some(p => p.apiQuotaAvailable !== null || p.apiQuotaUsed !== null);
-  const hasSub2Api = history.some(p =>
-    p.sub2ApiBalance !== null || p.sub2ApiTodayTokens !== null || p.sub2ApiTotalCost !== null
+  const hasNewApiModels = history.some(p =>
+    p.newApiModelTokens !== null || p.newApiModelQuota !== null || p.newApiModelRequests !== null
   );
+  const hasSub2Api = history.some(p =>
+    p.sub2ApiBalance !== null || p.sub2ApiTodayTokens !== null || p.sub2ApiTodayCost !== null || p.sub2ApiTotalCost !== null
+  );
+  const hasSub2ApiModels = history.some(p =>
+    p.sub2ApiModelTokens !== null || p.sub2ApiModelCost !== null || p.sub2ApiModelRequests !== null
+  );
+  const hasLocalUsdCost = history.some(p => p.cost !== null);
   const latestApiUnit = [...history].reverse().find(p => p.apiQuotaUnit)?.apiQuotaUnit || 'quota';
-  const latestSub2Unit = [...history].reverse().find(p => p.sub2ApiUnit)?.sub2ApiUnit || 'usd';
+  const latestSub2BalanceUnit = [...history].reverse().find(p => p.sub2ApiBalanceUnit || p.sub2ApiUnit)?.sub2ApiBalanceUnit
+    || [...history].reverse().find(p => p.sub2ApiUnit)?.sub2ApiUnit
+    || 'usd';
+  const latestSub2CostUnit = [...history].reverse().find(p => p.sub2ApiCostUnit || p.sub2ApiUnit)?.sub2ApiCostUnit
+    || [...history].reverse().find(p => p.sub2ApiUnit)?.sub2ApiUnit
+    || 'usd';
+  const latestSub2ModelCostUnit = [...history].reverse().find(p => p.sub2ApiModelCostUnit || p.sub2ApiCostUnit || p.sub2ApiUnit)?.sub2ApiModelCostUnit
+    || latestSub2CostUnit;
   const formatApiQuota = value => {
     if (latestApiUnit === 'usd') return fmtUsd(value);
     if (latestApiUnit === 'cny') return fmtCny(value);
     if (latestApiUnit === 'token') return fmtTokens(value);
     return fmtQuota(value);
   };
-  const formatSub2Value = value => {
-    if (latestSub2Unit === 'usd') return fmtUsd(value);
-    if (latestSub2Unit === 'cny') return fmtCny(value);
-    if (latestSub2Unit === 'token') return fmtTokens(value);
-    return fmtQuota(value);
-  };
+  const formatSub2BalanceValue = value => formatUnitAmount(value, latestSub2BalanceUnit);
+  const formatSub2CostValue = value => formatUnitAmount(value, latestSub2CostUnit);
+  const formatSub2ModelCostValue = value => formatUnitAmount(value, latestSub2ModelCostUnit);
   const hasNumber = value => value !== null && value !== undefined && Number.isFinite(Number(value));
   const formatApiQuotaValue = value => hasNumber(value) ? formatApiQuota(value) : '--';
-  const formatSub2TrendValue = value => hasNumber(value) ? formatSub2Value(value) : '--';
+  const formatSub2BalanceTrendValue = value => hasNumber(value) ? formatSub2BalanceValue(value) : '--';
+  const formatSub2CostTrendValue = value => hasNumber(value) ? formatSub2CostValue(value) : '--';
+  const formatSub2ModelCostTrendValue = value => hasNumber(value) ? formatSub2ModelCostValue(value) : '--';
+  const setText = (node, text) => {
+    if (node) node.textContent = text;
+  };
 
   if (note) {
     if (history.length < 2) {
@@ -1755,32 +2047,7 @@ function renderCommandTrend() {
         hasApiQuota ? 'NewAPI' : null,
         hasSub2Api ? 'Sub2API' : null,
       ].filter(Boolean).join(' + ') || '远端额度等待可用 key';
-      note.textContent = `${history.length} 个采样点 · ${first} - ${last} · ${remote} · 按 USD / Token / 中转额度分区保存聚合数值。`;
-    }
-  }
-
-  if (newApiNote) {
-    if (!hasApiQuota) {
-      newApiNote.textContent = '暂无 NewAPI 额度采样；可用后会展示可用/已用额度。';
-    } else {
-      const latest = [...history].reverse().find(p => p.apiQuotaAvailable !== null || p.apiQuotaUsed !== null);
-      const available = formatApiQuotaValue(latest?.apiQuotaAvailable);
-      const used = formatApiQuotaValue(latest?.apiQuotaUsed);
-      newApiNote.textContent = `单位 ${latestApiUnit.toUpperCase()} · 可用 ${available} · 已用 ${used}。`;
-    }
-  }
-
-  if (sub2ApiNote) {
-    if (!hasSub2Api) {
-      sub2ApiNote.textContent = '暂无 Sub2API 采样；钱包数据可用后会展示余额与累计成本。';
-    } else {
-      const latest = [...history].reverse().find(p =>
-        p.sub2ApiBalance !== null || p.sub2ApiTodayTokens !== null || p.sub2ApiTotalCost !== null
-      );
-      const balance = formatSub2TrendValue(latest?.sub2ApiBalance);
-      const totalCost = formatSub2TrendValue(latest?.sub2ApiTotalCost);
-      const todayTokens = hasNumber(latest?.sub2ApiTodayTokens) ? fmtTokens(latest?.sub2ApiTodayTokens) : '--';
-      sub2ApiNote.textContent = `单位 ${latestSub2Unit.toUpperCase()} · 余额 ${balance} · 累计成本 ${totalCost} · 今日 ${todayTokens} Token。`;
+      note.textContent = `${history.length} 个采样点 · ${first} - ${last} · ${remote} · USD 成本、工作区 Token、中转额度分别成图。`;
     }
   }
 
@@ -1814,7 +2081,11 @@ function renderCommandTrend() {
         textStyle: { color: isDark ? '#e6edf3' : '#1f2328', fontSize: 12 },
         formatter: params => {
           const t = new Date(params[0].value[0]).toLocaleString('zh-CN');
-          const rows = params.map(p => `${p.marker}${p.seriesName}: <b>${formatValue(p.value[1])}</b>`);
+          const rows = params.map(p => {
+            const source = visibleSeries.find(s => s.name === p.seriesName);
+            const seriesFormatter = source?.formatValue || formatValue;
+            return `${p.marker}${p.seriesName}: <b>${seriesFormatter(p.value[1])}</b>`;
+          });
           return `${rows.join('<br>')}<div style="color:${textColor};font-size:10px;margin-top:4px">${t}</div>`;
         },
       },
@@ -1836,7 +2107,7 @@ function renderCommandTrend() {
       series: visibleSeries,
     }, { notMerge: true });
   };
-  const line = (name, color, data) => ({
+  const line = (name, color, data, formatValue) => ({
     name,
     type: 'line',
     smooth: true,
@@ -1844,11 +2115,14 @@ function renderCommandTrend() {
     lineStyle: { color, width: 2 },
     itemStyle: { color },
     data,
+    formatValue,
   });
 
   setSmallTrendChart(
     commandCostTrendChart,
-    [line('本地 Agent 成本', '#14b8a6', history.map(p => [p.ts, p.cost]))],
+    [
+      ...(hasLocalUsdCost ? [line('本地 Agent 成本', '#14b8a6', history.map(p => [p.ts, p.cost]), fmtUsd)] : []),
+    ],
     fmtUsd,
     'USD',
     '等待成本采样'
@@ -1856,40 +2130,157 @@ function renderCommandTrend() {
   setSmallTrendChart(
     commandTokenTrendChart,
     [
-      line('本地聚合Token', '#388bfd', history.map(p => [p.ts, p.tokens])),
-      ...(history.some(p => p.sub2ApiTodayTokens !== null) ? [line('Sub2API今日Token', '#d29922', history.map(p => [p.ts, p.sub2ApiTodayTokens]))] : []),
+      line('工作区 Token', '#388bfd', history.map(p => [p.ts, p.tokens]), fmtTokens),
+      ...(history.some(p => p.newApiModelTokens !== null) ? [line('NewAPI 模型 Token', '#a371f7', history.map(p => [p.ts, p.newApiModelTokens]), fmtTokens)] : []),
+      ...(history.some(p => p.sub2ApiTodayTokens !== null) ? [line('Sub2API 今日 Token', '#d29922', history.map(p => [p.ts, p.sub2ApiTodayTokens]), fmtTokens)] : []),
+      ...(history.some(p => p.sub2ApiModelTokens !== null) ? [line('Sub2API 模型 Token', '#db61a2', history.map(p => [p.ts, p.sub2ApiModelTokens]), fmtTokens)] : []),
     ],
     fmtTokens,
     'Token',
     '等待 Token 采样'
   );
-  setSmallTrendChart(
-    commandNewApiTrendChart,
-    [
-      ...(history.some(p => p.apiQuotaAvailable !== null) ? [line('可用', '#a371f7', history.map(p => [p.ts, p.apiQuotaAvailable]))] : []),
-      ...(history.some(p => p.apiQuotaUsed !== null) ? [line('已用', '#f0883e', history.map(p => [p.ts, p.apiQuotaUsed]))] : []),
-    ],
-    formatApiQuota,
-    latestApiUnit.toUpperCase(),
-    '等待 NewAPI 额度'
-  );
-  setSmallTrendChart(
-    commandSub2ApiTrendChart,
-    [
-      ...(history.some(p => p.sub2ApiBalance !== null) ? [line('余额', '#2da44e', history.map(p => [p.ts, p.sub2ApiBalance]))] : []),
-      ...(history.some(p => p.sub2ApiTotalCost !== null) ? [line('累计成本', '#db61a2', history.map(p => [p.ts, p.sub2ApiTotalCost]))] : []),
-    ],
-    formatSub2Value,
-    latestSub2Unit.toUpperCase(),
-    '等待 Sub2API 钱包'
-  );
+
+  if (commandRelayView === 'metric') {
+    const latestRelay = [...history].reverse().find(p =>
+      p.apiQuotaAvailable !== null || p.apiQuotaUsed !== null || p.apiQuotaTotal !== null
+      || p.sub2ApiBalance !== null || p.sub2ApiTodayCost !== null || p.sub2ApiTotalCost !== null
+      || p.newApiModelQuota !== null || p.sub2ApiTodayTokens !== null || p.sub2ApiModelTokens !== null
+    );
+    setText(relayTitleA, '额度使用');
+    setText(relayUnitA, `NewAPI ${latestApiUnit.toUpperCase()}`);
+    setText(relayTitleB, '钱包余额');
+    setText(relayUnitB, `Sub2API ${latestSub2BalanceUnit.toUpperCase()}`);
+    setText(relayTitleC, '成本支出');
+    setText(relayUnitC, `Sub2API ${latestSub2CostUnit.toUpperCase()}`);
+    setText(newApiNote, latestRelay
+      ? `额度类型横向对比 · NewAPI 已用 ${formatApiQuotaValue(latestRelay.apiQuotaUsed)} · 可用 ${formatApiQuotaValue(latestRelay.apiQuotaAvailable)} · 总额 ${formatApiQuotaValue(latestRelay.apiQuotaTotal)} · 模型额度 ${formatApiQuotaValue(latestRelay.newApiModelQuota)}。`
+      : '等待 NewAPI 额度采样。');
+    setText(sub2ApiNote, latestRelay
+      ? `余额类型横向对比 · Sub2API 钱包余额 ${formatSub2BalanceTrendValue(latestRelay.sub2ApiBalance)}。`
+      : '等待 Sub2API 钱包余额采样。');
+    setText(sub2ApiCostNote, latestRelay
+      ? `成本类型横向对比 · 今日成本 ${formatSub2CostTrendValue(latestRelay.sub2ApiTodayCost)} · 累计成本 ${formatSub2CostTrendValue(latestRelay.sub2ApiTotalCost)} · 模型成本 ${formatSub2ModelCostTrendValue(latestRelay.sub2ApiModelCost)}。`
+      : '等待 Sub2API 成本采样。');
+    setSmallTrendChart(
+      commandNewApiTrendChart,
+      [
+        ...(history.some(p => p.apiQuotaUsed !== null) ? [line('NewAPI 已用', '#f0883e', history.map(p => [p.ts, p.apiQuotaUsed]), formatApiQuota)] : []),
+        ...(history.some(p => p.apiQuotaAvailable !== null) ? [line('NewAPI 可用', '#a371f7', history.map(p => [p.ts, p.apiQuotaAvailable]), formatApiQuota)] : []),
+        ...(history.some(p => p.apiQuotaTotal !== null) ? [line('NewAPI 总额', '#388bfd', history.map(p => [p.ts, p.apiQuotaTotal]), formatApiQuota)] : []),
+        ...(history.some(p => p.newApiModelQuota !== null) ? [line('NewAPI 模型额度', '#db61a2', history.map(p => [p.ts, p.newApiModelQuota]), formatApiQuota)] : []),
+      ],
+      formatApiQuota,
+      latestApiUnit.toUpperCase(),
+      '等待 NewAPI 额度采样'
+    );
+    setSmallTrendChart(
+      commandSub2ApiTrendChart,
+      [
+        ...(history.some(p => p.sub2ApiBalance !== null) ? [line('Sub2API 钱包余额', '#2da44e', history.map(p => [p.ts, p.sub2ApiBalance]), formatSub2BalanceValue)] : []),
+      ],
+      formatSub2BalanceValue,
+      latestSub2BalanceUnit.toUpperCase(),
+      '等待 Sub2API 钱包余额采样'
+    );
+    setSmallTrendChart(
+      commandSub2ApiCostTrendChart,
+      [
+        ...(history.some(p => p.sub2ApiTodayCost !== null) ? [line('Sub2API 今日成本', '#d29922', history.map(p => [p.ts, p.sub2ApiTodayCost]), formatSub2CostValue)] : []),
+        ...(history.some(p => p.sub2ApiTotalCost !== null) ? [line('Sub2API 累计成本', '#db61a2', history.map(p => [p.ts, p.sub2ApiTotalCost]), formatSub2CostValue)] : []),
+        ...(history.some(p => p.sub2ApiModelCost !== null) ? [line('Sub2API 模型成本', '#f0883e', history.map(p => [p.ts, p.sub2ApiModelCost]), formatSub2ModelCostValue)] : []),
+      ],
+      formatSub2CostValue,
+      latestSub2CostUnit.toUpperCase(),
+      '等待 Sub2API 成本采样'
+    );
+  } else {
+    setText(relayTitleA, 'NewAPI');
+    setText(relayUnitA, latestApiUnit.toUpperCase());
+    setText(relayTitleB, 'Sub2API 钱包余额');
+    setText(relayUnitB, latestSub2BalanceUnit.toUpperCase());
+    setText(relayTitleC, 'Sub2API 成本支出');
+    setText(relayUnitC, latestSub2CostUnit.toUpperCase());
+    if (newApiNote) {
+      if (!hasApiQuota && !hasNewApiModels) {
+        newApiNote.textContent = '暂无 NewAPI 采样；可用后会展示可用/已用额度。';
+      } else {
+        const latest = [...history].reverse().find(p =>
+          p.apiQuotaAvailable !== null || p.apiQuotaUsed !== null || p.newApiModelTokens !== null || p.newApiModelQuota !== null
+        );
+        const available = formatApiQuotaValue(latest?.apiQuotaAvailable);
+        const used = formatApiQuotaValue(latest?.apiQuotaUsed);
+        const modelQuota = formatApiQuotaValue(latest?.newApiModelQuota);
+        const modelTokens = hasNumber(latest?.newApiModelTokens) ? fmtTokens(latest.newApiModelTokens) : '--';
+        newApiNote.textContent = `单位 ${latestApiUnit.toUpperCase()} · 可用 ${available} · 已用 ${used} · 模型额度 ${modelQuota} · 模型 ${modelTokens} Token。`;
+      }
+    }
+    if (sub2ApiNote) {
+      if (!hasSub2Api && !hasSub2ApiModels) {
+        sub2ApiNote.textContent = '暂无 Sub2API 采样；钱包数据可用后会展示余额。';
+      } else {
+        const latest = [...history].reverse().find(p =>
+          p.sub2ApiBalance !== null || p.sub2ApiTodayTokens !== null || p.sub2ApiModelTokens !== null
+        );
+        const balance = formatSub2BalanceTrendValue(latest?.sub2ApiBalance);
+        const todayTokens = hasNumber(latest?.sub2ApiTodayTokens) ? fmtTokens(latest.sub2ApiTodayTokens) : '--';
+        sub2ApiNote.textContent = `余额单位 ${latestSub2BalanceUnit.toUpperCase()} · 钱包余额 ${balance} · 今日 ${todayTokens} Token。`;
+      }
+    }
+    if (sub2ApiCostNote) {
+      if (!hasSub2Api && !hasSub2ApiModels) {
+        sub2ApiCostNote.textContent = '暂无 Sub2API 成本采样。';
+      } else {
+        const latest = [...history].reverse().find(p =>
+          p.sub2ApiTodayCost !== null || p.sub2ApiTotalCost !== null || p.sub2ApiModelCost !== null
+        );
+        const todayCost = formatSub2CostTrendValue(latest?.sub2ApiTodayCost);
+        const totalCost = formatSub2CostTrendValue(latest?.sub2ApiTotalCost);
+        const modelCost = formatSub2ModelCostTrendValue(latest?.sub2ApiModelCost);
+        sub2ApiCostNote.textContent = `成本单位 ${latestSub2CostUnit.toUpperCase()} · 今日成本 ${todayCost} · 累计成本 ${totalCost} · 模型成本 ${modelCost}。`;
+      }
+    }
+    setSmallTrendChart(
+      commandNewApiTrendChart,
+      [
+        ...(history.some(p => p.apiQuotaAvailable !== null) ? [line('可用', '#a371f7', history.map(p => [p.ts, p.apiQuotaAvailable]), formatApiQuota)] : []),
+        ...(history.some(p => p.apiQuotaUsed !== null) ? [line('已用', '#f0883e', history.map(p => [p.ts, p.apiQuotaUsed]), formatApiQuota)] : []),
+        ...(history.some(p => p.newApiModelQuota !== null) ? [line('模型额度', '#db61a2', history.map(p => [p.ts, p.newApiModelQuota]), formatApiQuota)] : []),
+      ],
+      formatApiQuota,
+      latestApiUnit.toUpperCase(),
+      '等待 NewAPI 额度'
+    );
+    setSmallTrendChart(
+      commandSub2ApiTrendChart,
+      [
+        ...(history.some(p => p.sub2ApiBalance !== null) ? [line('余额', '#2da44e', history.map(p => [p.ts, p.sub2ApiBalance]), formatSub2BalanceValue)] : []),
+      ],
+      formatSub2BalanceValue,
+      latestSub2BalanceUnit.toUpperCase(),
+      '等待 Sub2API 钱包'
+    );
+    setSmallTrendChart(
+      commandSub2ApiCostTrendChart,
+      [
+        ...(history.some(p => p.sub2ApiTodayCost !== null) ? [line('今日成本', '#d29922', history.map(p => [p.ts, p.sub2ApiTodayCost]), formatSub2CostValue)] : []),
+        ...(history.some(p => p.sub2ApiTotalCost !== null) ? [line('累计成本', '#db61a2', history.map(p => [p.ts, p.sub2ApiTotalCost]), formatSub2CostValue)] : []),
+        ...(history.some(p => p.sub2ApiModelCost !== null) ? [line('模型成本', '#f0883e', history.map(p => [p.ts, p.sub2ApiModelCost]), formatSub2ModelCostValue)] : []),
+      ],
+      formatSub2CostValue,
+      latestSub2CostUnit.toUpperCase(),
+      '等待 Sub2API 成本'
+    );
+  }
 }
 
 function renderCommandModelChart(modelRows) {
   if (!commandModelChart) return;
   const note = document.getElementById('command-model-note');
   const sortLabel = document.getElementById('command-model-chart-sort');
-  const sorted = sortCommandModelRows(modelRows || []).slice(0, 8);
+  const chartRows = commandModelSort === 'cost'
+    ? (modelRows || []).filter(row => row.costKnown && row.costComparable)
+    : (modelRows || []);
+  const sorted = sortCommandModelRows(chartRows).slice(0, 8);
   const top = [...sorted].reverse();
   const isDark = document.documentElement.getAttribute('data-theme') !== 'light';
   const textColor = isDark ? '#8b949e' : '#656d76';
@@ -1915,9 +2306,12 @@ function renderCommandModelChart(modelRows) {
 
   if (note) {
     const sourceCount = new Set((modelRows || []).flatMap(row => row.sources || [])).size;
+    const comparableCostCount = (modelRows || []).filter(row => row.costKnown && row.costComparable).length;
     note.textContent = top.length
       ? `当前聚合快照 · ${sourceCount} 个来源 · Top ${top.length} 模型 · ${chartTitle}。`
-      : '暂无模型成本分布数据。';
+      : commandModelSort === 'cost'
+        ? `暂无可比较 USD 成本；可切换 Token/请求排序。当前 ${sourceCount} 个来源中 ${comparableCostCount} 个模型有可比较成本。`
+        : '暂无模型分布数据。';
   }
 
   commandModelChart.setOption({
@@ -1935,10 +2329,11 @@ function renderCommandModelChart(modelRows) {
         const source = top[params[0].dataIndex];
         const value = valueFmt(params[0].value);
         const tokens = source ? fmtTokens(source.tokens || 0) : '--';
-        const cost = source?.costKnown ? fmtUsd(source.cost) : '--';
+        const cost = source?.costKnown ? formatUnitAmount(source.cost, source.costUnit || 'usd') : '--';
+        const quota = source?.quotaKnown ? formatUnitAmount(source.quota, source.quotaUnit || 'quota') : '--';
         const requests = source?.requestKnown ? Number(source.requests || 0).toLocaleString() : '--';
         const sources = source?.sources?.join(' / ') || '--';
-        return `${escapeHtml(model)}<br>${params[0].marker}${escapeHtml(chartTitle)}: <b>${value}</b><br><span style="color:${textColor}">来源: ${escapeHtml(sources)}<br>成本: ${cost}<br>Token: ${tokens}<br>请求: ${requests}</span>`;
+        return `${escapeHtml(model)}<br>${params[0].marker}${escapeHtml(chartTitle)}: <b>${value}</b><br><span style="color:${textColor}">来源: ${escapeHtml(sources)}<br>成本: ${cost}<br>额度: ${quota}<br>Token: ${tokens}<br>请求: ${requests}</span>`;
       },
     },
     xAxis: {
@@ -1967,58 +2362,97 @@ function renderCommandModelChart(modelRows) {
   }, { notMerge: true });
 }
 
+function renderCommandModelTrend(datasets) {
+  const trends = datasets?.model_trends || {};
+  const trend = trends[commandModelTrendWindow]
+    || datasets?.model_daily_trend
+    || trends['7d']
+    || trends['1d']
+    || trends['6h'];
+  document.querySelectorAll('.command-model-trend-window-btn').forEach(btn => {
+    const active = btn.dataset.modelTrendWindow === commandModelTrendWindow;
+    btn.classList.toggle('active', active);
+    btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+  });
+  renderCommandModelDailyTrend(trend);
+}
+
 function renderCommandModelDailyTrend(trend) {
   if (!commandModelTrendChart) return;
   const note = document.getElementById('command-model-trend-note');
   const windowLabel = document.getElementById('command-model-trend-window');
   const rows = Array.isArray(trend?.rows) ? trend.rows : [];
-  const days = Array.isArray(trend?.days) ? trend.days : [];
+  const buckets = Array.isArray(trend?.x)
+    ? trend.x
+    : Array.isArray(trend?.days)
+      ? trend.days
+      : [];
   const topModels = Array.isArray(trend?.models) ? trend.models.slice(0, 6).map(m => m.model) : [];
   const isDark = document.documentElement.getAttribute('data-theme') !== 'light';
   const textColor = isDark ? '#8b949e' : '#656d76';
   const splitColor = isDark ? '#21262d' : '#eaeef2';
+  const fallbackWindow = COMMAND_MODEL_TREND_LABELS[commandModelTrendWindow] || '近 7 天';
+  const trendWindow = trend?.window_label || fallbackWindow;
+  const bucketLabel = trend?.bucket_label ? `${trend.bucket_label}粒度` : '按数据源粒度';
+  const axisFormatter = value => {
+    const text = String(value || '');
+    if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(text)) return text.slice(11, 16);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text.slice(5);
+    return text;
+  };
 
-  if (windowLabel) windowLabel.textContent = days.length ? `${days[0]} - ${days.at(-1)}` : '近 7 天';
-  if (!rows.length || !days.length || !topModels.length) {
-    if (note) note.textContent = '暂无可用模型日趋势数据。';
+  if (windowLabel) windowLabel.textContent = trendWindow;
+  if (!rows.length || !buckets.length || !topModels.length) {
+    if (note) note.textContent = `${trendWindow}暂无可用模型趋势数据；当前来源仍以 CC Switch 请求日志为主。`;
     commandModelTrendChart.clear();
     return;
   }
 
-  const byKey = new Map(rows.map(row => [`${row.date}::${row.model}`, row]));
+  const rowBucket = row => row.bucket || row.date;
+  const byKey = new Map(rows.map(row => [`${rowBucket(row)}::${row.model}`, row]));
+  const showSymbol = buckets.length <= 14;
   const series = [];
+  let hasKnownCost = false;
   for (const [idx, model] of topModels.entries()) {
     const color = COMMAND_MODEL_COLORS[idx % COMMAND_MODEL_COLORS.length];
     series.push({
       name: `${model} Token`,
       type: 'line',
       smooth: true,
-      symbol: days.length <= 7 ? 'circle' : 'none',
+      symbol: showSymbol ? 'circle' : 'none',
       xAxisIndex: 0,
       yAxisIndex: 0,
       lineStyle: { color, width: 2 },
       itemStyle: { color },
       emphasis: { focus: 'series' },
-      data: days.map(day => [day, byKey.get(`${day}::${model}`)?.tokens || 0]),
+      data: buckets.map(bucket => [bucket, byKey.get(`${bucket}::${model}`)?.tokens || 0]),
+    });
+    const costData = buckets.map(bucket => {
+      const row = byKey.get(`${bucket}::${model}`);
+      const value = nullableNumber(row?.cost);
+      if (value !== null) hasKnownCost = true;
+      return [bucket, value];
     });
     series.push({
       name: `${model} 成本`,
       type: 'line',
       smooth: true,
-      symbol: days.length <= 7 ? 'circle' : 'none',
+      symbol: showSymbol ? 'circle' : 'none',
       xAxisIndex: 1,
       yAxisIndex: 1,
       lineStyle: { color, width: 2, type: 'dashed' },
       itemStyle: { color },
       emphasis: { focus: 'series' },
-      data: days.map(day => [day, byKey.get(`${day}::${model}`)?.cost || 0]),
+      data: costData,
     });
   }
 
   if (note) {
     const totalTokens = rows.reduce((sum, row) => sum + Number(row.tokens || 0), 0);
-    const totalCost = rows.reduce((sum, row) => sum + Number(row.cost || 0), 0);
-    note.textContent = `${trend?.label || '模型请求日志'} · Top ${topModels.length} 模型 · ${fmtTokens(totalTokens)} · ${fmtUsd(totalCost)} · 上图 Token，下图成本。`;
+    const knownCostRows = rows.filter(row => nullableNumber(row.cost) !== null);
+    const totalCost = knownCostRows.reduce((sum, row) => sum + Number(row.cost || 0), 0);
+    const costText = knownCostRows.length ? fmtUsd(totalCost) : '成本未知';
+    note.textContent = `${trend?.label || '模型请求日志'} · ${trendWindow} · ${bucketLabel} · Top ${topModels.length} 模型 · ${fmtTokens(totalTokens)} · ${costText} · 上图 Token，下图成本。`;
   }
 
   commandModelTrendChart.setOption({
@@ -2055,7 +2489,7 @@ function renderCommandModelDailyTrend(trend) {
           grouped.set(model, item);
         }
         const lines = [...grouped.entries()].map(([model, item]) =>
-          `${item.marker}${escapeHtml(model)}: <b>${fmtTokens(item.tokens || 0)}</b> · ${fmtUsd(item.cost || 0)}`
+          `${item.marker}${escapeHtml(model)}: <b>${fmtTokens(item.tokens || 0)}</b> · ${nullableNumber(item.cost) === null ? '成本未知' : fmtUsd(item.cost)}`
         );
         return `${escapeHtml(day)}<br>${lines.join('<br>')}`;
       },
@@ -2064,17 +2498,17 @@ function renderCommandModelDailyTrend(trend) {
       {
         type: 'category',
         gridIndex: 0,
-        data: days,
+        data: buckets,
         axisLine: { lineStyle: { color: isDark ? '#30363d' : '#d0d7de' } },
-        axisLabel: { color: textColor, fontSize: 10 },
+        axisLabel: { color: textColor, fontSize: 10, formatter: axisFormatter },
         splitLine: { show: false },
       },
       {
         type: 'category',
         gridIndex: 1,
-        data: days,
+        data: buckets,
         axisLine: { lineStyle: { color: isDark ? '#30363d' : '#d0d7de' } },
-        axisLabel: { color: textColor, fontSize: 10 },
+        axisLabel: { color: textColor, fontSize: 10, formatter: axisFormatter },
         splitLine: { show: false },
       },
     ],
@@ -2096,7 +2530,7 @@ function renderCommandModelDailyTrend(trend) {
         splitLine: { lineStyle: { color: splitColor } },
       },
     ],
-    series,
+    series: hasKnownCost ? series : series.filter(item => !String(item.name).endsWith('成本')),
   }, { notMerge: true });
 }
 

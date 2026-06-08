@@ -45,7 +45,7 @@ Source Adapter -> Unified Signal/Dataset Model -> Widget Registry -> Dashboard L
 2. 本地真实 usage 可以被接入页面，至少 `.claude.json` 中的 Claude Code 聚合字段已经能安全白名单读取。
 3. 原项目的 provider quota 模型可用但不够通用；它适合展示“某个 provider 的额度”，不适合承载“个人 Agent/API 使用控制台”。
 4. Codex、CC Switch、NewAPI、Sub2API 可以进入同一个模型消耗视图，模型排序不应默认按来源分块。
-5. 趋势图必须按量纲拆分，美元成本、Token 数量、额度/余额不能混在同一个坐标轴里。
+5. 趋势图必须按量纲拆分，美元成本、Token 数量、NewAPI 额度、Sub2API 钱包余额不能混在同一个坐标轴里。
 
 这意味着我们可以基于 AgentSense 魔改，而不是重写一套系统。但必须新增一个统一模型层，否则前端会继续变成一堆硬编码卡片。
 
@@ -60,7 +60,7 @@ Source Adapter -> Unified Signal/Dataset Model -> Widget Registry -> Dashboard L
 | Source | 当前状态 | 主要产出 | 安全边界 |
 |--------|----------|----------|----------|
 | `claude-code-local` | 已接入 | 项目聚合成本、模型 token、工作区排行 | 只读 `.claude.json` 聚合字段 |
-| `codex-local` | 已接入 | Codex 模型/provider token 聚合 | 只读 `state_5.sqlite` 白名单字段，不读 preview/title/message |
+| `codex-local` | 已接入 | Codex 模型/provider token 聚合、工作区 token 排行 | 只读 `state_5.sqlite` 白名单字段，不读 preview/title/message |
 | `cc-switch` | 已接入 | 模型请求、tokens、成本、近 7 天模型趋势 | 聚合读取，不展示 prompt/response/header |
 | `newapi-main` | 已接入 | 用户额度、请求统计、模型聚合 | 显式 token + user id，不提交凭据 |
 | `sub2api-main` | 已接入 | key 级余额、今日/累计 usage、模型统计 | 显式 API key，不提交凭据 |
@@ -71,9 +71,40 @@ Source Adapter -> Unified Signal/Dataset Model -> Widget Registry -> Dashboard L
 - “模型消耗分布”使用统一多源模型数据，不再只看 Claude Code。
 - “模型 Token / 成本趋势”使用上下分区图，Token 与 USD 成本分别使用独立 y 轴空间。
 - “采样趋势”拆成量纲分组: 本地 Agent 成本/USD、Token 消耗分开呈现。
-- “中转专区趋势”把 NewAPI 与 Sub2API 各自做成独立趋势图，避免额度、余额、成本、Token 混在同一张小图里。
+- “中转专区趋势”支持“按中转站看类型”和“按类型看中转站”两种视角，摘要矩阵和下方趋势图必须同步切换。
+- “工作区消耗 Top”是 Claude Code + Codex 等本地来源的多源聚合排行；Codex 成本未知时显示 `--`，不能用 `$0.00` 伪装成零成本。
+
+### 工作区排行口径
+
+“工作区消耗 Top”回答的是“我在哪些本地工作区消耗了最多 Agent token”，所以默认按工作区 token 跨来源混排，不按来源先分组。当前可进榜来源与边界如下:
+
+| 来源 | 是否进入工作区榜 | 当前字段 | 说明 |
+|------|------------------|----------|------|
+| Claude Code | 是 | `.claude.json` project path + 聚合 usage | 可提供成本、输入/输出/cache token、web search 等聚合字段。 |
+| Codex | 是 | `.codex/state_5.sqlite` 的 `cwd`、`model`、`model_provider`、`tokens_used`、`updated_at` | 只读白名单聚合字段；可提供工作区 token、模型/provider、会话数；成本未知显示 `--`。 |
+| CC Switch | 否，暂不进入 | `app_type`、`provider_id`、`model`、token、cost、created_at | 当前库没有稳定 workspace/cwd/project 字段，适合进入模型榜、成本榜和趋势，不应硬塞进工作区榜。 |
+| NewAPI/Sub2API | 否，除非后续补充 project/key 到 workspace 映射 | 远端 key/user/model usage | 当前是中转/API 维度，不具备本地工作区归属。 |
+
+实现约束:
+
+- 工作区 key 使用规范化路径生成，需去掉 Windows `\\?\` 前缀并统一为 `/`，避免同一路径重复。
+- 同名不同路径工作区必须保留路径副标题，例如多个 `exomind` 工作区不能只显示名称。
+- 排序默认使用 token 总量；成本只作为已知成本来源的辅助信息，不得把未知成本当 0。
+- 顶部 “多源工作区 Token” 是 Claude Code + Codex 工作区 token 合计；“成本”在当前 demo 中只代表 Claude Code 已知成本，不能暗示 Codex 成本已被估算。
 
 这些结论应反向约束正式 widget registry: widget 可以共享容器与交互，但不得把不同单位的数据强行合并到一个趋势坐标轴。
+
+## 结构化呈现原则
+
+个人作战仪表盘的呈现层要服务“态势判断”，不是堆满所有可读字段。第一版先遵守以下约束:
+
+1. **重要趋势一图一行**: 模型 Token/成本、中转额度、钱包余额、成本支出这类主要趋势必须给足纵向空间。不要为了并排而把折线图挤成难以辨认的小格。
+2. **量纲先分组，再比较**: USD/CNY 成本、Token、请求次数、额度、钱包余额、百分比不能硬塞进同一个 y 轴。确实需要跨来源横向比较时，先按类型建图，再在图内放不同来源的 series。
+3. **视角切换必须贯穿摘要和图表**: “按中转站看类型”时，摘要卡和趋势图都围绕 NewAPI/Sub2API 各自展开；“按类型看中转站”时，摘要矩阵和趋势图都按 NewAPI 额度、Sub2API 钱包余额、Sub2API 成本支出、Token 等类型组织。
+4. **文字明细默认可折叠**: NewAPI/Sub2API 的额度、余额、请求、模型统计等明细适合展开排查，不应长期挤占趋势图空间。默认优先展示图，保留一键展开。
+5. **成本未知要显式未知**: Codex 本地库能给 token 和工作区，但没有可靠成本字段。工作区排行、模型排行遇到未知成本时显示 `--`，不要显示 `$0.00`。
+6. **排行默认多源混排**: 用户关心的是“哪个模型/工作区消耗最高”，不是先按来源分组。来源可以作为徽标、过滤器或排序模式，但默认榜单应跨 Claude Code、Codex、CC Switch、NewAPI、Sub2API 混排。
+7. **表格承担追问入口，图表承担态势判断**: 表格可以展示更多字段和来源徽标；图表只放能支撑趋势判断的 series，避免把一次性详情塞进图上。
 
 ## 目标
 
@@ -658,7 +689,9 @@ Widget 只关心“需要什么数据”和“如何展示”，不关心数据�
 | USD / CNY 成本 | `trend-chart` 或上下分区 trend | 本地成本、Sub2API 今日成本、累计成本 | Token、请求数、百分比 |
 | Token | `trend-chart` | 本地 Token、Sub2API 今日 Token、模型 Token 趋势 | 美元成本、余额 |
 | 请求数 | `trend-chart` / `bar-chart` | 请求、成功请求、错误请求 | Token、余额 |
-| 额度 / 余额 | provider 专区趋势 | NewAPI 可用/已用额度、Sub2API 余额 | 模型 token、模型成本排行 |
+| NewAPI 额度 | provider 专区趋势 | NewAPI 可用额度、已用额度、使用率 | Sub2API 钱包余额、模型成本排行 |
+| Sub2API 钱包余额 | provider 专区趋势 | Sub2API key 级剩余额度/钱包余额 | Sub2API 成本支出、模型 token |
+| Sub2API 成本支出 | provider 专区趋势或成本趋势 | Sub2API 今日成本、累计成本、模型成本 | 钱包余额、Token |
 | 百分比 | `quota-ring` / `trend-chart` | 使用率、健康率、电量百分比 | 货币、Token 原始量 |
 
 展示策略:
@@ -667,6 +700,23 @@ Widget 只关心“需要什么数据”和“如何展示”，不关心数据�
 2. 趋势维度优先分量纲；需要同屏比较时使用上下分区、双图或小 multiples，不使用单轴硬塞。
 3. 中转类来源可以有自己的专区趋势图，重点看额度、余额、有效性和 key 级 usage。
 4. 成本未知时显示 `--`，不把未知成本渲染成 `$0.00`。
+
+### 趋势 Widget 时间窗口
+
+趋势 widget 的时间窗口和颗粒度必须显式入模，不能只靠标题文案约定。当前 demo 已验证的模型趋势窗口:
+
+| window | 范围 | bucket | 适用场景 |
+|--------|------|--------|----------|
+| `6h` | 近 6 小时 | 30 分钟 | 看刚发生的 Codex / Claude Code / CC Switch 消耗变化 |
+| `1d` | 近 1 天 | 2 小时 | 看当天工作节奏和异常峰值 |
+| `7d` | 近 7 天 | 1 天 | 看周尺度模型成本与 token 分布 |
+
+契约要求:
+
+1. dataset 返回 `window`、`window_label`、`bucket_label`、`x` 和 `rows`，前端不从字符串标题中反推窗口。
+2. widget 可声明 `allowedWindows` 和 `defaultWindow`，用户选择保存到本地偏好。
+3. 不同窗口可以来自不同采集表，但必须归一成相同 `rows` 字段，例如 `bucket/date + model + tokens + cost + requests`。
+4. 小窗口优先使用请求日志或采样点，大窗口优先使用日聚合表；查询层负责做整数 bucket 归并，避免前端收到过密点位。
 
 ## Dashboard Layout 草案
 

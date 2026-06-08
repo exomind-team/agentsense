@@ -3,11 +3,15 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { fileURLToPath } from 'node:url';
 
 const root = process.cwd();
 loadLocalEnvFile(path.join(root, '.agentsense.local.env'));
 const upstream = 'http://127.0.0.1:7892';
-const port = Number(process.env.AGENTSENSE_PROXY_PORT || 7893);
+const port = Number(process.env.AGENTSENSE_PROXY_PORT || 7894);
+const shouldStartServer = process.argv[1]
+  ? path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+  : false;
 
 function loadLocalEnvFile(file) {
   if (!fs.existsSync(file)) return;
@@ -39,11 +43,36 @@ function asNumber(value) {
 }
 
 function workspaceLabel(rawPath) {
-  return String(rawPath || '')
-    .replaceAll('\\', '/')
+  return normalizeWorkspacePath(rawPath)
     .split('/')
     .filter(Boolean)
     .at(-1) || String(rawPath || '');
+}
+
+function normalizeWorkspacePath(rawPath) {
+  return String(rawPath || '')
+    .replace(/^\\\\\?\\/, '')
+    .replaceAll('\\', '/')
+    .replace(/\/+$/, '');
+}
+
+function workspaceKey(rawPath, fallbackLabel) {
+  const value = normalizeWorkspacePath(rawPath || fallbackLabel || 'unknown').trim();
+  return value.toLowerCase() || 'unknown';
+}
+
+function workspacePath(rawPath, fallbackLabel) {
+  return normalizeWorkspacePath(rawPath || fallbackLabel || 'unknown') || 'unknown';
+}
+
+function projectTokenTotal(project) {
+  if (project?.tokens !== null && project?.tokens !== undefined && Number.isFinite(Number(project.tokens))) {
+    return Number(project.tokens);
+  }
+  return asNumber(project?.input_tokens)
+    + asNumber(project?.output_tokens)
+    + asNumber(project?.cache_read_tokens)
+    + asNumber(project?.cache_creation_tokens);
 }
 
 function fileSourceStatus(id, kind, label, file, capabilities) {
@@ -76,6 +105,69 @@ function timestampToIso(value) {
   if (!Number.isFinite(n) || n <= 0) return undefined;
   const ms = n > 1_000_000_000_000 ? n : n * 1000;
   return new Date(ms).toISOString();
+}
+
+function costStatus(project) {
+  if (project?.cost_known !== false && project?.cost_usd !== null && project?.cost_usd !== undefined) {
+    return 'known';
+  }
+  return 'unknown';
+}
+
+function recordKinds(project) {
+  const kinds = new Set(Array.isArray(project?.record_kinds) ? project.record_kinds : []);
+  if (project?.record_kind) kinds.add(project.record_kind);
+  return [...kinds].filter(Boolean);
+}
+
+function recordBreakdown(project) {
+  const rows = [];
+  if (Array.isArray(project?.record_breakdown)) {
+    for (const item of project.record_breakdown) {
+      if (!item || typeof item !== 'object') continue;
+      const count = asNumber(item.count);
+      if (!count) continue;
+      rows.push({
+        source: String(item.source || item.label || 'unknown'),
+        kind: String(item.kind || item.record_kind || 'record'),
+        count,
+        synthetic: Boolean(item.synthetic),
+      });
+    }
+  }
+
+  if (!rows.length) {
+    const sources = Array.isArray(project?.sources) && project.sources.length ? project.sources : ['unknown'];
+    const kinds = recordKinds(project);
+    const kind = kinds.length === 1 ? kinds[0] : (project?.record_kind || 'record');
+    const count = asNumber(project?.record_count) || asNumber(project?.sessions) || 1;
+    for (const source of sources) {
+      rows.push({ source: String(source || 'unknown'), kind, count, synthetic: true });
+    }
+  }
+
+  return rows;
+}
+
+function mergeRecordBreakdown(existing, nextRows) {
+  const map = new Map();
+  for (const row of [...(existing || []), ...(nextRows || [])]) {
+    const source = String(row?.source || 'unknown');
+    const kind = String(row?.kind || 'record');
+    const count = asNumber(row?.count);
+    if (!count) continue;
+    const key = `${source}::${kind}`;
+    const current = map.get(key) || { source, kind, count: 0, synthetic: true };
+    current.count += count;
+    current.synthetic = Boolean(current.synthetic && row?.synthetic);
+    map.set(key, current);
+  }
+  return [...map.values()]
+    .map(row => row.synthetic ? row : { source: row.source, kind: row.kind, count: row.count })
+    .sort((a, b) =>
+      String(a.source).localeCompare(String(b.source)) ||
+      String(a.kind).localeCompare(String(b.kind))
+    );
 }
 
 function sqliteReadOnly(file, callback) {
@@ -325,41 +417,47 @@ function newApiSignals(summary, collectedAt) {
   return signals;
 }
 
+function summarizeNewApiModelStats(items, display) {
+  const map = new Map();
+  const quotaUnit = quotaDisplayUnit(display);
+
+  for (const item of Array.isArray(items) ? items : []) {
+    if (!isObject(item)) continue;
+    const model = String(item.model_name || item.model || item.request_model || 'unknown').trim() || 'unknown';
+    const current = map.get(model) || {
+      source: 'NewAPI',
+      model,
+      requests: 0,
+      input_tokens: 0,
+      output_tokens: 0,
+      total_tokens: 0,
+      quota_used: 0,
+      quota_unit: quotaUnit,
+      latest_at: undefined,
+    };
+    const input = firstFiniteNumber(item.prompt_tokens, item.input_tokens) || 0;
+    const output = firstFiniteNumber(item.completion_tokens, item.output_tokens) || 0;
+    const quota = convertQuotaValue(firstFiniteNumber(item.quota, item.used_quota), display) || 0;
+    current.requests += 1;
+    current.input_tokens += input;
+    current.output_tokens += output;
+    current.total_tokens += input + output;
+    current.quota_used += quota;
+    const created = timestampToIso(item.created_at || item.createdAt || item.created_time || item.timestamp);
+    if (created && (!current.latest_at || created > current.latest_at)) current.latest_at = created;
+    map.set(model, current);
+  }
+
+  return [...map.values()].sort((a, b) => (b.quota_used - a.quota_used) || (b.total_tokens - a.total_tokens));
+}
+
 async function newApiModelStats(baseUrl, authHeader, extraHeaders, display) {
   try {
     const result = await fetchNewApiJson(baseUrl, '/api/log/self?p=0&size=100', authHeader, extraHeaders);
     if (!result.ok || !businessOk(result.data)) return [];
     const payload = unwrapApiData(result.data);
     const items = Array.isArray(payload?.items) ? payload.items : [];
-    const map = new Map();
-
-    for (const item of items) {
-      if (!isObject(item)) continue;
-      const model = String(item.model_name || item.model || item.request_model || 'unknown').trim() || 'unknown';
-      const current = map.get(model) || {
-        source: 'NewAPI',
-        model,
-        requests: 0,
-        input_tokens: 0,
-        output_tokens: 0,
-        total_tokens: 0,
-        cost: 0,
-        latest_at: undefined,
-      };
-      const input = firstFiniteNumber(item.prompt_tokens, item.input_tokens) || 0;
-      const output = firstFiniteNumber(item.completion_tokens, item.output_tokens) || 0;
-      const quota = convertQuotaValue(firstFiniteNumber(item.quota, item.used_quota), display) || 0;
-      current.requests += 1;
-      current.input_tokens += input;
-      current.output_tokens += output;
-      current.total_tokens += input + output;
-      current.cost += quota;
-      const created = timestampToIso(item.created_at || item.createdAt || item.created_time || item.timestamp);
-      if (created && (!current.latest_at || created > current.latest_at)) current.latest_at = created;
-      map.set(model, current);
-    }
-
-    return [...map.values()].sort((a, b) => (b.cost - a.cost) || (b.total_tokens - a.total_tokens));
+    return summarizeNewApiModelStats(items, display);
   } catch {
     return [];
   }
@@ -577,12 +675,13 @@ async function fetchSub2ApiJson(baseUrl, endpoint, apiKey) {
   };
 }
 
-function summarizeSub2ApiModelStats(items) {
+function summarizeSub2ApiModelStats(items, unit = 'usd') {
   if (!Array.isArray(items)) return [];
 
   return items
     .map(item => {
       if (!isObject(item)) return null;
+      const cost = firstFiniteNumber(item.actual_cost, item.cost);
       return {
         model: String(item.model || item.name || item.model_name || item.id || 'unknown'),
         requests: firstFiniteNumber(item.requests, item.request_count) || 0,
@@ -591,11 +690,18 @@ function summarizeSub2ApiModelStats(items) {
         cache_creation_tokens: firstFiniteNumber(item.cache_creation_tokens) || 0,
         cache_read_tokens: firstFiniteNumber(item.cache_read_tokens) || 0,
         total_tokens: firstFiniteNumber(item.total_tokens, item.tokens) || 0,
-        cost: firstFiniteNumber(item.actual_cost, item.cost) || 0,
+        cost,
+        cost_known: cost !== null,
+        cost_unit: unit,
       };
     })
     .filter(Boolean)
-    .sort((a, b) => (b.cost - a.cost) || (b.total_tokens - a.total_tokens) || (b.requests - a.requests));
+    .sort((a, b) =>
+      Number(b.cost_known) - Number(a.cost_known)
+      || ((b.cost || 0) - (a.cost || 0))
+      || (b.total_tokens - a.total_tokens)
+      || (b.requests - a.requests)
+    );
 }
 
 function summarizeSub2ApiUsage(data) {
@@ -613,7 +719,7 @@ function summarizeSub2ApiUsage(data) {
   const todayTokens = firstFiniteNumber(today.total_tokens, today.tokens);
   const totalRequests = firstFiniteNumber(total.requests, total.request_count);
   const todayRequests = firstFiniteNumber(today.requests, today.request_count);
-  const modelStats = summarizeSub2ApiModelStats(payload.model_stats);
+  const modelStats = summarizeSub2ApiModelStats(payload.model_stats, unit);
 
   if (
     available === null &&
@@ -683,7 +789,7 @@ function sub2ApiSignals(summary, collectedAt) {
     });
   };
 
-  add('signal-sub2api-balance-available', 'api.sub2api.balance.available', 'quota', summary.available_balance, summary.unit);
+  add('signal-sub2api-balance-available', 'api.sub2api.balance.available', 'balance', summary.available_balance, summary.unit);
   add('signal-sub2api-requests-today', 'api.sub2api.requests.today', 'usage', summary.today.requests, 'count');
   add('signal-sub2api-tokens-today', 'api.sub2api.tokens.today', 'usage', summary.today.tokens, 'token');
   add('signal-sub2api-cost-today', 'api.sub2api.cost.today', 'usage', summary.today.cost, summary.unit);
@@ -698,7 +804,7 @@ function sub2ApiSignals(summary, collectedAt) {
 }
 
 async function sub2ApiStatus() {
-  const baseUrl = trimTrailingSlash(process.env.AGENTSENSE_SUB2API_BASE_URL || 'https://sub2api.exo-mind.ai');
+  const baseUrl = trimTrailingSlash(String(process.env.AGENTSENSE_SUB2API_BASE_URL || '').trim());
   const apiKey = String(process.env.AGENTSENSE_SUB2API_API_KEY || process.env.AGENTSENSE_SUB2API_KEY || '').trim();
   const label = process.env.AGENTSENSE_SUB2API_LABEL || 'Sub2API';
   const host = safeHost(baseUrl);
@@ -708,7 +814,7 @@ async function sub2ApiStatus() {
     label,
     enabled: Boolean(baseUrl && apiKey),
     state: 'disabled',
-    message: '设置 AGENTSENSE_SUB2API_API_KEY 后启用',
+    message: '设置 AGENTSENSE_SUB2API_BASE_URL 与 AGENTSENSE_SUB2API_API_KEY 后启用',
     capabilities: ['api_balance', 'api_usage', 'model_usage', 'api_key_status', 'provider_health'],
   };
 
@@ -771,7 +877,7 @@ async function sub2ApiStatus() {
 function codexLocalUsage() {
   const file = path.join(os.homedir(), '.codex', 'state_5.sqlite');
   if (!fs.existsSync(file)) {
-    return { configured: false, status: { state: 'missing', message: 'state_5.sqlite not found' }, models: [] };
+    return { configured: false, status: { state: 'missing', message: 'state_5.sqlite not found' }, models: [], top_projects: [] };
   }
 
   try {
@@ -787,6 +893,18 @@ function codexLocalUsage() {
       order by tokens desc, sessions desc
       limit 20
     `).all());
+    const projectRows = sqliteReadOnly(file, db => db.prepare(`
+      select coalesce(cwd, 'unknown') as cwd,
+             count(*) as sessions,
+             sum(coalesce(tokens_used, 0)) as tokens,
+             count(distinct coalesce(model, 'unknown')) as model_count,
+             max(updated_at) as latest_updated_at
+      from threads
+      where coalesce(tokens_used, 0) > 0
+      group by cwd
+      order by tokens desc, sessions desc
+      limit 100
+    `).all());
     return {
       configured: true,
       status: { state: 'ok', last_modified: stat.mtimeMs },
@@ -800,14 +918,113 @@ function codexLocalUsage() {
         cost: null,
         latest_at: timestampToIso(row.latest_updated_at),
       })),
+      top_projects: projectRows.map(row => ({
+        workspace: workspaceLabel(row.cwd),
+        workspace_path: workspacePath(row.cwd),
+        cost_usd: null,
+        cost_known: false,
+        tokens: Number(row.tokens || 0),
+        model_count: Number(row.model_count || 0),
+        sessions: Number(row.sessions || 0),
+        record_count: Number(row.sessions || 0),
+        record_kind: 'session',
+        record_kinds: ['session'],
+        record_breakdown: [{ source: 'Codex', kind: 'session', count: Number(row.sessions || 0) }],
+        sources: ['Codex'],
+        latest_at: timestampToIso(row.latest_updated_at),
+      })),
     };
   } catch (error) {
     return {
       configured: true,
       status: { state: 'error', message: `Codex SQLite 读取失败: ${safeErrorKind(error)}` },
       models: [],
+      top_projects: [],
     };
   }
+}
+
+function mergeWorkspaceProjects(...projectGroups) {
+  const map = new Map();
+
+  for (const group of projectGroups) {
+    for (const project of Array.isArray(group) ? group : []) {
+      const key = workspaceKey(project.workspace_path, project.workspace);
+      const normalizedPath = workspacePath(project.workspace_path, project.workspace);
+      const entry = map.get(key) || {
+        workspace: project.workspace || workspaceLabel(project.workspace_path) || 'unknown',
+        workspace_path: normalizedPath,
+        cost_usd: 0,
+        cost_known: false,
+        tokens: 0,
+        input_tokens: 0,
+        output_tokens: 0,
+        cache_read_tokens: 0,
+        cache_creation_tokens: 0,
+        web_search_requests: 0,
+        model_count: 0,
+        sessions: 0,
+        record_count: 0,
+        record_kinds: [],
+        record_breakdown: [],
+        sources: [],
+        latest_at: undefined,
+        cost_status: 'unknown',
+      };
+
+      entry.workspace = entry.workspace || project.workspace || workspaceLabel(project.workspace_path);
+      entry.workspace_path = entry.workspace_path || normalizedPath;
+      if (project.cost_known !== false && project.cost_usd !== null && project.cost_usd !== undefined) {
+        entry.cost_usd += asNumber(project.cost_usd);
+        entry.cost_known = true;
+      }
+      if (costStatus(project) === 'known') entry.cost_status = 'known';
+      entry.tokens += projectTokenTotal(project);
+      entry.input_tokens += asNumber(project.input_tokens);
+      entry.output_tokens += asNumber(project.output_tokens);
+      entry.cache_read_tokens += asNumber(project.cache_read_tokens);
+      entry.cache_creation_tokens += asNumber(project.cache_creation_tokens);
+      entry.web_search_requests += asNumber(project.web_search_requests);
+      entry.model_count += asNumber(project.model_count);
+      entry.sessions += asNumber(project.sessions);
+      const projectRecordCount = asNumber(project.record_count);
+      entry.record_count += projectRecordCount || asNumber(project.sessions);
+      entry.record_breakdown = mergeRecordBreakdown(entry.record_breakdown, recordBreakdown(project));
+      for (const kind of [...recordKinds(project), ...entry.record_breakdown.map(row => row.kind)]) {
+        if (!entry.record_kinds.includes(kind)) entry.record_kinds.push(kind);
+      }
+      for (const source of project.sources || []) {
+        if (source && !entry.sources.includes(source)) entry.sources.push(source);
+      }
+      if (project.latest_at && (!entry.latest_at || Date.parse(project.latest_at) > Date.parse(entry.latest_at))) {
+        entry.latest_at = project.latest_at;
+      }
+
+      map.set(key, entry);
+    }
+  }
+
+  return [...map.values()]
+    .map(project => {
+      const breakdown = mergeRecordBreakdown([], project.record_breakdown);
+      return {
+        ...project,
+        cost_usd: project.cost_known ? Number(project.cost_usd.toFixed(4)) : null,
+        cost_status: project.cost_known ? 'known' : 'unknown',
+        tokens: Number(project.tokens || 0),
+        model_count: Number(project.model_count || 0),
+        sessions: Number(project.sessions || 0),
+        record_breakdown: breakdown,
+        record_count: breakdown.reduce((sum, row) => sum + Number(row.count || 0), 0)
+          || Number(project.record_count || 0),
+      };
+    })
+    .sort((a, b) =>
+      (b.tokens || 0) - (a.tokens || 0)
+      || Number(b.cost_known) - Number(a.cost_known)
+      || (b.cost_usd || 0) - (a.cost_usd || 0)
+      || String(a.workspace).localeCompare(String(b.workspace))
+    );
 }
 
 function ccSwitchUsage() {
@@ -862,10 +1079,82 @@ function ccSwitchUsage() {
   }
 }
 
+function buildCcSwitchModelTrend(rows, options) {
+  const keyName = options.keyName || 'date';
+  const buckets = [...new Set(rows.map(row => row[keyName]).filter(Boolean))].sort();
+  const modelTotals = new Map();
+  for (const row of rows) {
+    const model = String(row.model || 'unknown');
+    const current = modelTotals.get(model) || { model, tokens: 0, cost: 0, requests: 0 };
+    current.tokens += Number(row.tokens || 0);
+    current.cost += Number(row.cost || 0);
+    current.requests += Number(row.requests || 0);
+    modelTotals.set(model, current);
+  }
+
+  const mappedRows = rows.map(row => ({
+    [keyName]: row[keyName],
+    model: String(row.model || 'unknown'),
+    requests: Number(row.requests || 0),
+    tokens: Number(row.tokens || 0),
+    cost: Number(row.cost || 0),
+  }));
+
+  return {
+    source: 'cc-switch',
+    label: 'CC Switch 请求日志',
+    window: options.window,
+    window_label: options.windowLabel,
+    bucket_label: options.bucketLabel,
+    days: keyName === 'date' ? buckets : undefined,
+    x: buckets,
+    models: [...modelTotals.values()]
+      .sort((a, b) => (b.cost - a.cost) || (b.tokens - a.tokens) || (b.requests - a.requests))
+      .slice(0, 8),
+    rows: mappedRows,
+  };
+}
+
+function ccSwitchModelWindowTrend({ window, windowLabel, bucketLabel, seconds, bucketSeconds }) {
+  const file = path.join(os.homedir(), '.cc-switch', 'cc-switch.db');
+  if (!fs.existsSync(file)) {
+    return { source: 'cc-switch', window, window_label: windowLabel, bucket_label: bucketLabel, x: [], models: [], rows: [] };
+  }
+
+  try {
+    const rows = sqliteReadOnly(file, db => db.prepare(`
+      with bounds as (
+        select max(created_at) as max_ts
+        from proxy_request_logs
+        where created_at is not null
+      )
+      select datetime(cast(cast(created_at as integer) / ? as integer) * ?, 'unixepoch', 'localtime') as bucket,
+             coalesce(model, request_model, 'unknown') as model,
+             count(*) as requests,
+             sum(coalesce(input_tokens,0)+coalesce(output_tokens,0)+coalesce(cache_read_tokens,0)+coalesce(cache_creation_tokens,0)) as tokens,
+             sum(coalesce(total_cost_usd, 0)) as cost
+      from proxy_request_logs, bounds
+      where created_at is not null
+        and bounds.max_ts is not null
+        and created_at >= bounds.max_ts - ?
+      group by bucket, model
+      order by bucket asc, cost desc, tokens desc
+    `).all(bucketSeconds, bucketSeconds, seconds));
+    return buildCcSwitchModelTrend(rows, {
+      keyName: 'bucket',
+      window,
+      windowLabel,
+      bucketLabel,
+    });
+  } catch {
+    return { source: 'cc-switch', window, window_label: windowLabel, bucket_label: bucketLabel, x: [], models: [], rows: [] };
+  }
+}
+
 function ccSwitchModelDailyTrend() {
   const file = path.join(os.homedir(), '.cc-switch', 'cc-switch.db');
   if (!fs.existsSync(file)) {
-    return { source: 'cc-switch', days: [], models: [], rows: [] };
+    return { source: 'cc-switch', window: '7d', window_label: '近 7 天', bucket_label: '1 天', days: [], x: [], models: [], rows: [] };
   }
 
   try {
@@ -887,46 +1176,39 @@ function ccSwitchModelDailyTrend() {
       group by date, model
       order by date asc, cost desc, tokens desc
     `).all());
-    const modelTotals = new Map();
-    const days = [...new Set(rows.map(row => row.date).filter(Boolean))].sort();
-    for (const row of rows) {
-      const model = String(row.model || 'unknown');
-      const current = modelTotals.get(model) || { model, tokens: 0, cost: 0, requests: 0 };
-      current.tokens += Number(row.tokens || 0);
-      current.cost += Number(row.cost || 0);
-      current.requests += Number(row.requests || 0);
-      modelTotals.set(model, current);
-    }
-
-    return {
-      source: 'cc-switch',
-      label: 'CC Switch 请求日志',
-      days,
-      models: [...modelTotals.values()]
-        .sort((a, b) => (b.cost - a.cost) || (b.tokens - a.tokens) || (b.requests - a.requests))
-        .slice(0, 8),
-      rows: rows.map(row => ({
-        date: row.date,
-        model: String(row.model || 'unknown'),
-        requests: Number(row.requests || 0),
-        tokens: Number(row.tokens || 0),
-        cost: Number(row.cost || 0),
-      })),
-    };
+    return buildCcSwitchModelTrend(rows, {
+      keyName: 'date',
+      window: '7d',
+      windowLabel: '近 7 天',
+      bucketLabel: '1 天',
+    });
   } catch {
-    return { source: 'cc-switch', days: [], models: [], rows: [] };
+    return { source: 'cc-switch', window: '7d', window_label: '近 7 天', bucket_label: '1 天', days: [], x: [], models: [], rows: [] };
   }
 }
 
-function localUsage() {
-  const file = path.join(os.homedir(), '.claude.json');
-  if (!fs.existsSync(file)) {
-    return { configured: false, status: { state: 'missing', message: '.claude.json not found' } };
-  }
+function ccSwitchModelTrends() {
+  const dailyTrend = ccSwitchModelDailyTrend();
+  return {
+    '6h': ccSwitchModelWindowTrend({
+      window: '6h',
+      windowLabel: '近 6 小时',
+      bucketLabel: '30 分钟',
+      seconds: 6 * 60 * 60,
+      bucketSeconds: 30 * 60,
+    }),
+    '1d': ccSwitchModelWindowTrend({
+      window: '1d',
+      windowLabel: '近 1 天',
+      bucketLabel: '2 小时',
+      seconds: 24 * 60 * 60,
+      bucketSeconds: 2 * 60 * 60,
+    }),
+    '7d': dailyTrend,
+  };
+}
 
-  const stat = fs.statSync(file);
-  const rootJson = JSON.parse(fs.readFileSync(file, 'utf8'));
-  const projects = rootJson.projects || {};
+function summarizeClaudeProjects(projects) {
   const summary = {
     project_count: 0,
     cost_usd: 0,
@@ -978,23 +1260,52 @@ function localUsage() {
 
     topProjects.push({
       workspace: workspaceLabel(projectPath),
+      workspace_path: workspacePath(projectPath),
       cost_usd: cost,
+      cost_known: true,
+      tokens: input + output + cacheRead + cacheCreate,
       input_tokens: input,
       output_tokens: output,
       cache_read_tokens: cacheRead,
       cache_creation_tokens: cacheCreate,
       web_search_requests: webSearch,
       model_count: Object.keys(modelUsage).length,
+      record_count: 1,
+      record_kind: 'project_aggregate',
+      record_kinds: ['project_aggregate'],
+      record_breakdown: [{ source: 'Claude Code', kind: 'project_aggregate', count: 1 }],
+      sources: ['Claude Code'],
     });
   }
+
+  topProjects.sort((a, b) =>
+    projectTokenTotal(b) - projectTokenTotal(a)
+    || (b.cost_usd || 0) - (a.cost_usd || 0)
+    || String(a.workspace).localeCompare(String(b.workspace))
+  );
+
+  return {
+    summary,
+    models: [...modelMap.values()].sort((a, b) => b.cost_usd - a.cost_usd).slice(0, 10),
+    top_projects: topProjects,
+  };
+}
+
+function localUsage() {
+  const file = path.join(os.homedir(), '.claude.json');
+  if (!fs.existsSync(file)) {
+    return { configured: false, status: { state: 'missing', message: '.claude.json not found' } };
+  }
+
+  const stat = fs.statSync(file);
+  const rootJson = JSON.parse(fs.readFileSync(file, 'utf8'));
+  const usage = summarizeClaudeProjects(rootJson.projects || {});
 
   return {
     configured: true,
     source: '.claude.json projects aggregate',
     status: { state: 'ok', last_modified: stat.mtimeMs },
-    summary,
-    models: [...modelMap.values()].sort((a, b) => b.cost_usd - a.cost_usd).slice(0, 10),
-    top_projects: topProjects.sort((a, b) => b.cost_usd - a.cost_usd).slice(0, 8),
+    ...usage,
   };
 }
 
@@ -1003,13 +1314,16 @@ async function commandDemo() {
   const usage = localUsage();
   const codex = codexLocalUsage();
   const ccSwitch = ccSwitchUsage();
-  const modelDailyTrend = ccSwitchModelDailyTrend();
+  const modelTrends = ccSwitchModelTrends();
+  const modelDailyTrend = modelTrends['7d'];
   const newApi = await newApiStatus();
   const sub2Api = await sub2ApiStatus();
+  const topProjects = mergeWorkspaceProjects(usage.top_projects || [], codex.top_projects || []);
   const summary = usage.configured && usage.status?.state === 'ok' ? usage.summary : null;
   const totalTokens = summary
     ? summary.input_tokens + summary.output_tokens + summary.cache_read_tokens + summary.cache_creation_tokens
     : 0;
+  const workspaceTokens = topProjects.reduce((sum, project) => sum + projectTokenTotal(project), 0) || totalTokens;
   const healthyLocal = usage.configured && usage.status?.state === 'ok';
 
   const sources = [
@@ -1028,7 +1342,7 @@ async function commandDemo() {
       'codex_local',
       'Codex 本地状态',
       path.join(home, '.codex', 'state_5.sqlite'),
-      ['session_health', 'model_usage']
+      ['session_health', 'model_usage', 'project_usage']
     ),
     fileSourceStatus(
       'cc-switch',
@@ -1088,22 +1402,22 @@ async function commandDemo() {
       path: 'agent.usage.tokens.total.aggregate',
       domain: 'agent',
       kind: 'usage',
-      subject: 'claude-code-local',
-      value: totalTokens,
+      subject: 'agent-workspaces',
+      value: workspaceTokens,
       unit: 'token',
       confidence: 'observed',
-      sourceId: 'claude-code-local',
+      sourceId: 'command-demo',
     },
     {
       id: 'signal-project-count',
       path: 'agent.usage.projects.count',
       domain: 'agent',
       kind: 'inventory',
-      subject: 'claude-code-local',
-      value: summary ? summary.project_count : 0,
+      subject: 'agent-workspaces',
+      value: topProjects.length,
       unit: 'count',
       confidence: 'observed',
-      sourceId: 'claude-code-local',
+      sourceId: 'command-demo',
     },
     {
       id: 'signal-source-ok',
@@ -1155,7 +1469,7 @@ async function commandDemo() {
       state: healthyLocal ? 'watchable' : 'partial',
       label: healthyLocal ? '状态可观察' : '部分可观察',
       summary: healthyLocal
-        ? `已读取 ${summary.project_count} 个工作区聚合，当前 demo 可展示实际本地 usage。`
+        ? `已读取 ${topProjects.length || summary.project_count} 个多源工作区聚合，当前 demo 可展示实际本地 usage。`
         : '本地 usage 缺失，demo 仍展示 source/signal 结构。',
     },
     sources,
@@ -1164,13 +1478,14 @@ async function commandDemo() {
     datasets: {
       alerts,
       top_models: usage.models || [],
-      top_projects: usage.top_projects || [],
+      top_projects: topProjects.slice(0, 20),
       newapi_attempts: newApi.datasets?.attempts || [],
       newapi_model_stats: newApi.datasets?.model_stats || [],
       sub2api_model_stats: sub2Api.datasets?.model_stats || [],
       codex_model_stats: codex.models || [],
       cc_switch_model_stats: ccSwitch.models || [],
       model_daily_trend: modelDailyTrend,
+      model_trends: modelTrends,
     },
   };
 }
@@ -1212,7 +1527,7 @@ function proxy(req, res) {
   req.pipe(upstreamReq);
 }
 
-http.createServer(async (req, res) => {
+async function requestHandler(req, res) {
   if (req.url?.startsWith('/api/command-demo')) {
     try {
       sendJson(res, await commandDemo());
@@ -1234,6 +1549,25 @@ http.createServer(async (req, res) => {
     return;
   }
   serveStatic(req, res);
-}).listen(port, '127.0.0.1', () => {
-  console.log(`AgentSense local usage proxy: http://127.0.0.1:${port}`);
-});
+}
+
+if (shouldStartServer) {
+  http.createServer(requestHandler).listen(port, '127.0.0.1', () => {
+    console.log(`AgentSense local usage proxy: http://127.0.0.1:${port}`);
+  });
+}
+
+export {
+  mergeWorkspaceProjects,
+  projectTokenTotal,
+  requestHandler,
+  summarizeNewApiModelStats,
+  summarizeSub2ApiModelStats,
+  sub2ApiSignals,
+  sub2ApiStatus,
+  summarizeClaudeProjects,
+  summarizeSub2ApiUsage,
+  workspaceKey,
+  workspaceLabel,
+  workspacePath,
+};

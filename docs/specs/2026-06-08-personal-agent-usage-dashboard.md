@@ -23,7 +23,7 @@ Agent/API 使用和额度是第一阶段主域，因为它最贴近当前痛点�
 1. 先保持当前界面风格，不大改 UI。
 2. 先做到“状态一眼懂”，让页面值得常驻看。
 3. 先本地优先，接 Claude Code、Codex、CC Switch 等聚合数据。
-4. 远端 NewAPI/Sub2API/provider 额度作为“额度管家”能力逐步接入。
+4. 远端 NewAPI/Sub2API 已在 Node demo 中打通；后续重点是把 adapter 契约固化到正式后端。
 5. 本地数据只读聚合，不读正文、标题、preview、token 或 cookie。
 6. 迁移只做配置迁移，不同步历史 usage 数据。
 7. 写操作只限配置、布局、刷新、显示别名等低风险动作。
@@ -36,18 +36,28 @@ Agent/API 使用和额度是第一阶段主域，因为它最贴近当前痛点�
 
 - `local-usage-proxy.mjs` 提供 `/api/command-demo`，并把页面代理到本地前端。
 - 浏览器入口使用 `http://127.0.0.1:7894/`。
-- 已接入并验证四类核心来源: Codex 本地状态、CC Switch、本地 Claude Code 聚合、NewAPI、Sub2API。
+- 已接入并验证五类核心来源: Codex 本地状态、CC Switch、本地 Claude Code 聚合、NewAPI、Sub2API。
 - NewAPI 使用用户访问令牌路径，配置项包括 `AGENTSENSE_NEWAPI_BASE_URL`、`AGENTSENSE_NEWAPI_TOKEN`、`AGENTSENSE_NEWAPI_USER_ID`。
 - Sub2API 使用模型 API key 查询 `GET /v1/usage`，配置项包括 `AGENTSENSE_SUB2API_BASE_URL`、`AGENTSENSE_SUB2API_API_KEY`。
 - 真实凭据只进入 `.agentsense.local.env` 或环境变量，文档和提交物只记录变量名，不记录密钥值。
 - 前端已经把“模型消耗 Top”和“模型消耗分布”改成多源统一模型视角，支持按成本、Token、请求或来源分组排序。
-- 趋势展示已经按量纲拆分: 成本/USD 单独成图，Token 单独成图，NewAPI/Sub2API 各自进入中转专区趋势图。
+- 趋势展示已经按量纲拆分: 成本/USD 单独成图，Token 单独成图，中转专区支持“按中转站看类型”和“按类型看中转站”两种视角。
+- 模型 Token / 成本趋势已支持 `6h`、`1d`、`7d` 时间窗口切换，避免把近实时趋势和周尺度趋势挤在同一口径里。
+- Sub2API 的钱包余额、使用成本支出已经分开建模和呈现；NewAPI 的用户额度不再被伪装成 USD 成本。
 
 当前 demo 的定位:
 
 - 它是对统一模型意图的实践验证，不是长期正式 API 的最终边界。
 - 它优先服务个人本机常驻观察，所以接受 Node 代理作为过渡层。
 - 后续应把已验证的数据结构固化进 Rust 后端的正式 Source/Signal/Dataset API。
+
+当前 demo 已经解决的阶段性呈现问题:
+
+- 模型排行默认多源混排，并提供成本、Token、请求、来源分组等排序视角。
+- 模型成本分布只纳入可比较 USD 成本；NewAPI 额度进入额度视角，不进入 USD 成本分布。
+- 工作区消耗 Top 已合并 Claude Code 与 Codex 本地来源；Codex 成本未知时显示 `--`，不能渲染成 `$0.00`。
+- 中转专区默认折叠文字明细，优先把空间留给趋势图；展开后仍能查看额度、余额、请求和模型统计。
+- 中转趋势图按量纲纵向堆叠，NewAPI 额度、Sub2API 钱包余额、Sub2API 使用成本不共用同一个坐标轴。
 
 ## 目标
 
@@ -515,4 +525,4 @@ const DASHBOARD_SCHEMA = {
 2. 先实现只读 `/api/sources`、`/api/signals`、`/api/datasets/:id`，保留 `/api/all` 兼容旧 provider quota 页面。
 3. 把 Codex、CC Switch、NewAPI、Sub2API adapter 从 demo proxy 固化为可配置 source。
 4. 前端继续保留当前 vanilla + ECharts 路线，但按 widget registry 拆出 metric、trend、model table、source table 等可复用渲染单元。
-5. 继续强化趋势层: 模型日趋势接入 NewAPI/Sub2API 日粒度聚合，支持来源筛选和 Top N 控制。
+5. 继续强化趋势层: 在已支持 `6h`、`1d`、`7d` 模型趋势的基础上，补齐 NewAPI/Sub2API 更稳定的日粒度历史聚合，并加入来源筛选和 Top N 控制。

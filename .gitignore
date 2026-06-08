@@ -6,6 +6,7 @@ tests/fixtures/
 .agentsense.local.env
 .worktrees
 .codegraph/
+tmp/
 config.*local*.toml
 config.*placeholder*.toml
 quota.*.db

@@ -100,9 +100,22 @@ cargo build --release
 - demo API：`/api/command-demo`
 - 本地来源：Claude Code `.claude.json` 聚合、Codex `.codex/state_5.sqlite` 白名单字段、CC Switch `.cc-switch/cc-switch.db` 聚合字段。
 - 远端来源：NewAPI 与 Sub2API 通过显式环境变量或 `.agentsense.local.env` 接入。
-- 展示重点：多源模型消耗混排、模型 Token/成本趋势、按量纲拆分的采样趋势、NewAPI/Sub2API 中转专区趋势。
+- 展示重点：多源模型消耗混排、多源工作区 Token 排行、模型 Token/成本趋势、按量纲拆分的采样趋势、NewAPI/Sub2API 中转专区趋势。
 
 本地凭据只放在 `.agentsense.local.env` 或环境变量里，该文件已被 `.gitignore` 排除。提交物只应记录变量名和 `secret_ref`，不能写入真实 token、API key、cookie 或 Authorization header。
+
+可选环境变量：
+
+| 变量 | 用途 |
+|------|------|
+| `AGENTSENSE_PROXY_PORT` | Node demo 代理端口，默认 `7894`。 |
+| `AGENTSENSE_NEWAPI_BASE_URL` | NewAPI 实例地址。 |
+| `AGENTSENSE_NEWAPI_TOKEN` | NewAPI 个人访问令牌或兼容 API key。 |
+| `AGENTSENSE_NEWAPI_USER_ID` | 使用个人访问令牌读取用户级额度时的 user id。 |
+| `AGENTSENSE_SUB2API_BASE_URL` | Sub2API 实例地址。 |
+| `AGENTSENSE_SUB2API_API_KEY` | Sub2API 模型 API key，用于 key 级 usage 查询。 |
+
+Codex 本地源当前只读 `.codex/state_5.sqlite` 的 token、模型、provider、cwd 和时间字段；没有可靠成本字段，所以页面必须显示成本未知或 `--`，不能把未知成本渲染为 `$0.00`。
 
 ```bash
 # 原 Rust 服务仍可独立验证

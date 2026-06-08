@@ -49,9 +49,9 @@
       <div class="card-sub">Claude Code observed</div>
     </div>
     <div class="consumption-card">
-      <div class="card-label">聚合 Token</div>
+      <div class="card-label">多源工作区 Token</div>
       <div class="card-value" id="command-tokens">--</div>
-      <div class="card-sub">input + output + cache</div>
+      <div class="card-sub">Claude Code + Codex</div>
     </div>
     <div class="consumption-card">
       <div class="card-label">来源状态</div>
@@ -103,27 +103,38 @@
       <div class="section-title">中转专区趋势</div>
       <span>NewAPI / Sub2API</span>
     </div>
-    <div class="command-relay-toolbar" role="group" aria-label="中转专区视图">
-      <button type="button" class="command-relay-view-btn active" data-relay-view="source">按中转站看类型</button>
-      <button type="button" class="command-relay-view-btn" data-relay-view="metric">按类型看中转站</button>
+    <div class="command-relay-control-row">
+      <div class="command-relay-toolbar" role="group" aria-label="中转专区视图">
+        <button type="button" class="command-relay-view-btn active" data-relay-view="source">按中转站看类型</button>
+        <button type="button" class="command-relay-view-btn" data-relay-view="metric">按类型看中转站</button>
+      </div>
+      <button type="button" id="command-relay-details-toggle" class="command-relay-detail-toggle" aria-expanded="false">展开明细</button>
     </div>
     <div id="command-relay-summary" class="command-relay-summary" aria-live="polite"></div>
     <div class="command-relay-grid">
       <div class="command-relay-card">
         <div class="command-relay-heading">
-          <div>NewAPI</div>
-          <span>额度</span>
+          <div id="command-relay-trend-a-title">NewAPI</div>
+          <span id="command-relay-trend-a-unit">额度</span>
         </div>
         <div id="command-newapi-trend-chart" class="command-relay-chart" role="img" aria-label="NewAPI 中转额度趋势图"></div>
         <div class="command-chart-note" id="command-newapi-trend-note">等待 NewAPI 采样。</div>
       </div>
       <div class="command-relay-card">
         <div class="command-relay-heading">
-          <div>Sub2API</div>
-          <span>钱包 / 成本</span>
+          <div id="command-relay-trend-b-title">Sub2API</div>
+          <span id="command-relay-trend-b-unit">钱包余额</span>
         </div>
-        <div id="command-sub2api-trend-chart" class="command-relay-chart" role="img" aria-label="Sub2API 中转钱包与成本趋势图"></div>
+        <div id="command-sub2api-trend-chart" class="command-relay-chart" role="img" aria-label="Sub2API 中转钱包余额趋势图"></div>
         <div class="command-chart-note" id="command-sub2api-trend-note">等待 Sub2API 采样。</div>
+      </div>
+      <div class="command-relay-card">
+        <div class="command-relay-heading">
+          <div id="command-relay-trend-c-title">Sub2API 成本支出</div>
+          <span id="command-relay-trend-c-unit">成本</span>
+        </div>
+        <div id="command-sub2api-cost-trend-chart" class="command-relay-chart" role="img" aria-label="Sub2API 中转成本支出趋势图"></div>
+        <div class="command-chart-note" id="command-sub2api-cost-trend-note">等待 Sub2API 成本采样。</div>
       </div>
     </div>
   </div>
@@ -131,7 +142,14 @@
   <div class="table-section command-panel command-wide-chart-panel">
     <div class="command-chart-title">
       <div class="section-title">模型 Token / 成本趋势</div>
-      <span id="command-model-trend-window">近 7 天</span>
+      <div class="command-model-trend-controls">
+        <div class="command-relay-toolbar command-model-trend-toolbar" role="group" aria-label="模型趋势窗口">
+          <button type="button" class="command-relay-view-btn command-model-trend-window-btn" data-model-trend-window="6h">6h</button>
+          <button type="button" class="command-relay-view-btn command-model-trend-window-btn" data-model-trend-window="1d">1d</button>
+          <button type="button" class="command-relay-view-btn command-model-trend-window-btn active" data-model-trend-window="7d">7d</button>
+        </div>
+        <span id="command-model-trend-window">近 7 天</span>
+      </div>
     </div>
     <div id="command-model-trend-chart" class="command-wide-chart" role="img" aria-label="模型 Token 与成本趋势图"></div>
     <div class="command-chart-note" id="command-model-trend-note">等待模型趋势数据。</div>
@@ -190,7 +208,7 @@
         <thead>
           <tr>
             <th>模型</th>
-            <th>成本</th>
+            <th>来源消耗</th>
             <th>Token</th>
           </tr>
         </thead>
@@ -201,11 +219,13 @@
       <div class="section-title">工作区消耗 Top</div>
       <table>
         <thead>
-          <tr>
-            <th>工作区</th>
-            <th>成本</th>
-            <th>模型数</th>
-          </tr>
+            <tr>
+              <th>工作区</th>
+              <th>成本</th>
+              <th>Token</th>
+              <th>记录</th>
+              <th>来源</th>
+            </tr>
         </thead>
         <tbody id="command-project-body"></tbody>
       </table>
