@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>AI 作战仪表盘</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230b1020'/%3E%3Cpath d='M32 10 51 21v22L32 54 13 43V21z' fill='none' stroke='%236ee7f9' stroke-width='5'/%3E%3Ccircle cx='32' cy='32' r='7' fill='%23f8fafc'/%3E%3C/svg%3E">
   <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
   <link rel="stylesheet" href="/style.css">
 </head>
@@ -70,15 +71,35 @@
     </div>
   </div>
 
-  <div class="command-layout">
-    <div class="table-section command-panel command-chart-panel command-dimension-panel">
-      <div class="command-chart-title">
-        <div class="section-title">采样趋势 · 量纲分组</div>
-        <span id="command-trend-window">语义自动分图</span>
+  <div class="table-section command-panel command-chart-panel command-dimension-panel">
+    <div class="command-chart-title">
+      <div>
+        <div class="section-title">采样趋势 · 语义派生试点</div>
+        <div class="command-section-subtitle">按内涵属性分图，按外延来源生成曲线；与下方中转专区形成对照。</div>
       </div>
-      <div id="command-dimension-trend-grid" class="command-semantic-trend-grid command-dimension-trend-grid"></div>
-      <div class="command-chart-note" id="command-trend-note">等待首次采样。</div>
+      <span id="command-trend-window">语义自动分图</span>
     </div>
+    <div class="command-dimension-controls">
+      <div class="command-relay-toolbar command-dimension-toolbar" role="group" aria-label="采样趋势窗口">
+        <button type="button" class="command-relay-view-btn command-dimension-window-btn active" data-dimension-trend-window="6h">6h</button>
+        <button type="button" class="command-relay-view-btn command-dimension-window-btn" data-dimension-trend-window="1d">1d</button>
+        <button type="button" class="command-relay-view-btn command-dimension-window-btn" data-dimension-trend-window="7d">7d</button>
+      </div>
+      <div class="command-relay-toolbar command-dimension-toolbar command-dimension-filter-toolbar" role="group" aria-label="采样趋势类别">
+        <button type="button" class="command-relay-view-btn command-dimension-filter-btn active" data-dimension-trend-filter="all">全部</button>
+        <button type="button" class="command-relay-view-btn command-dimension-filter-btn" data-dimension-trend-filter="reserve">余量/容量</button>
+        <button type="button" class="command-relay-view-btn command-dimension-filter-btn" data-dimension-trend-filter="usage">消耗</button>
+        <button type="button" class="command-relay-view-btn command-dimension-filter-btn" data-dimension-trend-filter="relay">中转</button>
+        <button type="button" class="command-relay-view-btn command-dimension-filter-btn" data-dimension-trend-filter="local">本地 Agent</button>
+        <button type="button" class="command-relay-view-btn command-dimension-filter-btn" data-dimension-trend-filter="ratio">比例/速率</button>
+      </div>
+    </div>
+    <div id="command-dimension-derivation" class="command-dimension-derivation" aria-live="polite"></div>
+    <div id="command-dimension-trend-grid" class="command-semantic-trend-grid command-dimension-trend-grid"></div>
+    <div class="command-chart-note" id="command-trend-note">等待首次采样。</div>
+  </div>
+
+  <div class="command-layout">
     <div class="table-section command-panel command-chart-panel">
       <div class="command-chart-title">
         <div class="section-title">模型消耗分布</div>
@@ -228,20 +249,22 @@
 
   <div class="table-section command-panel">
     <div class="section-title">Source Adapter 状态</div>
-    <table>
-      <thead>
-        <tr>
-          <th>来源</th>
-          <th>代码能力</th>
-          <th>配置</th>
-          <th>采集</th>
-          <th>态势台</th>
-          <th>可见性</th>
-          <th>缺失/说明</th>
-        </tr>
-      </thead>
-      <tbody id="command-source-body"></tbody>
-    </table>
+    <div class="command-table-scroll">
+      <table class="command-source-table">
+        <thead>
+          <tr>
+            <th>来源</th>
+            <th>代码能力</th>
+            <th>配置</th>
+            <th>采集</th>
+            <th>态势台</th>
+            <th>可见性</th>
+            <th>缺失/说明</th>
+          </tr>
+        </thead>
+        <tbody id="command-source-body"></tbody>
+      </table>
+    </div>
   </div>
 
   <div class="command-layout command-ranked-tables">

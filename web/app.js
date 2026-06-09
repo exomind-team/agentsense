@@ -27,17 +27,32 @@ const LS_HISTORY_KEY = 'quota_local_history';
 const MAX_LOCAL_PTS = 60;
 const API_BASE = '';
 const COMMAND_HISTORY_KEY = 'command_usage_snapshots_v1';
-const COMMAND_HISTORY_WINDOW_MS = 6 * 60 * 60 * 1000;
+const COMMAND_HISTORY_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 const MAX_COMMAND_HISTORY_PTS = 720;
 const COMMAND_MODEL_SORT_KEY = 'command_model_sort_v1';
 const COMMAND_RELAY_VIEW_KEY = 'command_relay_view_v1';
 const COMMAND_RELAY_DETAILS_COLLAPSED_KEY = 'command_relay_details_collapsed_v1';
 const COMMAND_MODEL_TREND_WINDOW_KEY = 'command_model_trend_window_v1';
+const COMMAND_DIMENSION_TREND_WINDOW_KEY = 'command_dimension_trend_window_v1';
+const COMMAND_DIMENSION_TREND_FILTER_KEY = 'command_dimension_trend_filter_v1';
 const COMMAND_MODEL_SORT_LABELS = {
   cost: '成本优先',
   tokens: 'Token优先',
   requests: '请求优先',
   source: '来源分组',
+};
+const COMMAND_TREND_WINDOW_OPTIONS = {
+  '6h': { label: '近 6 小时', ms: 6 * 60 * 60 * 1000 },
+  '1d': { label: '近 1 天', ms: 24 * 60 * 60 * 1000 },
+  '7d': { label: '近 7 天', ms: 7 * 24 * 60 * 60 * 1000 },
+};
+const COMMAND_DIMENSION_TREND_FILTERS = {
+  all: { label: '全部', note: '展示所有可趋势化语义组。' },
+  reserve: { label: '余量/容量', note: '只看可用额度、余额、总量、容量这类还能用多少。' },
+  usage: { label: '消耗', note: '只看成本、Token、请求等已用消耗。' },
+  relay: { label: '中转', note: '只看 NewAPI/Sub2API 等 Agent/API 中转来源。' },
+  local: { label: '本地 Agent', note: '只看 Claude Code、Codex、CC Switch 等本地使用。' },
+  ratio: { label: '比例/速率', note: '只看百分比、速率、风险变化。' },
 };
 const COMMAND_MODEL_TREND_LABELS = {
   '6h': '近 6 小时',
@@ -70,6 +85,8 @@ let commandModelSort = 'cost';
 let commandRelayView = 'source';
 let commandRelayDetailsCollapsed = true;
 let commandModelTrendWindow = '7d';
+let commandDimensionTrendWindow = '6h';
+let commandDimensionTrendFilter = 'all';
 let chart = null;
 let weeklyBarChart = null;
 let dsUsageChart = null;
@@ -142,6 +159,42 @@ function init() {
     });
   });
   renderCommandRelayDetailsState();
+  commandDimensionTrendWindow = localStorage.getItem(COMMAND_DIMENSION_TREND_WINDOW_KEY) || '6h';
+  if (!COMMAND_TREND_WINDOW_OPTIONS[commandDimensionTrendWindow]) commandDimensionTrendWindow = '6h';
+  commandDimensionTrendFilter = localStorage.getItem(COMMAND_DIMENSION_TREND_FILTER_KEY) || 'all';
+  if (!COMMAND_DIMENSION_TREND_FILTERS[commandDimensionTrendFilter]) commandDimensionTrendFilter = 'all';
+  document.querySelectorAll('.command-dimension-window-btn').forEach(btn => {
+    const active = btn.dataset.dimensionTrendWindow === commandDimensionTrendWindow;
+    btn.classList.toggle('active', active);
+    btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+    btn.addEventListener('click', () => {
+      commandDimensionTrendWindow = btn.dataset.dimensionTrendWindow || '6h';
+      if (!COMMAND_TREND_WINDOW_OPTIONS[commandDimensionTrendWindow]) commandDimensionTrendWindow = '6h';
+      localStorage.setItem(COMMAND_DIMENSION_TREND_WINDOW_KEY, commandDimensionTrendWindow);
+      document.querySelectorAll('.command-dimension-window-btn').forEach(item => {
+        const isActive = item.dataset.dimensionTrendWindow === commandDimensionTrendWindow;
+        item.classList.toggle('active', isActive);
+        item.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+      });
+      renderCommandTrend();
+    });
+  });
+  document.querySelectorAll('.command-dimension-filter-btn').forEach(btn => {
+    const active = btn.dataset.dimensionTrendFilter === commandDimensionTrendFilter;
+    btn.classList.toggle('active', active);
+    btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+    btn.addEventListener('click', () => {
+      commandDimensionTrendFilter = btn.dataset.dimensionTrendFilter || 'all';
+      if (!COMMAND_DIMENSION_TREND_FILTERS[commandDimensionTrendFilter]) commandDimensionTrendFilter = 'all';
+      localStorage.setItem(COMMAND_DIMENSION_TREND_FILTER_KEY, commandDimensionTrendFilter);
+      document.querySelectorAll('.command-dimension-filter-btn').forEach(item => {
+        const isActive = item.dataset.dimensionTrendFilter === commandDimensionTrendFilter;
+        item.classList.toggle('active', isActive);
+        item.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+      });
+      renderCommandTrend();
+    });
+  });
   commandModelTrendWindow = localStorage.getItem(COMMAND_MODEL_TREND_WINDOW_KEY) || '7d';
   if (!COMMAND_MODEL_TREND_LABELS[commandModelTrendWindow]) commandModelTrendWindow = '7d';
   document.querySelectorAll('.command-model-trend-window-btn').forEach(btn => {
@@ -2715,6 +2768,89 @@ function buildSemanticTrendGroups(history) {
     .sort((a, b) => semanticTrendGroupRank(a) - semanticTrendGroupRank(b) || String(a.label).localeCompare(String(b.label)));
 }
 
+function filterCommandTrendHistoryByWindow(history, windowKey) {
+  const option = COMMAND_TREND_WINDOW_OPTIONS[windowKey] || COMMAND_TREND_WINDOW_OPTIONS['6h'];
+  const safeHistory = sanitizeCommandHistory(history);
+  if (!safeHistory.length) return [];
+  const maxTs = Math.max(...safeHistory.map(point => Number(point.ts) || 0));
+  const cutoff = maxTs - option.ms;
+  return safeHistory.filter(point => Number(point.ts) >= cutoff);
+}
+
+function semanticTrendGroupMatchesDimensionFilter(group, filter = commandDimensionTrendFilter) {
+  if (!group) return false;
+  if (filter === 'all') return true;
+  if (filter === 'reserve') return ['available', 'capacity'].includes(group.metricRole);
+  if (filter === 'usage') return group.metricRole === 'used';
+  if (filter === 'ratio') return group.unitFamily === 'ratio' || group.metricRole === 'rate' || group.timeBehavior === 'rate';
+  if (filter === 'relay') {
+    return (group.extensionDomains || []).includes('agent_api_relay')
+      || (group.sources || []).some(source => /newapi|sub2api/i.test(String(source || '')));
+  }
+  if (filter === 'local') {
+    return (group.extensionDomains || []).includes('local_agent_usage')
+      || (group.sources || []).some(source => /claude|codex|cc switch|本地/i.test(String(source || '')));
+  }
+  return true;
+}
+
+function semanticTrendDerivationStats(groups = []) {
+  const countBy = pick => {
+    const map = new Map();
+    for (const group of groups) {
+      const value = pick(group) || '--';
+      map.set(value, (map.get(value) || 0) + 1);
+    }
+    return [...map.entries()]
+      .sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0])))
+      .slice(0, 5)
+      .map(([label, count]) => `${label} ${count}`)
+      .join(' / ') || '--';
+  };
+  return {
+    units: countBy(group => (group.unit || group.unitFamily || '').toUpperCase()),
+    roles: countBy(group => semanticTrendRoleLabel(group.metricRole)),
+    subjects: countBy(group => semanticTrendSubjectLabel(group.subjectType)),
+    domains: countBy(group => semanticTrendExtensionsLabel(group)),
+  };
+}
+
+function renderCommandDimensionDerivationSummary(allGroups, visibleGroups, history) {
+  const box = document.getElementById('command-dimension-derivation');
+  const windowLabel = document.getElementById('command-trend-window');
+  if (windowLabel) {
+    const option = COMMAND_TREND_WINDOW_OPTIONS[commandDimensionTrendWindow] || COMMAND_TREND_WINDOW_OPTIONS['6h'];
+    windowLabel.textContent = `${option.label} · ${COMMAND_DIMENSION_TREND_FILTERS[commandDimensionTrendFilter]?.label || '全部'}`;
+  }
+  if (!box) return;
+
+  const stats = semanticTrendDerivationStats(allGroups);
+  const visibleStats = semanticTrendDerivationStats(visibleGroups);
+  const filterNote = COMMAND_DIMENSION_TREND_FILTERS[commandDimensionTrendFilter]?.note || '';
+  box.innerHTML = `
+    <div class="command-dimension-rule">
+      <span>分图内涵</span>
+      <strong>角色 + 时间行为 + 单位 + 对象</strong>
+      <small>已用、可用、容量、速率分开；USD、Token、次数、比例不共轴。</small>
+    </div>
+    <div class="command-dimension-rule">
+      <span>曲线外延</span>
+      <strong>来源 + Signal Path</strong>
+      <small>NewAPI、Sub2API、本地 Agent 作为曲线和证据，而不是默认先分来源。</small>
+    </div>
+    <div class="command-dimension-rule">
+      <span>当前派生</span>
+      <strong>${Number(visibleGroups.length).toLocaleString()} / ${Number(allGroups.length).toLocaleString()} 组</strong>
+      <small>${Number(history.length).toLocaleString()} 个快照 · ${escapeHtml(filterNote)}</small>
+    </div>
+    <div class="command-dimension-rule">
+      <span>量纲画像</span>
+      <strong>${escapeHtml(visibleStats.units)}</strong>
+      <small>全集: ${escapeHtml(stats.units)} · 角色: ${escapeHtml(visibleStats.roles)} · 对象: ${escapeHtml(visibleStats.subjects)}</small>
+    </div>
+  `;
+}
+
 function semanticTrendKnownnessLabel(knownness) {
   const labels = {
     known: '已知',
@@ -2861,18 +2997,24 @@ function isCommandDimensionTrendGroup(group) {
 }
 
 function renderCommandDimensionTrend(history, context = {}) {
-  const groups = buildSemanticTrendGroups(history)
-    .filter(isCommandDimensionTrendGroup)
-    .slice(0, 8);
+  const windowedHistory = filterCommandTrendHistoryByWindow(history, commandDimensionTrendWindow);
+  const allGroups = buildSemanticTrendGroups(windowedHistory)
+    .filter(isCommandDimensionTrendGroup);
+  const groups = allGroups
+    .filter(group => semanticTrendGroupMatchesDimensionFilter(group))
+    .slice(0, 10);
+  renderCommandDimensionDerivationSummary(allGroups, groups, windowedHistory);
   const units = [...new Set(groups.map(group => group.unit || group.unitFamily).filter(Boolean))].join(' / ');
   const sources = [...new Set(groups.flatMap(group => group.sources || []))].join(' / ');
+  const windowOption = COMMAND_TREND_WINDOW_OPTIONS[commandDimensionTrendWindow] || COMMAND_TREND_WINDOW_OPTIONS['6h'];
+  const filterLabel = COMMAND_DIMENSION_TREND_FILTERS[commandDimensionTrendFilter]?.label || '全部';
   const remote = [
     context.hasApiQuota ? 'NewAPI' : null,
     context.hasSub2Api ? 'Sub2API' : null,
   ].filter(Boolean).join(' + ') || '远端额度等待可用 key';
-  const noteText = history.length < 2
+  const noteText = windowedHistory.length < 2
     ? '已开始记录当前浏览器的语义快照；第二次刷新后会形成走势。分图键为角色、时间行为、单位、对象，来源作为曲线。'
-    : `${history.length} 个快照 · ${groups.length} 个首屏语义组 · ${remote} · 单位 ${units || '--'} · 来源 ${sources || '--'}；unknown 跳过，reported_zero 保留为 0。`;
+    : `${windowOption.label} · ${filterLabel} · ${windowedHistory.length} 个快照 · ${groups.length}/${allGroups.length} 个语义组 · ${remote} · 单位 ${units || '--'} · 来源 ${sources || '--'}；unknown 跳过，reported_zero 保留为 0，本地缓存最多 ${MAX_COMMAND_HISTORY_PTS} 个快照。`;
   renderSemanticTrendGrid({
     gridId: 'command-dimension-trend-grid',
     noteId: 'command-trend-note',
@@ -2885,9 +3027,10 @@ function renderCommandDimensionTrend(history, context = {}) {
 }
 
 function renderCommandSemanticTrend() {
-  const history = sanitizeCommandHistory(commandHistoryStorage);
+  const history = filterCommandTrendHistoryByWindow(commandHistoryStorage, commandDimensionTrendWindow);
   const groups = buildSemanticTrendGroups(history).slice(0, 12);
   const units = [...new Set(groups.map(group => group.unit || group.unitFamily).filter(Boolean))].join(' / ');
+  const windowOption = COMMAND_TREND_WINDOW_OPTIONS[commandDimensionTrendWindow] || COMMAND_TREND_WINDOW_OPTIONS['6h'];
   renderSemanticTrendGrid({
     gridId: 'command-semantic-trend-grid',
     noteId: 'command-semantic-trend-note',
@@ -2896,7 +3039,7 @@ function renderCommandSemanticTrend() {
     groups,
     emptyText: '等待语义采样；刷新后会按角色、窗口、单位和对象自动分图。',
     noteText: groups.length
-      ? `${history.length} 个快照 · ${groups.length} 个语义趋势组 · 单位 ${units || '--'}；每组独立 y 轴，避免不同数量级互相压扁。`
+      ? `${windowOption.label} · ${history.length} 个快照 · ${groups.length} 个语义趋势组 · 单位 ${units || '--'}；每组独立 y 轴，避免不同数量级互相压扁。`
       : '语义趋势不会把 USD、Token、次数、比例混在同一轴，也不会把 unknown 当作 0。',
   });
 }
@@ -3040,15 +3183,17 @@ function buildRelayTrendGroups(history, view = commandRelayView) {
 }
 
 function renderCommandRelayTrend(history, context = {}) {
-  const groups = buildRelayTrendGroups(history, commandRelayView).slice(0, 12);
+  const windowedHistory = filterCommandTrendHistoryByWindow(history, commandDimensionTrendWindow);
+  const groups = buildRelayTrendGroups(windowedHistory, commandRelayView).slice(0, 12);
   const viewLabel = commandRelayView === 'metric' ? '按类型看中转站' : '按中转站看类型';
+  const windowOption = COMMAND_TREND_WINDOW_OPTIONS[commandDimensionTrendWindow] || COMMAND_TREND_WINDOW_OPTIONS['6h'];
   const relaySources = [
     (context.hasApiQuota || context.hasNewApiModels) ? 'NewAPI' : null,
     (context.hasSub2Api || context.hasSub2ApiModels) ? 'Sub2API' : null,
   ].filter(Boolean).join(' / ') || '等待 NewAPI / Sub2API 采样';
   const units = [...new Set(groups.map(group => group.unit || group.unitFamily).filter(Boolean))].join(' / ');
   const noteText = groups.length
-    ? `${viewLabel} · ${history.length} 个快照 · ${groups.length} 个中转语义组 · ${relaySources} · 单位 ${units || '--'}；余额、可用、已用、成本、Token、请求独立分组，不共轴。`
+    ? `${viewLabel} · ${windowOption.label} · ${windowedHistory.length} 个快照 · ${groups.length} 个中转语义组 · ${relaySources} · 单位 ${units || '--'}；余额、可用、已用、成本、Token、请求独立分组，不共轴。`
     : `${viewLabel} · 等待 NewAPI / Sub2API 采样；采到数据后会按语义角色、时间行为、单位和对象自动分图。`;
   renderSemanticTrendGrid({
     gridId: 'command-relay-trend-grid',

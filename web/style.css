@@ -359,6 +359,21 @@
       font-size: 11px;
       white-space: nowrap;
     }
+    .command-section-subtitle {
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.45;
+      overflow-wrap: anywhere;
+    }
+    .command-dimension-controls {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 10px;
+      margin: 8px 0 10px;
+      flex-wrap: wrap;
+    }
     .command-relay-toolbar {
       display: inline-flex;
       gap: 4px;
@@ -383,6 +398,58 @@
     .command-relay-view-btn.active {
       background: var(--bg3);
       color: var(--accent);
+    }
+    .command-dimension-toolbar {
+      min-width: 0;
+      flex-wrap: wrap;
+    }
+    .command-dimension-window-btn {
+      min-width: 34px;
+    }
+    .command-dimension-filter-toolbar {
+      justify-content: flex-end;
+      max-width: 100%;
+    }
+    .command-dimension-filter-btn {
+      white-space: nowrap;
+    }
+    .command-dimension-derivation {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 8px;
+      margin: 0 0 10px;
+    }
+    .command-dimension-rule {
+      min-width: 0;
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--accent);
+      border-radius: 6px;
+      background: var(--bg2);
+      padding: 8px 9px;
+    }
+    .command-dimension-rule span,
+    .command-dimension-rule strong,
+    .command-dimension-rule small {
+      display: block;
+      min-width: 0;
+      overflow-wrap: anywhere;
+    }
+    .command-dimension-rule span {
+      color: var(--muted);
+      font-size: 10px;
+      line-height: 1.3;
+      margin-bottom: 3px;
+    }
+    .command-dimension-rule strong {
+      color: var(--text);
+      font-size: 12px;
+      line-height: 1.35;
+    }
+    .command-dimension-rule small {
+      color: var(--muted);
+      font-size: 10px;
+      line-height: 1.4;
+      margin-top: 4px;
     }
     .command-relay-detail-toggle {
       min-height: 32px;
@@ -644,8 +711,8 @@
       min-height: 240px;
     }
     .command-dimension-trend-grid .command-semantic-trend-chart {
-      height: 245px;
-      min-height: 220px;
+      height: 285px;
+      min-height: 260px;
     }
     .command-relay-trend-grid .command-semantic-trend-chart {
       height: 280px;
@@ -763,6 +830,14 @@
     }
     .command-semantic-table-wrap table {
       min-width: 520px;
+    }
+    .command-table-scroll {
+      width: 100%;
+      min-width: 0;
+      overflow-x: auto;
+    }
+    .command-source-table {
+      min-width: 680px;
     }
     .command-semantic-name {
       max-width: 220px;
@@ -1535,6 +1610,11 @@
       .command-metrics, .command-layout, .command-trend-grid { grid-template-columns: 1fr; }
       .command-relay-control-row { flex-direction: column; align-items: stretch; }
       .command-relay-toolbar { display: flex; width: 100%; box-sizing: border-box; }
+      .command-dimension-controls { flex-direction: column; align-items: stretch; }
+      .command-dimension-toolbar { width: 100%; justify-content: flex-start; }
+      .command-dimension-filter-toolbar { justify-content: flex-start; }
+      .command-dimension-filter-btn { flex: 1 1 auto; min-width: 72px; }
+      .command-dimension-derivation { grid-template-columns: 1fr; }
       .command-relay-detail-toggle { width: 100%; }
       .command-relay-view-btn { flex: 1; }
       .command-model-trend-controls { width: 100%; justify-content: stretch; }
@@ -1545,7 +1625,7 @@
       .command-semantic-trend-grid { padding-left: 8px; padding-right: 8px; }
       .command-semantic-trend-chart { height: 240px; }
       .command-dimension-trend-grid { padding-left: 0; padding-right: 0; }
-      .command-dimension-trend-grid .command-semantic-trend-chart { height: 230px; }
+      .command-dimension-trend-grid .command-semantic-trend-chart { height: 250px; }
       .command-semantic-trend-head { align-items: stretch; }
       .command-semantic-trend-head small { max-width: 92px; }
       .command-semantic-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
