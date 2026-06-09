@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   buildSemanticProjection,
   buildSourceRegistry,
+  commandDemoLayerResponse,
   datasetSemantics,
   mergeWorkspaceProjects,
   signalSemantics,
@@ -36,6 +37,68 @@ function withRelayEnvUnset(fn) {
       else process.env[name] = saved[name];
     }
   }
+}
+
+function sampleLayeredDemo() {
+  const sourceRegistry = withRelayEnvUnset(() => buildSourceRegistry({
+    sources: [
+      { id: 'newapi-main', kind: 'newapi', label: 'NewAPI', state: 'missing', enabled: false },
+      { id: 'sub2api-main', kind: 'sub2api', label: 'Sub2API', state: 'ok', enabled: true },
+    ],
+    home: 'Z:/agent-sense-test-home',
+  }));
+  const sources = [
+    { id: 'sub2api-main', kind: 'sub2api', label: 'Sub2API', state: 'ok' },
+    { id: 'windows-power', kind: 'system_api', label: 'Windows 电源', state: 'planned' },
+  ];
+  const signals = [
+    {
+      id: 'signal-sub2api-balance-available',
+      path: 'api.sub2api.balance.available',
+      domain: 'api',
+      kind: 'balance',
+      subject: 'sub2api-main',
+      sourceId: 'sub2api-main',
+      value: SAMPLE_SUB2API_BALANCE,
+      unit: 'usd',
+      confidence: 'reported',
+    },
+    {
+      id: 'signal-sub2api-cost-today',
+      path: 'api.sub2api.cost.today',
+      domain: 'api',
+      kind: 'usage',
+      subject: 'sub2api-main',
+      sourceId: 'sub2api-main',
+      value: 0,
+      unit: 'usd',
+      confidence: 'reported',
+    },
+    {
+      id: 'signal-agent-tokens',
+      path: 'agent.usage.tokens.total.aggregate',
+      domain: 'agent',
+      kind: 'usage',
+      subject: 'agent-workspaces',
+      sourceId: 'command-demo',
+      value: 9000,
+      unit: 'token',
+      confidence: 'derived',
+    },
+  ];
+  const datasets = {
+    source_registry: sourceRegistry,
+    sub2api_model_stats: [{ source: 'Sub2API', model: 'gpt-test', total_tokens: 1200, cost: 0.42 }],
+  };
+
+  return {
+    generated_at: '2026-06-09T00:00:00.000Z',
+    sources,
+    source_counts: { ok: 1, planned: 1 },
+    signals,
+    datasets,
+    semantic_projection: buildSemanticProjection({ sources, signals, datasets, sourceRegistry }),
+  };
 }
 
 describe('workspace usage aggregation', () => {
@@ -439,5 +502,91 @@ describe('semantic projection contract', () => {
     assert.ok(projection.widget_registry.some(widget => widget.id === 'capability-matrix'));
     assert.ok(projection.summary.source_registry_count > 0);
     assert.ok(projection.evidence_notes.some(note => note.id.startsWith('registry-') && note.id.endsWith('-not-connected')));
+  });
+
+  it('exposes source registry through the layered sources endpoint', () => {
+    const response = commandDemoLayerResponse(sampleLayeredDemo(), '/api/sources');
+
+    assert.equal(response.status, 200);
+    assert.equal(response.body.generated_at, '2026-06-09T00:00:00.000Z');
+    assert.equal(response.body.source_counts.ok, 1);
+    assert.ok(response.body.contract);
+    assert.ok(response.body.capability_registry_contract);
+
+    const minimax = response.body.source_registry.find(entry => entry.id === 'minimax-cn-legacy');
+    assert.ok(minimax);
+    assert.equal(minimax.code_capability, 'present');
+    assert.equal(minimax.command_demo_adapter, 'not_connected');
+
+    const serialized = JSON.stringify(response.body);
+    assert.doesNotMatch(serialized, /sk-[a-z0-9]/i);
+    assert.doesNotMatch(serialized, /Bearer\s+/i);
+  });
+
+  it('filters layered signals by source and semantic role', () => {
+    const response = commandDemoLayerResponse(
+      sampleLayeredDemo(),
+      '/api/signals?source=sub2api-main&role=available',
+    );
+
+    assert.equal(response.status, 200);
+    assert.equal(response.body.signals.length, 1);
+    assert.equal(response.body.signals[0].id, 'signal-sub2api-balance-available');
+    assert.equal(signalSemantics(response.body.signals[0]).metric_role, 'available');
+    assert.ok(response.body.contract.roles.some(role => role.id === 'available'));
+  });
+
+  it('exposes dataset catalog with semantic hints and row counts', () => {
+    const response = commandDemoLayerResponse(sampleLayeredDemo(), '/api/datasets');
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(response.body.datasets.map(dataset => dataset.id), [
+      'source_registry',
+      'sub2api_model_stats',
+    ]);
+    assert.equal(
+      response.body.datasets.find(dataset => dataset.id === 'source_registry').semantics.widget_hint,
+      'capability-matrix',
+    );
+    assert.equal(
+      response.body.datasets.find(dataset => dataset.id === 'sub2api_model_stats').row_count,
+      1,
+    );
+  });
+
+  it('returns individual datasets with their presentation semantics', () => {
+    const response = commandDemoLayerResponse(sampleLayeredDemo(), '/api/datasets/source_registry');
+
+    assert.equal(response.status, 200);
+    assert.equal(response.body.id, 'source_registry');
+    assert.equal(response.body.semantics.widget_hint, 'capability-matrix');
+    assert.ok(response.body.row_count > 0);
+    assert.ok(response.body.data.some(entry => entry.id === 'minimax-cn-legacy'));
+  });
+
+  it('returns an explainable 404 for unknown layered datasets', () => {
+    const response = commandDemoLayerResponse(sampleLayeredDemo(), '/api/datasets/missing');
+
+    assert.equal(response.status, 404);
+    assert.equal(response.body.error, 'dataset_not_found');
+    assert.deepEqual(response.body.available, [
+      'source_registry',
+      'sub2api_model_stats',
+    ]);
+  });
+
+  it('exposes semantic projection as a standalone layered endpoint', () => {
+    const response = commandDemoLayerResponse(sampleLayeredDemo(), '/api/semantic-projection');
+
+    assert.equal(response.status, 200);
+    assert.deepEqual(response.body.semantic_projection.layers.map(layer => layer.name), [
+      '信息获取层',
+      '数据表征层',
+      '综合聚合层',
+      '面板呈现层',
+    ]);
+    assert.ok(response.body.semantic_projection.data_representation.source_contract);
+    assert.ok(response.body.semantic_projection.data_representation.signal_contract);
+    assert.ok(response.body.semantic_projection.data_representation.dataset_contract);
   });
 });

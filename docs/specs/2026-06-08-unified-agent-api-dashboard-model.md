@@ -612,9 +612,11 @@ Sub2API 2026-06-08 实测补充:
 
 ## 后端 API 草案
 
+当前 Node demo proxy 已并行提供这些只读入口，用来验证统一模型契约；Rust 正式模块迁移时应保持返回语义兼容，并继续保留 `/api/all` 与 `/api/command-demo` 的过渡兼容。
+
 ### `GET /api/sources`
 
-返回来源注册表与状态。
+返回来源注册表、状态、来源计数与感知通道能力矩阵。当前 demo 还会返回 `source_registry`，用于解释“代码能力存在但未配置 / 未采集 / 未接入新态势台 / 被视图隐藏”等状态。
 
 ```json
 {
@@ -633,12 +635,13 @@ Sub2API 2026-06-08 实测补充:
 
 ### `GET /api/signals`
 
-按 domain、path、source、subject、window 查询 Signal。
+按 domain、path、source、subject、unit、role 查询 Signal。
 
 ```text
 /api/signals?domain=agent&window=7d
 /api/signals?path=api.providers.health
 /api/signals?source=newapi-main
+/api/signals?source=sub2api-main&role=available
 ```
 
 返回:
@@ -659,13 +662,28 @@ Sub2API 2026-06-08 实测补充:
 /api/datasets/api.quota.by_account
 ```
 
+### `GET /api/datasets`
+
+返回数据集目录、行数和展示语义，用于前端在不知道具体来源字段的情况下选择 widget。
+
+### `GET /api/semantic-projection`
+
+返回面向前端编排的四层语义投影:
+
+1. 信息获取层
+2. 数据表征层
+3. 综合聚合层
+4. 面板呈现层
+
+该接口不替代原始数据，只解释 `SourceStatus`、`Signal` 与 `Dataset` 应如何被组织和展示。
+
 ### `GET /api/dashboards/:id`
 
 返回 dashboard layout 加上必要的 bootstrap 数据。第一版也可以前端直接读取静态 YAML/JSON。
 
 ### 兼容路线
 
-保留当前 `/api/all`，不立刻破坏现有页面。新模型先并行提供 `/api/sources`、`/api/signals`、`/api/datasets`。等 Widget Registry 完成后，再逐步让旧卡片走新模型。
+保留当前 `/api/all`，不立刻破坏现有页面。新模型先并行提供 `/api/sources`、`/api/signals`、`/api/datasets`、`/api/datasets/:id`、`/api/semantic-projection`。等 Widget Registry 完成后，再逐步让旧卡片走新模型。
 
 ## Widget Registry
 
@@ -833,13 +851,13 @@ path = "${USERPROFILE}\\.codex\\state_5.sqlite"
 
 ### 第 1 片: 后端模型骨架
 
-状态: demo proxy 已验证契约，Rust 正式模块待实现。
+状态: Node demo proxy 已落地 `/api/sources`、`/api/signals`、`/api/datasets`、`/api/datasets/:id`、`/api/semantic-projection` 五个分层只读接口；Rust 正式模块待实现。
 
 目标:
 
 - 新增 `src/dashboard` 或 `src/model` 模块。
 - 定义 `SourceDefinition`、`SourceStatus`、`Signal`、`Dataset` 的 Rust 类型。
-- 新增只返回 mock/derived 数据的 `/api/sources`、`/api/signals`。
+- 新增只返回 mock/derived 数据的 `/api/sources`、`/api/signals`、`/api/datasets`、`/api/datasets/:id`、`/api/semantic-projection`。
 - 不迁移前端，不破坏 `/api/all`。
 - 明确读写边界: 第一版 API 只暴露只读查询和低风险配置读取。
 
@@ -913,7 +931,7 @@ path = "${USERPROFILE}\\.codex\\state_5.sqlite"
 | 事项 | Impact | Confidence | Ease | 判断 |
 |------|--------|------------|------|------|
 | 统一数据模型文档与样例 | 9 | 9 | 9 | 立即做 |
-| `/api/sources` 与 `/api/signals` 类型骨架 | 8 | 8 | 7 | 下一步固化 |
+| `/api/sources`、`/api/signals`、`/api/datasets` 分层只读契约 | 8 | 8 | 7 | Node demo 已落地，下一步迁入 Rust |
 | Claude/Codex/CC Switch 本地 adapter | 9 | 8 | 5 | demo 已验证，高优先固化 |
 | NewAPI/Sub2API adapter | 8 | 8 | 5 | demo 已验证，高优先固化 |
 | 前端 widget registry | 9 | 8 | 6 | 过渡版已验证，继续模块化 |
@@ -933,10 +951,10 @@ path = "${USERPROFILE}\\.codex\\state_5.sqlite"
 
 ## 下一步
 
-建议下一步做“demo 契约固化”:
+建议下一步做“demo 契约正式化”:
 
-1. 以 `docs/specs/2026-06-09-data-observation-taxonomy.md` 为准，先把 `/api/command-demo` 的 SourceStatus、Signal、Dataset 补齐 `metric_role`、`time_behavior`、`unit`、`subject_type`、`aggregation`、`knownness` 等语义元数据。
-2. 增加 `/api/sources`、`/api/signals`、`/api/datasets/:id`，先返回当前 demo 已验证的数据。
-3. 把 `local-usage-proxy.mjs` 中 NewAPI/Sub2API 的解析逻辑迁入正式 adapter，保留 Node 代理作为开发辅助。
-4. 前端把当前硬编码 dashboard 区块逐步收敛到 widget registry，先做只读固定 layout，不做拖拽编辑器。
-5. 增加模型/来源/Top N 趋势筛选，并把 NewAPI/Sub2API 的日粒度聚合纳入模型趋势大图。
+1. 将 Node demo 已验证的 `SourceStatus`、`Signal`、`Dataset`、`SemanticProjection` 契约迁入 Rust 类型和路由。
+2. 把 `local-usage-proxy.mjs` 中 NewAPI/Sub2API、Claude Code、Codex、CC Switch 的解析逻辑逐步迁入正式 adapter，保留 Node 代理作为开发辅助。
+3. 前端把当前硬编码 dashboard 区块逐步收敛到 widget registry，先做只读固定 layout，不做拖拽编辑器。
+4. 增加模型/来源/Top N 趋势筛选，并把 NewAPI/Sub2API 的日粒度聚合纳入模型趋势大图。
+5. 为能力矩阵增加页面入口，让用户能明确区分“代码被删了、未配置、采集无数据、未接入新态势台、当前视图过滤”。

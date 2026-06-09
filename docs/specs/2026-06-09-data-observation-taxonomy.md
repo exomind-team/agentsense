@@ -718,11 +718,32 @@ type DatasetSemantics = {
 
 ## 重构落地基线
 
-分类法真正落地时，不应只停留在文档术语上。下一步要把它变成 `/api/command-demo` 以及后续正式 API 的稳定契约，让前端看到的不是“某个来源的一堆字段”，而是一组已经解释过的观察对象。
+分类法真正落地时，不应只停留在文档术语上。Node demo 已经先把它变成 `/api/command-demo` 旁路的分层只读契约；后续正式 Rust API 应迁移同一套语义，让前端看到的不是“某个来源的一堆字段”，而是一组已经解释过的观察对象。
+
+### 2026-06-09 分层只读契约已落地
+
+当前 `local-usage-proxy.mjs` 已在 demo proxy 中提供五个只读入口:
+
+| 接口 | 职责 | 对应分类法对象 |
+|---|---|---|
+| `GET /api/sources` | 返回来源状态、来源计数、`source_registry` 能力矩阵和来源契约。 | `SourceStatus`、感知通道能力矩阵、连接健康。 |
+| `GET /api/signals` | 返回 Signal 列表，支持 `domain`、`path`、`source`、`subject`、`unit`、`role` 筛选。 | `Signal`、`MetricSemantics`、量纲分组。 |
+| `GET /api/datasets` | 返回数据集目录、行数和每个数据集的展示语义。 | `Dataset` catalog、widget hint。 |
+| `GET /api/datasets/:id` | 返回单个数据集和它的 `rows_subject_type`、主指标角色、默认 widget。 | 结构化表格、排行、趋势或能力矩阵。 |
+| `GET /api/semantic-projection` | 返回四层语义投影和数据表示契约。 | 信息获取层、数据表征层、综合聚合层、面板呈现层。 |
+
+这些接口仍是 Node demo 过渡实现，不代表 Rust 正式模块已经完成。它们的价值在于先把“能看见什么、为什么没看见、适合怎么呈现”固定成前端可以依赖的只读边界。
+
+分层契约还规定:
+
+1. `SourceStatus` 不只表达“在线/离线”，还要表达代码能力、配置状态、采集状态、新态势台接入状态和可见性。
+2. `Signal` 可以从路径启发式推导语义，但必须保留 `knownness`，不能把未知成本、接口报告 0、计划接入混成同一种值。
+3. `Dataset` 必须说明行对象和展示建议；无法说明行对象的数据只能进入审计明细，不能进入跨来源排行。
+4. `SemanticProjection` 只负责解释和编排，不替代原始 `sources`、`signals`、`datasets`。
 
 ### 后端语义投影
 
-后端应在原有 `sources`、`signals`、`datasets` 之外，额外返回一个面向前端编排的语义投影。建议过渡字段名为 `semantic_projection`:
+后端应在原有 `sources`、`signals`、`datasets` 之外，额外返回一个面向前端编排的语义投影。Node demo 已通过 `semantic_projection` 字段和 `/api/semantic-projection` 入口输出这一对象:
 
 ```ts
 type SemanticProjection = {
@@ -867,7 +888,7 @@ Dataset 应声明自己“每一行是什么对象”和“主指标是什么语
 ## 对下一步重构的约束
 
 1. **后端先补语义元数据**
-   `/api/command-demo` 或正式 `/api/signals`、`/api/datasets/:id` 应返回分类元数据，前端按元数据选择呈现方式。
+   Node demo 已在 `/api/command-demo`、`/api/signals`、`/api/datasets/:id` 返回分类元数据；正式 Rust API 迁移时应保持同一语义，前端按元数据选择呈现方式。
 
 2. **前端改成数据驱动的 widget registry**
    widget 绑定 `metric_role + unit + subject_type + dataset`，不直接绑定 `newapi-main` 或 `sub2api-main` 的私有字段。
@@ -941,7 +962,7 @@ Dataset 应声明自己“每一行是什么对象”和“主指标是什么语
 | 宽表边界 | Source Adapter、工作区榜等宽表在窄屏使用容器内横向滚动。 | 不撑破整页，也不把右侧列裁掉。 |
 | 资源清洁 | 页面增加内联 favicon。 | 消除无意义的 `/favicon.ico` 404，使浏览器控制台只暴露真实问题。 |
 
-这次实现仍属于过渡层: 语义分组主要在浏览器端从 `semanticSamples` 派生，后端还没有正式输出稳定的 `semantic_projection`。因此后续重构的方向不应是继续堆更多前端启发式，而应把本轮验证过的规则下沉到正式数据契约中:
+这次实现仍属于过渡层: 语义分组主要在浏览器端从 `semanticSamples` 派生，Node demo proxy 已输出稳定形状的 `semantic_projection`，但 Rust 正式模块尚未迁移。因此后续重构的方向不应是继续堆更多前端启发式，而应把本轮验证过的规则下沉到正式数据契约中:
 
 1. source adapter 只负责事实、证据和 secret 引用。
 2. 聚合层输出带语义元数据的 Signal、Dataset、TrendGroup。

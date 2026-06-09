@@ -4,6 +4,7 @@
 
 - `dev-improve-2026-06-08` 是个人作战仪表盘 demo 改造分支，保留原 Rust 服务能力，同时用 `local-usage-proxy.mjs` 承接本地多源聚合页面。
 - demo 页面入口是 `http://127.0.0.1:7894/`，核心接口是 `/api/command-demo`。
+- Node demo 同时提供分层只读接口：`/api/sources`、`/api/signals`、`/api/datasets`、`/api/datasets/:id`、`/api/semantic-projection`。
 - 当前 demo 是过渡实现；正式方向见 `docs/specs/2026-06-08-unified-agent-api-dashboard-model.md`。
 
 ## 安全边界
@@ -17,10 +18,15 @@
 
 ```powershell
 cargo check --no-default-features --features pure-rust
+node --check local-usage-proxy.mjs
 node --check web\app.js
 node --test tests\local-usage-proxy.test.mjs
 Invoke-WebRequest http://127.0.0.1:7894/ -UseBasicParsing
 Invoke-RestMethod http://127.0.0.1:7894/api/command-demo
+Invoke-RestMethod http://127.0.0.1:7894/api/sources
+Invoke-RestMethod "http://127.0.0.1:7894/api/signals?source=sub2api-main&role=available"
+Invoke-RestMethod http://127.0.0.1:7894/api/datasets
+Invoke-RestMethod http://127.0.0.1:7894/api/semantic-projection
 ```
 
 ## 呈现约束

@@ -221,11 +221,11 @@ Agent/API 使用和额度是第一阶段主域，因为它最贴近当前痛点�
 ```mermaid
 flowchart LR
     subgraph source["信息获取层"]
-        remote["远端额度源\nMiniMax / DeepSeek / Z.AI / Claude / MiMo"]
+        remote["旧 Provider 额度源\nMiniMax / DeepSeek / Z.AI / Claude / MiMo"]
+        relay["远端中转源\nNewAPI / Sub2API"]
         cc["cc-switch 日聚合 SQLite"]
         codex["Codex state 聚合 SQLite"]
         claude["Claude stats-cache 聚合 JSON"]
-        future["未来 NewAPI/PAT 源"]
     end
 
     subgraph normalize["综合归一层"]
@@ -242,10 +242,11 @@ flowchart LR
     end
 
     remote --> quota
+    relay --> quota
+    relay --> health
     cc --> privacy
     codex --> privacy
     claude --> privacy
-    future --> privacy
     privacy --> observed
     privacy --> health
     quota --> schema
@@ -526,14 +527,14 @@ const DASHBOARD_SCHEMA = {
 4. 不在日志中打印 token、cookie、Authorization、完整请求 header。
 5. 不在文档中写入个人真实使用明细。
 6. 对外 API 只返回白名单字段。
-7. 远端账户额度必须由用户显式配置 PAT/OAuth。
+7. 远端账户额度必须由用户显式配置 PAT/OAuth/API key。
 
 ## 下一步建议
 
 当前已经先用 Node 代理跑通了多源 demo。下一步不再是从零做 cc-switch 单源，而是把 demo 中已经验证过的契约正式化:
 
 1. 把 `/api/command-demo` 中的 SourceStatus、Signal、Dataset 形态迁入 Rust 后端正式模块。
-2. 先实现只读 `/api/sources`、`/api/signals`、`/api/datasets/:id`，保留 `/api/all` 兼容旧 provider quota 页面。
+2. 将 Node demo 已验证的只读 `/api/sources`、`/api/signals`、`/api/datasets`、`/api/datasets/:id`、`/api/semantic-projection` 迁入正式 Rust 路由，保留 `/api/all` 兼容旧 provider quota 页面。
 3. 把 Codex、CC Switch、NewAPI、Sub2API adapter 从 demo proxy 固化为可配置 source。
 4. 前端继续保留当前 vanilla + ECharts 路线，但按 widget registry 拆出 metric、trend、model table、source table 等可复用渲染单元。
 5. 继续强化趋势层: 在已支持 `6h`、`1d`、`7d` 模型趋势的基础上，补齐 NewAPI/Sub2API 更稳定的日粒度历史聚合，并加入来源筛选和 Top N 控制。

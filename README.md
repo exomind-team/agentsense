@@ -98,9 +98,11 @@ cargo build --release
 
 - 页面入口：`http://127.0.0.1:7894/`
 - demo API：`/api/command-demo`
+- 分层只读 API：`/api/sources`、`/api/signals`、`/api/datasets`、`/api/datasets/:id`、`/api/semantic-projection`
 - 本地来源：Claude Code `.claude.json` 聚合、Codex `.codex/state_5.sqlite` 白名单字段、CC Switch `.cc-switch/cc-switch.db` 聚合字段。
 - 远端来源：NewAPI 与 Sub2API 通过显式环境变量或 `.agentsense.local.env` 接入。
 - 展示重点：多源模型消耗混排、多源工作区 Token 排行、模型 Token/成本趋势、按量纲拆分的采样趋势、NewAPI/Sub2API 中转专区趋势。
+- 观察契约：`/api/sources` 暴露来源与感知通道能力矩阵，`/api/signals` 支持按来源、单位、语义角色等筛选，`/api/datasets` 暴露结构化数据集目录，`/api/semantic-projection` 暴露“信息获取、数据表征、综合聚合、面板呈现”四层投影。
 - 密集排行表优先完整宽度承载；窄屏时只在表格容器内滚动，避免裁掉右侧来源/记录列。
 
 本地凭据只放在 `.agentsense.local.env` 或环境变量里，该文件已被 `.gitignore` 排除。提交物只应记录变量名和 `secret_ref`，不能写入真实 token、API key、cookie 或 Authorization header。

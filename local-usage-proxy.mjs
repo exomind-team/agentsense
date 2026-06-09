@@ -1251,6 +1251,122 @@ function buildSemanticProjection({ sources = [], signals = [], datasets = {}, so
   };
 }
 
+function filterSignals(signals = [], searchParams = new URLSearchParams()) {
+  const params = searchParams instanceof URLSearchParams ? searchParams : new URLSearchParams(searchParams);
+  const domain = params.get('domain');
+  const pathFilter = params.get('path');
+  const source = params.get('source');
+  const subject = params.get('subject');
+  const unit = params.get('unit');
+  const role = params.get('role');
+
+  return (Array.isArray(signals) ? signals : []).filter(signal => {
+    const semantics = signal?.semantics || signalSemantics(signal);
+    if (domain && signal?.domain !== domain) return false;
+    if (pathFilter && !(String(signal?.path || '').startsWith(pathFilter))) return false;
+    if (source && signal?.sourceId !== source) return false;
+    if (subject && signal?.subject !== subject) return false;
+    if (unit && signal?.unit !== unit) return false;
+    if (role && semantics.metric_role !== role) return false;
+    return true;
+  });
+}
+
+function datasetCatalog(datasets = {}) {
+  return Object.entries(datasets || {}).map(([id, data]) => ({
+    id,
+    semantics: datasetSemantics(id),
+    row_count: datasetItemCount(data),
+  })).sort((a, b) => a.id.localeCompare(b.id));
+}
+
+function commandDemoLayerResponse(demo = {}, urlLike = '/api/command-demo') {
+  const url = urlLike instanceof URL
+    ? urlLike
+    : new URL(String(urlLike || '/api/command-demo'), 'http://127.0.0.1');
+  const generatedAt = demo.generated_at || new Date().toISOString();
+  const datasets = demo.datasets || {};
+
+  if (url.pathname === '/api/sources') {
+    return {
+      status: 200,
+      body: {
+        generated_at: generatedAt,
+        sources: Array.isArray(demo.sources) ? demo.sources : [],
+        source_counts: demo.source_counts || {},
+        source_registry: Array.isArray(datasets.source_registry) ? datasets.source_registry : [],
+        contract: demo.semantic_projection?.data_representation?.source_contract,
+        capability_registry_contract: demo.semantic_projection?.data_representation?.capability_registry_contract,
+      },
+    };
+  }
+
+  if (url.pathname === '/api/signals') {
+    return {
+      status: 200,
+      body: {
+        generated_at: generatedAt,
+        signals: filterSignals(demo.signals, url.searchParams),
+        metric_groups: demo.semantic_projection?.metric_groups || [],
+        contract: demo.semantic_projection?.data_representation?.signal_contract,
+      },
+    };
+  }
+
+  if (url.pathname === '/api/datasets') {
+    return {
+      status: 200,
+      body: {
+        generated_at: generatedAt,
+        datasets: datasetCatalog(datasets),
+        dataset_groups: demo.semantic_projection?.dataset_groups || [],
+        contract: demo.semantic_projection?.data_representation?.dataset_contract,
+      },
+    };
+  }
+
+  if (url.pathname.startsWith('/api/datasets/')) {
+    const id = decodeURIComponent(url.pathname.replace('/api/datasets/', ''));
+    if (!id || !Object.prototype.hasOwnProperty.call(datasets, id)) {
+      return {
+        status: 404,
+        body: {
+          error: 'dataset_not_found',
+          id,
+          available: Object.keys(datasets).sort(),
+        },
+      };
+    }
+    return {
+      status: 200,
+      body: {
+        generated_at: generatedAt,
+        id,
+        semantics: datasetSemantics(id),
+        row_count: datasetItemCount(datasets[id]),
+        data: datasets[id],
+      },
+    };
+  }
+
+  if (url.pathname === '/api/semantic-projection') {
+    return {
+      status: 200,
+      body: {
+        generated_at: generatedAt,
+        semantic_projection: demo.semantic_projection || buildSemanticProjection({
+          sources: demo.sources,
+          signals: demo.signals,
+          datasets,
+          sourceRegistry: datasets.source_registry,
+        }),
+      },
+    };
+  }
+
+  return null;
+}
+
 function safeErrorKind(error) {
   const name = String(error?.name || 'Error')
     .replace(/[^a-zA-Z0-9_.-]/g, '')
@@ -2532,9 +2648,26 @@ function proxy(req, res) {
 }
 
 async function requestHandler(req, res) {
-  if (req.url?.startsWith('/api/command-demo')) {
+  const requestUrl = new URL(req.url || '/', `http://127.0.0.1:${port}`);
+  if (requestUrl.pathname === '/api/command-demo') {
     try {
       sendJson(res, await commandDemo());
+    } catch (error) {
+      sendJson(res, { status: { state: 'error', message: error.message } }, 500);
+    }
+    return;
+  }
+  if (
+    requestUrl.pathname === '/api/sources'
+    || requestUrl.pathname === '/api/signals'
+    || requestUrl.pathname === '/api/datasets'
+    || requestUrl.pathname.startsWith('/api/datasets/')
+    || requestUrl.pathname === '/api/semantic-projection'
+  ) {
+    try {
+      const response = commandDemoLayerResponse(await commandDemo(), requestUrl);
+      if (response) sendJson(res, response.body, response.status);
+      else sendJson(res, { error: 'not_found' }, 404);
     } catch (error) {
       sendJson(res, { status: { state: 'error', message: error.message } }, 500);
     }
@@ -2564,6 +2697,7 @@ if (shouldStartServer) {
 export {
   buildSourceRegistry,
   buildSemanticProjection,
+  commandDemoLayerResponse,
   datasetSemantics,
   mergeWorkspaceProjects,
   projectTokenTotal,
