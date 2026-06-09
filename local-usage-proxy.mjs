@@ -100,6 +100,15 @@ function fileSourceStatus(id, kind, label, file, capabilities) {
   };
 }
 
+function redactSensitiveText(value) {
+  return String(value || '')
+    .replace(/Authorization\s*:\s*Bearer\s+[^\s,;，；]+/gi, 'Authorization: [redacted]')
+    .replace(/\bBearer\s+[A-Za-z0-9._+\-/=]{12,}/gi, 'Bearer [redacted]')
+    .replace(/\bsk-[A-Za-z0-9_-]{8,}/gi, 'sk-[redacted]')
+    .replace(/\b(api[-_ ]?key|token|cookie|secret|authorization)(\s*[:=：]\s*)([^\s,;，；]{6,})/gi, '$1$2[redacted]')
+    .replace(/\b(令牌|密钥|凭证)(\s*[:=：]\s*)([^\s,;，；]{6,})/gi, '$1$2[redacted]');
+}
+
 function timestampToIso(value) {
   const n = Number(value);
   if (!Number.isFinite(n) || n <= 0) return undefined;
@@ -896,7 +905,8 @@ function buildSourceRegistry({ sources = [], usage = {}, codex = {}, ccSwitch = 
 
   return entries.map(entry => ({
     ...entry,
-    missing_items: [...new Set((entry.missing_items || []).filter(Boolean))],
+    missing_items: [...new Set((entry.missing_items || []).filter(Boolean).map(redactSensitiveText))],
+    message: redactSensitiveText(entry.message),
   }));
 }
 

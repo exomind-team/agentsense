@@ -371,7 +371,7 @@ Sub2API 今日 token =
 |---|---|---|---|
 | 语义角色 | `metric_role` | `health`、`capacity`、`available`、`used`、`rate`、`rank`、`evidence` | 决定指标代表什么。 |
 | 时间行为 | `time_behavior` | `instant`、`window`、`cumulative`、`rate`、`trend`、`resetting` | 决定是否能画趋势、用什么窗口。 |
-| 量纲单位 | `unit` | `usd`、`token`、`count`、`percent`、`ms`、`status` | 决定能否共轴、能否聚合。 |
+| 量纲单位 | `unit` | `usd`、`cny`、`quota`、`credit`、`token`、`count`、`percent`、`ms`、`status` | 决定能否共轴、能否聚合；额度、信用点、余额和成本不能只按“钱”粗暴合并。 |
 | 方向性 | `direction` | `higher_better`、`lower_better`、`neutral`、`risk_when_low`、`risk_when_high` | 决定颜色、风险提示和阈值语义。 |
 | 观测对象 | `subject_type` | `source`、`model`、`workspace`、`account`、`api_key`、`device`、`task` | 决定分组、筛选和下钻。 |
 | 聚合方式 | `aggregation` | `latest`、`sum`、`avg`、`max`、`delta`、`rank` | 决定后端如何汇总。 |
@@ -666,6 +666,9 @@ type MetricSemantics = {
     | "resetting"
   unit:
     | "usd"
+    | "cny"
+    | "quota"
+    | "credit"
     | "token"
     | "count"
     | "percent"
@@ -707,7 +710,7 @@ Dataset 也应声明:
 type DatasetSemantics = {
   rows_subject_type: "source" | "model" | "workspace" | "account" | "api_key" | "device"
   primary_metric_role: "used" | "available" | "health" | "rank" | "evidence"
-  primary_unit?: "usd" | "token" | "count" | "percent" | "ms" | "status"
+  primary_unit?: "usd" | "cny" | "quota" | "credit" | "token" | "count" | "percent" | "ms" | "status" | "mixed"
   allowed_group_by?: string[]
   allowed_sort_by?: string[]
   allowed_windows?: string[]

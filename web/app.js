@@ -2273,7 +2273,7 @@ function normalizeSignalSemantics(signal = {}) {
     unit_family: semanticUnitFamily(unit),
     subject_type: subjectType,
     aggregation: metricRole === 'rate' ? 'avg' : 'latest',
-    knownness: value === null ? 'unknown' : (value === 0 && signal.confidence === 'reported' ? 'reported_zero' : 'known'),
+    knownness: value === null ? 'unknown' : (value === 0 && signal.confidence === 'reported' && path.includes('.cost.') ? 'reported_zero' : 'known'),
   };
 }
 

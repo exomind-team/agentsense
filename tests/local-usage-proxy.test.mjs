@@ -483,6 +483,33 @@ describe('semantic projection contract', () => {
     assert.doesNotMatch(missingText, /Bearer\s+/i);
   });
 
+  it('redacts sensitive source registry messages before exposing source status', () => {
+    const bearer = 'sk-' + 'redactiontesttoken123456';
+    const dashboardToken = 'dashboard' + 'token123456';
+    const registry = withRelayEnvUnset(() => buildSourceRegistry({
+      sources: [
+        {
+          id: 'newapi-main',
+          kind: 'newapi',
+          label: 'NewAPI',
+          state: 'auth_failed',
+          enabled: true,
+          message: '请求失败: Authorization:' + ' Bearer ' + bearer + '; token: ' + dashboardToken,
+        },
+      ],
+      home: 'Z:/agent-sense-test-home',
+    }));
+
+    const newapi = registry.find(entry => entry.id === 'newapi-main');
+    assert.ok(newapi);
+    assert.match(newapi.message, /\[redacted\]/);
+
+    const serialized = JSON.stringify(registry);
+    assert.doesNotMatch(serialized, new RegExp(bearer.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    assert.doesNotMatch(serialized, new RegExp(dashboardToken));
+    assert.doesNotMatch(serialized, /Bearer\s+[A-Za-z0-9._+\-/=]{12,}/i);
+  });
+
   it('projects source registry as a capability matrix with adapter evidence', () => {
     const sourceRegistry = withRelayEnvUnset(() => buildSourceRegistry({
       sources: [
