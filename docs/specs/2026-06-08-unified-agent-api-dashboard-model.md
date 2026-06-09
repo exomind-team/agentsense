@@ -6,6 +6,10 @@
 
 适用仓库: AgentSense 魔改分支 `dev-improve-2026-06-08`
 
+关联文档:
+
+- `docs/specs/2026-06-09-data-observation-taxonomy.md`: 当前真实数据观察、内涵/外延分类法、以及后续重构数据呈现方式的基石。
+
 ## 产品意图校准
 
 本项目的核心不是“写一套新前端”，也不是“做一个通用低代码/BI 平台”，而是把 AgentSense 改造成一个**重读轻写、面向展示与态势观察的个人作战仪表盘**。
@@ -89,7 +93,7 @@ Source Adapter -> Unified Signal/Dataset Model -> Widget Registry -> Dashboard L
 实现约束:
 
 - 工作区 key 使用规范化路径生成，需去掉 Windows `\\?\` 前缀并统一为 `/`，避免同一路径重复。
-- 同名不同路径工作区必须保留路径副标题，例如多个 `exomind` 工作区不能只显示名称。
+- 同名不同路径工作区必须保留路径副标题，例如多个同名工作区不能只显示名称。
 - 排序默认使用 token 总量；成本只作为已知成本来源的辅助信息，不得把未知成本当 0。
 - 顶部 “多源工作区 Token” 是 Claude Code + Codex 工作区 token 合计；“成本”在当前 demo 中只代表 Claude Code 已知成本，不能暗示 Codex 成本已被估算。
 
@@ -931,7 +935,7 @@ path = "${USERPROFILE}\\.codex\\state_5.sqlite"
 
 建议下一步做“demo 契约固化”:
 
-1. 从 `/api/command-demo` 中抽出正式的 SourceStatus、Signal、Dataset Rust 类型。
+1. 以 `docs/specs/2026-06-09-data-observation-taxonomy.md` 为准，先把 `/api/command-demo` 的 SourceStatus、Signal、Dataset 补齐 `metric_role`、`time_behavior`、`unit`、`subject_type`、`aggregation`、`knownness` 等语义元数据。
 2. 增加 `/api/sources`、`/api/signals`、`/api/datasets/:id`，先返回当前 demo 已验证的数据。
 3. 把 `local-usage-proxy.mjs` 中 NewAPI/Sub2API 的解析逻辑迁入正式 adapter，保留 Node 代理作为开发辅助。
 4. 前端把当前硬编码 dashboard 区块逐步收敛到 widget registry，先做只读固定 layout，不做拖拽编辑器。

@@ -74,18 +74,9 @@
     <div class="table-section command-panel command-chart-panel command-dimension-panel">
       <div class="command-chart-title">
         <div class="section-title">采样趋势 · 量纲分组</div>
-        <span id="command-trend-window">近 6 小时</span>
+        <span id="command-trend-window">语义自动分图</span>
       </div>
-      <div class="command-trend-grid command-dimension-grid">
-        <div class="command-mini-trend">
-          <div class="command-mini-title">本地 Agent 成本 / USD</div>
-          <div id="command-cost-trend-chart" class="command-mini-chart" role="img" aria-label="本地 Agent 成本采样趋势图"></div>
-        </div>
-        <div class="command-mini-trend">
-          <div class="command-mini-title">Token 消耗</div>
-          <div id="command-token-trend-chart" class="command-mini-chart" role="img" aria-label="Token 消耗采样趋势图"></div>
-        </div>
-      </div>
+      <div id="command-dimension-trend-grid" class="command-semantic-trend-grid command-dimension-trend-grid"></div>
       <div class="command-chart-note" id="command-trend-note">等待首次采样。</div>
     </div>
     <div class="table-section command-panel command-chart-panel">
@@ -111,32 +102,8 @@
       <button type="button" id="command-relay-details-toggle" class="command-relay-detail-toggle" aria-expanded="false">展开明细</button>
     </div>
     <div id="command-relay-summary" class="command-relay-summary" aria-live="polite"></div>
-    <div class="command-relay-grid">
-      <div class="command-relay-card">
-        <div class="command-relay-heading">
-          <div id="command-relay-trend-a-title">NewAPI</div>
-          <span id="command-relay-trend-a-unit">额度</span>
-        </div>
-        <div id="command-newapi-trend-chart" class="command-relay-chart" role="img" aria-label="NewAPI 中转额度趋势图"></div>
-        <div class="command-chart-note" id="command-newapi-trend-note">等待 NewAPI 采样。</div>
-      </div>
-      <div class="command-relay-card">
-        <div class="command-relay-heading">
-          <div id="command-relay-trend-b-title">Sub2API</div>
-          <span id="command-relay-trend-b-unit">钱包余额</span>
-        </div>
-        <div id="command-sub2api-trend-chart" class="command-relay-chart" role="img" aria-label="Sub2API 中转钱包余额趋势图"></div>
-        <div class="command-chart-note" id="command-sub2api-trend-note">等待 Sub2API 采样。</div>
-      </div>
-      <div class="command-relay-card">
-        <div class="command-relay-heading">
-          <div id="command-relay-trend-c-title">Sub2API 成本支出</div>
-          <span id="command-relay-trend-c-unit">成本</span>
-        </div>
-        <div id="command-sub2api-cost-trend-chart" class="command-relay-chart" role="img" aria-label="Sub2API 中转成本支出趋势图"></div>
-        <div class="command-chart-note" id="command-sub2api-cost-trend-note">等待 Sub2API 成本采样。</div>
-      </div>
-    </div>
+    <div id="command-relay-trend-grid" class="command-semantic-trend-grid command-relay-trend-grid"></div>
+    <div class="command-chart-note" id="command-relay-trend-note">等待 NewAPI / Sub2API 采样。</div>
   </div>
 
   <div class="table-section command-panel command-wide-chart-panel">
@@ -153,6 +120,90 @@
     </div>
     <div id="command-model-trend-chart" class="command-wide-chart" role="img" aria-label="模型 Token 与成本趋势图"></div>
     <div class="command-chart-note" id="command-model-trend-note">等待模型趋势数据。</div>
+  </div>
+
+  <div class="table-section command-panel command-semantic-trend-panel">
+    <div class="command-chart-title">
+      <div class="section-title">语义趋势 · 独立量纲</div>
+      <span>按角色 / 时间 / 单位 / 对象自动分图</span>
+    </div>
+    <div id="command-semantic-trend-grid" class="command-semantic-trend-grid"></div>
+    <div class="command-chart-note" id="command-semantic-trend-note">等待语义采样。</div>
+  </div>
+
+  <div class="table-section command-panel command-semantic-panel">
+    <div class="section-title">语义投影 / 呈现编排</div>
+    <div id="command-semantic-summary" class="command-semantic-summary"></div>
+    <div class="command-blueprint-grid">
+      <section class="command-semantic-section">
+        <h3>数据表征层 V1</h3>
+        <div id="command-data-representation" class="command-blueprint-list"></div>
+      </section>
+      <section class="command-semantic-section">
+        <h3>面板呈现层 V1</h3>
+        <div id="command-presentation-blueprint" class="command-presentation-lanes"></div>
+      </section>
+    </div>
+    <div class="command-semantic-grid">
+      <section class="command-semantic-section">
+        <h3>四层结构</h3>
+        <div class="command-semantic-table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>层</th>
+                <th>职责</th>
+                <th>数量</th>
+              </tr>
+            </thead>
+            <tbody id="command-semantic-layer-body"></tbody>
+          </table>
+        </div>
+      </section>
+      <section class="command-semantic-section">
+        <h3>指标语义组</h3>
+        <div class="command-semantic-table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>组</th>
+                <th>角色</th>
+                <th>时间</th>
+                <th>量纲</th>
+                <th>对象</th>
+                <th>组件</th>
+              </tr>
+            </thead>
+            <tbody id="command-semantic-group-body"></tbody>
+          </table>
+        </div>
+      </section>
+      <section class="command-semantic-section">
+        <h3>数据集分组</h3>
+        <div class="command-semantic-table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>数据集</th>
+                <th>行对象</th>
+                <th>主语义</th>
+                <th>单位</th>
+                <th>窗口/排序</th>
+              </tr>
+            </thead>
+            <tbody id="command-dataset-group-body"></tbody>
+          </table>
+        </div>
+      </section>
+      <section class="command-semantic-section">
+        <h3>Widget Registry</h3>
+        <div id="command-widget-registry" class="command-widget-registry"></div>
+      </section>
+    </div>
+    <section class="command-semantic-section command-evidence-section">
+      <h3>证据与可信度</h3>
+      <div id="command-evidence-notes" class="command-evidence-notes"></div>
+    </section>
   </div>
 
   <div class="command-layout">
@@ -181,9 +232,12 @@
       <thead>
         <tr>
           <th>来源</th>
-          <th>类型</th>
-          <th>状态</th>
-          <th>说明</th>
+          <th>代码能力</th>
+          <th>配置</th>
+          <th>采集</th>
+          <th>态势台</th>
+          <th>可见性</th>
+          <th>缺失/说明</th>
         </tr>
       </thead>
       <tbody id="command-source-body"></tbody>

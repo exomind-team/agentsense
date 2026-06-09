@@ -7,6 +7,7 @@
 补充文档:
 
 - `docs/specs/2026-06-08-unified-agent-api-dashboard-model.md`: 统一 Agent/API 数据模型、Source Adapter、Signal/Dataset、Widget Registry 与可编排 Dashboard Layout 的 v0.1 规格。
+- `docs/specs/2026-06-09-data-observation-taxonomy.md`: 基于当前真实 demo 数据的数据观察报告、内涵/外延分类法、以及趋势/排行/额度呈现规则。
 - `docs/examples/agentsense.sources.example.toml`: 可迁移 source registry 配置样例。
 - `docs/examples/dashboard.layout.example.yaml`: 类飞书多维表格仪表盘的布局编排样例。
 

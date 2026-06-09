@@ -60,13 +60,11 @@ let mimoAccountsData = null; // cached MiMo accounts response
 let zaiModelsData = null;    // cached ZAI models data
 let commandDemoData = null;  // cached personal command dashboard demo data
 let localUsageData = null;   // cached local Claude Code aggregate usage
-let commandCostTrendChart = null;
-let commandTokenTrendChart = null;
-let commandNewApiTrendChart = null;
-let commandSub2ApiTrendChart = null;
-let commandSub2ApiCostTrendChart = null;
 let commandModelChart = null;
 let commandModelTrendChart = null;
+let commandDimensionTrendCharts = new Map();
+let commandSemanticTrendCharts = new Map();
+let commandRelayTrendCharts = new Map();
 let commandHistoryStorage = [];
 let commandModelSort = 'cost';
 let commandRelayView = 'source';
@@ -92,11 +90,6 @@ const MAX_POWER_PTS = 1800;
 // ── Init ─────────────────────────────────────────────────────────────────────
 
 function init() {
-  commandCostTrendChart = echarts.init(document.getElementById('command-cost-trend-chart'), null, { renderer: 'canvas' });
-  commandTokenTrendChart = echarts.init(document.getElementById('command-token-trend-chart'), null, { renderer: 'canvas' });
-  commandNewApiTrendChart = echarts.init(document.getElementById('command-newapi-trend-chart'), null, { renderer: 'canvas' });
-  commandSub2ApiTrendChart = echarts.init(document.getElementById('command-sub2api-trend-chart'), null, { renderer: 'canvas' });
-  commandSub2ApiCostTrendChart = echarts.init(document.getElementById('command-sub2api-cost-trend-chart'), null, { renderer: 'canvas' });
   commandModelChart = echarts.init(document.getElementById('command-model-chart'), null, { renderer: 'canvas' });
   commandModelTrendChart = echarts.init(document.getElementById('command-model-trend-chart'), null, { renderer: 'canvas' });
   chart = echarts.init(document.getElementById('trend-chart'), null, { renderer: 'canvas' });
@@ -128,9 +121,7 @@ function init() {
       localStorage.setItem(COMMAND_RELAY_DETAILS_COLLAPSED_KEY, commandRelayDetailsCollapsed ? 'true' : 'false');
       renderCommandRelayDetailsState();
       requestAnimationFrame(() => {
-        commandNewApiTrendChart?.resize();
-        commandSub2ApiTrendChart?.resize();
-        commandSub2ApiCostTrendChart?.resize();
+        for (const chart of commandRelayTrendCharts.values()) chart?.resize();
       });
     });
   }
@@ -178,13 +169,11 @@ function init() {
   document.getElementById('refreshBtn').addEventListener('click', manualRefresh);
   document.getElementById('theme-btn').addEventListener('click', toggleTheme);
   window.addEventListener('resize', () => {
-    commandCostTrendChart?.resize();
-    commandTokenTrendChart?.resize();
-    commandNewApiTrendChart?.resize();
-    commandSub2ApiTrendChart?.resize();
-    commandSub2ApiCostTrendChart?.resize();
     commandModelChart?.resize();
     commandModelTrendChart?.resize();
+    for (const chart of commandDimensionTrendCharts.values()) chart?.resize();
+    for (const chart of commandSemanticTrendCharts.values()) chart?.resize();
+    for (const chart of commandRelayTrendCharts.values()) chart?.resize();
     chart?.resize();
     weeklyBarChart?.resize();
     dsUsageChart?.resize();
@@ -1212,6 +1201,70 @@ function sourceStateLabel(state) {
   return `<span class="source-state">${escapeHtml(state || '--')}</span>`;
 }
 
+function registryStateLabel(value) {
+  const labels = {
+    present: ['能力存在', 'ok'],
+    absent: ['能力缺失', 'missing'],
+    planned: ['计划接入', 'planned'],
+    configured: ['已配置', 'ok'],
+    not_configured: ['未配置', 'missing'],
+    ok: ['ok', 'ok'],
+    auth_failed: ['凭证失败', 'auth-failed'],
+    fetch_failed: ['请求失败', 'error'],
+    no_data: ['无数据', 'stale'],
+    waiting: ['等待', 'stale'],
+    disabled: ['已禁用', 'disabled'],
+    missing: ['缺失', 'missing'],
+    connected: ['已接入', 'ok'],
+    not_connected: ['未接入', 'planned'],
+    hidden_by_filter: ['被过滤', 'stale'],
+    visible: ['可见', 'ok'],
+    not_in_command_demo: ['未进态势台', 'planned'],
+    unknown: ['未知', 'stale'],
+  };
+  const [label, klass] = labels[value] || [value || '--', ''];
+  return `<span class="source-state ${escapeHtml(klass)}">${escapeHtml(label)}</span>`;
+}
+
+function renderCommandSourceRegistry(sourceRegistry = [], sources = []) {
+  if (Array.isArray(sourceRegistry) && sourceRegistry.length) {
+    return sourceRegistry.map(entry => {
+      const missing = (entry.missing_items || []).filter(Boolean).join('、');
+      const message = [missing && `缺少：${missing}`, entry.message].filter(Boolean).join(' · ') || '--';
+      return `
+        <tr>
+          <td>
+            <div class="workspace-name">${escapeHtml(entry.label || entry.id || '--')}</div>
+            <div class="workspace-path">${escapeHtml(entry.category || entry.kind || entry.id || '--')}</div>
+          </td>
+          <td>${registryStateLabel(entry.code_capability)}</td>
+          <td>${registryStateLabel(entry.configuration_state)}</td>
+          <td>${registryStateLabel(entry.collection_state)}</td>
+          <td>${registryStateLabel(entry.command_demo_adapter)}</td>
+          <td>${registryStateLabel(entry.visibility_state)}</td>
+          <td>${escapeHtml(message)}</td>
+        </tr>
+      `;
+    }).join('');
+  }
+
+  if (Array.isArray(sources) && sources.length) {
+    return sources.map(source => `
+      <tr>
+        <td>${escapeHtml(source.label || source.id || '--')}</td>
+        <td>${registryStateLabel('unknown')}</td>
+        <td>${registryStateLabel('unknown')}</td>
+        <td>${sourceStateLabel(source.state)}</td>
+        <td>${registryStateLabel('unknown')}</td>
+        <td>${registryStateLabel('visible')}</td>
+        <td>${escapeHtml(source.message || (source.capabilities || []).join(', ') || '--')}</td>
+      </tr>
+    `).join('');
+  }
+
+  return '<tr><td colspan="7" style="color:var(--muted)">暂无 source registry；等待后端注册感知通道。</td></tr>';
+}
+
 function signalValue(signal) {
   if (!signal || signal.value === null || signal.value === undefined) return '--';
   if (signal.unit === 'usd') return fmtUsd(signal.value);
@@ -1783,14 +1836,10 @@ function renderCommandDemo(data) {
     </tr>
   `).join('') : '<tr><td colspan="3" style="color:var(--muted)">暂无 signal</td></tr>';
 
-  document.getElementById('command-source-body').innerHTML = sources.length ? sources.map(s => `
-    <tr>
-      <td>${escapeHtml(s.label || s.id || '--')}</td>
-      <td>${escapeHtml(s.kind || '--')}</td>
-      <td>${sourceStateLabel(s.state)}</td>
-      <td>${escapeHtml(s.message || (s.capabilities || []).join(', ') || '--')}</td>
-    </tr>
-  `).join('') : '<tr><td colspan="4" style="color:var(--muted)">暂无 source</td></tr>';
+  document.getElementById('command-source-body').innerHTML = renderCommandSourceRegistry(
+    data.datasets?.source_registry,
+    sources
+  );
 
   const modelRows = buildUnifiedCommandModelRows(data);
   const displayRows = sortCommandModelRows(modelRows).slice(0, 22);
@@ -1830,6 +1879,259 @@ function renderCommandDemo(data) {
   renderCommandTrend();
   renderCommandModelChart(modelRows);
   renderCommandModelTrend(data.datasets);
+  renderCommandSemanticProjection(data);
+}
+
+function semanticKnownnessLabel(knownness) {
+  const labels = {
+    known: '已知',
+    unknown: '未知',
+    reported_zero: '接口报告 0',
+    derived: '推导',
+    planned: '计划接入',
+  };
+  return labels[knownness] || knownness || '--';
+}
+
+function semanticWidgetLabel(widgetId) {
+  const labels = {
+    'status-matrix': '状态矩阵',
+    'capability-matrix': '能力矩阵',
+    'reserve-card': '余量卡',
+    'relay-zone': '中转专区',
+    'window-trend': '趋势图',
+    'rank-table': '排行表',
+    'evidence-table': '证据表',
+    'metric-card': '指标卡',
+  };
+  return labels[widgetId] || widgetId || '--';
+}
+
+function semanticPill(text, extraClass = '') {
+  return `<span class="command-semantic-pill ${escapeHtml(extraClass)}">${escapeHtml(text || '--')}</span>`;
+}
+
+function renderSemanticTableEmpty(colspan, text = '暂无语义投影数据') {
+  return `<tr><td colspan="${colspan}" style="color:var(--muted)">${escapeHtml(text)}</td></tr>`;
+}
+
+function renderSemanticCounts(items) {
+  return (Array.isArray(items) ? items : []).map(item => `
+    <span class="command-semantic-chip">
+      ${escapeHtml(item.label || item.id || '--')}
+      <strong>${Number(item.count || 0).toLocaleString()}</strong>
+    </span>
+  `).join('');
+}
+
+function renderDataRepresentationBlueprint(blueprint, container) {
+  if (!container) return;
+  if (!blueprint) {
+    container.innerHTML = '<div class="command-semantic-empty">等待数据表征蓝图。</div>';
+    return;
+  }
+
+  const source = blueprint.source_contract || {};
+  const signal = blueprint.signal_contract || {};
+  const dataset = blueprint.dataset_contract || {};
+  const blocks = [
+    {
+      name: source.name || 'SourceStatus',
+      count: source.count,
+      rows: [['状态', renderSemanticCounts(source.states)]],
+    },
+    {
+      name: signal.name || 'SignalSemantics',
+      count: signal.count,
+      rows: [
+        ['角色', renderSemanticCounts(signal.roles)],
+        ['量纲', renderSemanticCounts(signal.units)],
+        ['对象', renderSemanticCounts(signal.subjects)],
+        ['证据', renderSemanticCounts(signal.knownness)],
+      ],
+    },
+    {
+      name: dataset.name || 'DatasetSemantics',
+      count: dataset.count,
+      rows: [
+        ['组件', renderSemanticCounts(dataset.widgets)],
+        ['行对象', renderSemanticCounts(dataset.row_subjects)],
+      ],
+    },
+  ];
+
+  const invariants = (blueprint.invariants || []).map(item => `
+    <li>${escapeHtml(item)}</li>
+  `).join('');
+
+  container.innerHTML = `
+    <div class="command-blueprint-principle">${escapeHtml(blueprint.principle || '--')}</div>
+    ${blocks.map(block => `
+      <article class="command-blueprint-card">
+        <div class="command-blueprint-card-title">
+          <strong>${escapeHtml(block.name)}</strong>
+          <span>${Number(block.count || 0).toLocaleString()}</span>
+        </div>
+        ${block.rows.map(([label, chips]) => `
+          <div class="command-blueprint-row">
+            <span>${escapeHtml(label)}</span>
+            <div>${chips || '<span class="command-semantic-sub">暂无</span>'}</div>
+          </div>
+        `).join('')}
+      </article>
+    `).join('')}
+    <ul class="command-blueprint-rules">${invariants}</ul>
+  `;
+}
+
+function renderPresentationBlueprint(blueprint, container) {
+  if (!container) return;
+  if (!blueprint) {
+    container.innerHTML = '<div class="command-semantic-empty">等待面板呈现蓝图。</div>';
+    return;
+  }
+
+  const lanes = blueprint.lanes || [];
+  container.innerHTML = `
+    <div class="command-blueprint-principle">${escapeHtml(blueprint.principle || '--')}</div>
+    ${lanes.map(lane => {
+      const metricCount = (lane.metric_group_ids || []).length;
+      const datasetCount = (lane.dataset_ids || []).length;
+      const rules = (lane.rules || []).slice(0, 3).map(rule => `<li>${escapeHtml(rule)}</li>`).join('');
+      return `
+        <article class="command-lane-card">
+          <div class="command-lane-head">
+            <div>
+              <strong>${escapeHtml(lane.name || lane.id || '--')}</strong>
+              <span>${escapeHtml(lane.purpose || '--')}</span>
+            </div>
+            ${semanticPill(semanticWidgetLabel(lane.widget), 'widget')}
+          </div>
+          <div class="command-lane-metrics">
+            <span>指标组 <strong>${metricCount}</strong></span>
+            <span>数据集 <strong>${datasetCount}</strong></span>
+            <span>证据 <strong>${Number(lane.evidence_count || 0).toLocaleString()}</strong></span>
+          </div>
+          <ul>${rules}</ul>
+        </article>
+      `;
+    }).join('')}
+  `;
+}
+
+function renderCommandSemanticProjection(data) {
+  const projection = data?.semantic_projection;
+  const summaryBox = document.getElementById('command-semantic-summary');
+  const representationBox = document.getElementById('command-data-representation');
+  const presentationBox = document.getElementById('command-presentation-blueprint');
+  const layerBody = document.getElementById('command-semantic-layer-body');
+  const metricBody = document.getElementById('command-semantic-group-body');
+  const datasetBody = document.getElementById('command-dataset-group-body');
+  const widgetBox = document.getElementById('command-widget-registry');
+  const evidenceBox = document.getElementById('command-evidence-notes');
+  if (!summaryBox || !layerBody || !metricBody || !datasetBody || !widgetBox || !evidenceBox) return;
+
+  if (!projection) {
+    summaryBox.innerHTML = '<div class="command-semantic-empty">等待后端 semantic_projection。</div>';
+    layerBody.innerHTML = renderSemanticTableEmpty(3);
+    metricBody.innerHTML = renderSemanticTableEmpty(6);
+    datasetBody.innerHTML = renderSemanticTableEmpty(5);
+    widgetBox.innerHTML = '<div class="command-semantic-empty">暂无 widget registry。</div>';
+    evidenceBox.innerHTML = '<div class="command-semantic-empty">暂无证据说明。</div>';
+    renderDataRepresentationBlueprint(null, representationBox);
+    renderPresentationBlueprint(null, presentationBox);
+    return;
+  }
+
+  const metricGroups = projection.metric_groups || [];
+  const datasetGroups = projection.dataset_groups || [];
+  const widgets = projection.widget_registry || [];
+  const notes = projection.evidence_notes || [];
+  const summary = projection.summary || {};
+  const layerCount = (projection.layers || []).length;
+
+  summaryBox.innerHTML = [
+    ['层', layerCount],
+    ['Signal', summary.signal_count ?? 0],
+    ['数据集', summary.dataset_count ?? datasetGroups.length],
+    ['指标组', metricGroups.length],
+    ['数据集组', datasetGroups.length],
+    ['Widget', summary.widget_count ?? widgets.length],
+    ['证据', notes.length],
+  ].map(([label, value]) => `
+    <div class="command-semantic-stat">
+      <span>${escapeHtml(label)}</span>
+      <strong>${escapeHtml(String(value))}</strong>
+    </div>
+  `).join('');
+
+  renderDataRepresentationBlueprint(projection.data_representation, representationBox);
+  renderPresentationBlueprint(projection.presentation_blueprint, presentationBox);
+
+  layerBody.innerHTML = (projection.layers || []).length ? projection.layers.map(layer => `
+    <tr>
+      <td>${escapeHtml(layer.name || layer.id || '--')}</td>
+      <td>${escapeHtml(layer.purpose || '--')}</td>
+      <td>${Number(layer.item_count || 0).toLocaleString()}</td>
+    </tr>
+  `).join('') : renderSemanticTableEmpty(3);
+
+  metricBody.innerHTML = metricGroups.length ? metricGroups.map(group => {
+    const knownness = (group.knownness || []).map(item => semanticPill(semanticKnownnessLabel(item), `knownness-${item}`)).join('');
+    const units = (group.units || []).map(item => semanticPill(item, 'unit')).join('');
+    return `
+      <tr>
+        <td>
+          <div class="command-semantic-name">${escapeHtml(group.name || group.id || '--')}</div>
+          <div class="command-semantic-sub">${Number(group.count || 0).toLocaleString()} 个 Signal · ${knownness || '--'}</div>
+        </td>
+        <td>${escapeHtml(group.metric_role_label || group.metric_role || '--')}</td>
+        <td>${escapeHtml(group.time_behavior_label || group.time_behavior || '--')}</td>
+        <td>${escapeHtml(group.unit_family_label || group.unit_family || '--')}<div class="command-semantic-sub">${units || '--'}</div></td>
+        <td>${escapeHtml(group.subject_type_label || group.subject_type || '--')}</td>
+        <td>${semanticPill(semanticWidgetLabel(group.widget_hint), 'widget')}</td>
+      </tr>
+    `;
+  }).join('') : renderSemanticTableEmpty(6);
+
+  datasetBody.innerHTML = datasetGroups.length ? datasetGroups.map(group => {
+    const windows = (group.allowed_windows || []).join(' / ');
+    const sorts = (group.allowed_sort_by || []).slice(0, 4).join(' / ');
+    const controls = [windows && `窗口 ${windows}`, sorts && `排序 ${sorts}`].filter(Boolean).join(' · ') || '--';
+    return `
+      <tr>
+        <td>
+          <div class="command-semantic-name">${escapeHtml(group.name || group.dataset_id || '--')}</div>
+          <div class="command-semantic-sub">${escapeHtml(group.dataset_id || '--')} · ${Number(group.row_count || 0).toLocaleString()} 行</div>
+        </td>
+        <td>${escapeHtml(group.rows_subject_label || group.rows_subject_type || '--')}</td>
+        <td>${escapeHtml(group.primary_metric_label || group.primary_metric_role || '--')}</td>
+        <td>${semanticPill(group.primary_unit || '--', 'unit')}</td>
+        <td>
+          <div>${semanticPill(semanticWidgetLabel(group.widget_hint), 'widget')}</div>
+          <div class="command-semantic-sub">${escapeHtml(controls)}</div>
+        </td>
+      </tr>
+    `;
+  }).join('') : renderSemanticTableEmpty(5);
+
+  widgetBox.innerHTML = widgets.length ? widgets.map(widget => `
+    <article class="command-widget-card">
+      <div>
+        <strong>${escapeHtml(widget.name || widget.id || '--')}</strong>
+        <span>${escapeHtml(widget.id || '--')}</span>
+      </div>
+      <p>${escapeHtml(widget.purpose || '--')}</p>
+      <small>${escapeHtml(widget.match || '--')}</small>
+    </article>
+  `).join('') : '<div class="command-semantic-empty">暂无 widget registry。</div>';
+
+  evidenceBox.innerHTML = notes.length ? notes.map(note => `
+    <div class="command-evidence-note ${escapeHtml(note.severity || 'info')}">
+      <strong>${escapeHtml(note.severity || 'info')}</strong>
+      <span>${escapeHtml(note.message || '--')}</span>
+    </div>
+  `).join('') : '<div class="command-semantic-empty">暂无证据风险；当前可见值均按语义分类。</div>';
 }
 
 function signalNumber(signals, path) {
@@ -1870,6 +2172,377 @@ function sumCommandModelStats(items) {
   }, { requests: 0, requestsKnown: false, tokens: 0, tokensKnown: false, cost: 0, costKnown: false, quota: 0, quotaKnown: false });
 }
 
+function semanticUnitFamily(unit) {
+  const normalized = String(unit || '').toLowerCase();
+  if (['usd', 'cny', 'eur', 'jpy'].includes(normalized)) return 'currency';
+  if (['quota', 'credit'].includes(normalized)) return 'quota';
+  if (['token', 'tokens'].includes(normalized)) return 'token';
+  if (['count', 'request', 'requests'].includes(normalized)) return 'count';
+  if (['percent', '%', 'ratio'].includes(normalized)) return 'ratio';
+  if (['ms', 'latency'].includes(normalized)) return 'latency';
+  if (['status', 'state'].includes(normalized)) return 'status';
+  return normalized || 'mixed';
+}
+
+function normalizeSignalSemantics(signal = {}) {
+  if (signal.semantics && typeof signal.semantics === 'object') return signal.semantics;
+  const path = String(signal.path || signal.id || '').toLowerCase();
+  const kind = String(signal.kind || '').toLowerCase();
+  const value = nullableNumber(signal.value);
+  const unit = String(signal.unit || 'count').toLowerCase();
+  const metricRole = path.includes('available') || kind === 'balance'
+    ? 'available'
+    : path.includes('total') || path.includes('capacity')
+      ? 'capacity'
+      : kind === 'rate' || path.includes('rpm') || path.includes('tpm')
+        ? 'rate'
+        : kind === 'status' || path.includes('status') || path.includes('state')
+          ? 'health'
+          : 'used';
+  const timeBehavior = kind === 'rate' || metricRole === 'rate'
+    ? 'rate'
+    : path.includes('today') || path.includes('window')
+      ? 'window'
+      : path.includes('total') || path.includes('aggregate')
+        ? 'cumulative'
+        : 'instant';
+  const subjectType = path.includes('sub2api')
+    ? 'api_key'
+    : path.includes('newapi')
+      ? 'account'
+      : path.includes('project') || path.includes('workspace')
+        ? 'workspace'
+        : 'source';
+  return {
+    metric_role: metricRole,
+    time_behavior: timeBehavior,
+    unit,
+    unit_family: semanticUnitFamily(unit),
+    subject_type: subjectType,
+    aggregation: metricRole === 'rate' ? 'avg' : 'latest',
+    knownness: value === null ? 'unknown' : (value === 0 && signal.confidence === 'reported' ? 'reported_zero' : 'known'),
+  };
+}
+
+function semanticTrendRoleLabel(role) {
+  return {
+    health: '健康',
+    capacity: '容量',
+    available: '可用',
+    used: '已用',
+    rate: '速率',
+    rank: '排行',
+    evidence: '证据',
+  }[role] || role || '--';
+}
+
+function semanticTrendTimeLabel(timeBehavior) {
+  return {
+    instant: '瞬时',
+    window: '窗口',
+    cumulative: '累计',
+    rate: '速率',
+    trend: '趋势',
+    resetting: '周期',
+  }[timeBehavior] || timeBehavior || '--';
+}
+
+function semanticTrendSubjectLabel(subjectType) {
+  return {
+    source: '来源',
+    model: '模型',
+    workspace: '工作区',
+    account: '账户',
+    api_key: 'API Key',
+    device: '设备',
+    task: '任务',
+  }[subjectType] || subjectType || '--';
+}
+
+function semanticTrendMetricLabel(path, fallback = '') {
+  const labels = {
+    'agent.usage.cost.aggregate': '本地 Agent 成本',
+    'agent.usage.tokens.total.aggregate': '工作区 Token',
+    'agent.usage.projects.count': '工作区数量',
+    'api.newapi.quota.total': '总额度',
+    'api.newapi.quota.used': '已用额度',
+    'api.newapi.quota.available': '可用额度',
+    'api.newapi.requests.total': '累计请求',
+    'api.newapi.usage.percent': '使用率',
+    'api.sub2api.balance.available': '钱包余额',
+    'api.sub2api.requests.today': '今日请求',
+    'api.sub2api.tokens.today': '今日 Token',
+    'api.sub2api.cost.today': '今日成本',
+    'api.sub2api.requests.total': '累计请求',
+    'api.sub2api.tokens.total': '累计 Token',
+    'api.sub2api.cost.total': '累计成本',
+    'derived.newapi.model.tokens': '模型 Token',
+    'derived.newapi.model.quota': '模型额度',
+    'derived.newapi.model.requests': '模型请求',
+    'derived.sub2api.model.tokens': '模型 Token',
+    'derived.sub2api.model.cost': '模型成本',
+    'derived.sub2api.model.requests': '模型请求',
+  };
+  return labels[path] || fallback || path || '--';
+}
+
+function semanticTrendGroupRank(group) {
+  const roleRank = { available: 0, used: 1, capacity: 2, rate: 3, health: 4, rank: 5, evidence: 6 };
+  const unitRank = { currency: 0, quota: 1, token: 2, count: 3, ratio: 4, latency: 5, status: 6, mixed: 7 };
+  return (roleRank[group.metricRole] ?? 9) * 100
+    + (unitRank[group.unitFamily] ?? 9) * 10
+    + String(group.source || '').localeCompare('') * 0;
+}
+
+function semanticTrendValueFormatter(sampleOrGroup) {
+  const unit = String(sampleOrGroup?.unit || '').toLowerCase();
+  const family = sampleOrGroup?.unitFamily || semanticUnitFamily(unit);
+  if (family === 'currency' || unit === 'quota' || unit === 'credit') return value => formatUnitAmount(value, unit || 'quota');
+  if (family === 'token') return fmtTokens;
+  if (family === 'count') return value => Number(value || 0).toLocaleString();
+  if (family === 'ratio') return value => `${Number(value || 0).toFixed(2)}%`;
+  return value => formatUnitAmount(value, unit || 'count');
+}
+
+function deriveCommandSemanticExtension(sample = {}) {
+  const path = String(sample.path || sample.seriesKey || '').toLowerCase();
+  const source = String(sample.source || '').toLowerCase();
+  const subjectType = String(sample.subjectType || 'source');
+  const metricRole = String(sample.metricRole || 'used');
+  const timeBehavior = String(sample.timeBehavior || 'instant');
+  const unitFamily = String(sample.unitFamily || semanticUnitFamily(sample.unit));
+  let extensionDomain = 'general_observation';
+  let extensionLabel = '通用态势观察';
+
+  if (path.includes('newapi') || path.includes('sub2api') || source.includes('newapi') || source.includes('sub2api')) {
+    extensionDomain = 'agent_api_relay';
+    extensionLabel = 'Agent/API 中转';
+  } else if (path.includes('agent.usage') || source.includes('codex') || source.includes('claude') || source.includes('cc ')) {
+    extensionDomain = 'local_agent_usage';
+    extensionLabel = '本地 Agent 使用';
+  } else if (subjectType === 'device') {
+    extensionDomain = 'device_observation';
+    extensionLabel = '设备态势';
+  }
+
+  if (subjectType === 'model') {
+    extensionLabel = `${extensionLabel} · 模型用量`;
+  } else if (subjectType === 'workspace') {
+    extensionLabel = `${extensionLabel} · 工作区画像`;
+  } else if (subjectType === 'api_key' || subjectType === 'account') {
+    extensionLabel = `${extensionLabel} · 账户/Key`;
+  }
+
+  let presentationHint = '状态数值';
+  if (metricRole === 'available' || metricRole === 'capacity') {
+    presentationHint = '余量 / 容量趋势';
+  } else if (metricRole === 'used' && timeBehavior === 'window') {
+    presentationHint = '窗口消耗趋势';
+  } else if (metricRole === 'used' && timeBehavior === 'cumulative') {
+    presentationHint = '累计画像趋势';
+  } else if (metricRole === 'rate' || timeBehavior === 'rate') {
+    presentationHint = '速率趋势';
+  } else if (unitFamily === 'ratio') {
+    presentationHint = '比例趋势';
+  }
+
+  return { extensionDomain, extensionLabel, presentationHint };
+}
+
+function semanticTrendExtensionsLabel(group) {
+  const labels = Array.isArray(group?.extensionLabels) ? group.extensionLabels : [group?.extensionLabel].filter(Boolean);
+  return labels.length ? labels.join(' / ') : '';
+}
+
+function semanticTrendPresentationLabel(group) {
+  const labels = Array.isArray(group?.presentationHints) ? group.presentationHints : [group?.presentationHint].filter(Boolean);
+  return labels.length ? labels.join(' / ') : '';
+}
+
+function semanticTrendGroupSubtitle(group) {
+  return [
+    semanticTrendExtensionsLabel(group),
+    semanticTrendPresentationLabel(group),
+    semanticTrendSubjectLabel(group.subjectType),
+    semanticTrendRoleLabel(group.metricRole),
+    semanticTrendTimeLabel(group.timeBehavior),
+    semanticTrendSourcesLabel(group),
+    semanticTrendKnownnessLabel(group.knownness),
+  ].filter(Boolean).join(' · ');
+}
+
+function sanitizeCommandSemanticSamples(samples) {
+  return (Array.isArray(samples) ? samples : [])
+    .map(sample => {
+      const value = nullableNumber(sample?.value);
+      if (value === null) return null;
+      const unit = String(sample.unit || 'count').toLowerCase();
+      const unitFamily = sample.unitFamily || semanticUnitFamily(unit);
+      const metricRole = sample.metricRole || 'used';
+      const timeBehavior = sample.timeBehavior || 'instant';
+      const subjectType = sample.subjectType || 'source';
+      const source = sample.source || 'unknown';
+      const path = sample.path || sample.seriesKey || sample.label || '--';
+      const groupKey = [
+        metricRole,
+        timeBehavior,
+        unitFamily,
+        unit,
+        subjectType,
+      ].join('|');
+      const extension = deriveCommandSemanticExtension({
+        ...sample,
+        unit,
+        unitFamily,
+        metricRole,
+        timeBehavior,
+        subjectType,
+        source,
+        path,
+      });
+      return {
+        groupKey,
+        seriesKey: sample.seriesKey || path,
+        label: sample.label || semanticTrendMetricLabel(path),
+        groupLabel: sample.groupLabel || `${semanticTrendRoleLabel(metricRole)} · ${semanticTrendTimeLabel(timeBehavior)} · ${semanticTrendSubjectLabel(subjectType)}`,
+        value,
+        unit,
+        unitFamily,
+        metricRole,
+        timeBehavior,
+        subjectType,
+        source,
+        path,
+        knownness: sample.knownness || 'known',
+        extensionDomain: sample.extensionDomain || extension.extensionDomain,
+        extensionLabel: sample.extensionLabel || extension.extensionLabel,
+        presentationHint: sample.presentationHint || extension.presentationHint,
+      };
+    })
+    .filter(Boolean)
+    .slice(0, 80);
+}
+
+function buildCommandSemanticSamples(data) {
+  const samples = [];
+  const addSample = sample => {
+    const [clean] = sanitizeCommandSemanticSamples([sample]);
+    if (clean) samples.push(clean);
+  };
+
+  for (const signal of Array.isArray(data?.signals) ? data.signals : []) {
+    const semantics = normalizeSignalSemantics(signal);
+    if (semantics.knownness === 'unknown' || semantics.knownness === 'planned') continue;
+    const value = nullableNumber(signal.value);
+    if (value === null) continue;
+    const unit = String(semantics.unit || signal.unit || 'count').toLowerCase();
+    const source = signal.sourceId || signal.source_id || signal.subject || (
+      String(signal.path || '').includes('newapi') ? 'NewAPI'
+        : String(signal.path || '').includes('sub2api') ? 'Sub2API'
+          : '本地 Agent'
+    );
+    addSample({
+      value,
+      unit,
+      unitFamily: semantics.unit_family || semanticUnitFamily(unit),
+      metricRole: semantics.metric_role,
+      timeBehavior: semantics.time_behavior,
+      subjectType: semantics.subject_type,
+      source,
+      path: signal.path || signal.id,
+      seriesKey: signal.path || signal.id,
+      label: semanticTrendMetricLabel(signal.path || signal.id),
+      knownness: semantics.knownness,
+    });
+  }
+
+  const newApiModels = sumCommandModelStats(data?.datasets?.newapi_model_stats);
+  if (newApiModels.tokensKnown) {
+    addSample({
+      value: newApiModels.tokens,
+      unit: 'token',
+      unitFamily: 'token',
+      metricRole: 'used',
+      timeBehavior: 'cumulative',
+      subjectType: 'model',
+      source: 'NewAPI',
+      path: 'derived.newapi.model.tokens',
+      label: semanticTrendMetricLabel('derived.newapi.model.tokens'),
+      knownness: 'derived',
+    });
+  }
+  if (newApiModels.quotaKnown) {
+    addSample({
+      value: newApiModels.quota,
+      unit: data?.datasets?.newapi_model_stats?.find?.(row => row?.quota_unit)?.quota_unit || 'quota',
+      metricRole: 'used',
+      timeBehavior: 'cumulative',
+      subjectType: 'model',
+      source: 'NewAPI',
+      path: 'derived.newapi.model.quota',
+      label: semanticTrendMetricLabel('derived.newapi.model.quota'),
+      knownness: 'derived',
+    });
+  }
+  if (newApiModels.requestsKnown) {
+    addSample({
+      value: newApiModels.requests,
+      unit: 'count',
+      metricRole: 'used',
+      timeBehavior: 'cumulative',
+      subjectType: 'model',
+      source: 'NewAPI',
+      path: 'derived.newapi.model.requests',
+      label: semanticTrendMetricLabel('derived.newapi.model.requests'),
+      knownness: 'derived',
+    });
+  }
+
+  const sub2ApiModels = sumCommandModelStats(data?.datasets?.sub2api_model_stats);
+  const sub2CostUnit = data?.datasets?.sub2api_model_stats?.find?.(row => row?.cost_unit)?.cost_unit || 'usd';
+  if (sub2ApiModels.tokensKnown) {
+    addSample({
+      value: sub2ApiModels.tokens,
+      unit: 'token',
+      metricRole: 'used',
+      timeBehavior: 'cumulative',
+      subjectType: 'model',
+      source: 'Sub2API',
+      path: 'derived.sub2api.model.tokens',
+      label: semanticTrendMetricLabel('derived.sub2api.model.tokens'),
+      knownness: 'derived',
+    });
+  }
+  if (sub2ApiModels.costKnown) {
+    addSample({
+      value: sub2ApiModels.cost,
+      unit: sub2CostUnit,
+      metricRole: 'used',
+      timeBehavior: 'cumulative',
+      subjectType: 'model',
+      source: 'Sub2API',
+      path: 'derived.sub2api.model.cost',
+      label: semanticTrendMetricLabel('derived.sub2api.model.cost'),
+      knownness: 'derived',
+    });
+  }
+  if (sub2ApiModels.requestsKnown) {
+    addSample({
+      value: sub2ApiModels.requests,
+      unit: 'count',
+      metricRole: 'used',
+      timeBehavior: 'cumulative',
+      subjectType: 'model',
+      source: 'Sub2API',
+      path: 'derived.sub2api.model.requests',
+      label: semanticTrendMetricLabel('derived.sub2api.model.requests'),
+      knownness: 'derived',
+    });
+  }
+
+  return sanitizeCommandSemanticSamples(samples);
+}
+
 function sanitizeCommandHistory(items) {
   const cutoff = Date.now() - COMMAND_HISTORY_WINDOW_MS;
   return (Array.isArray(items) ? items : [])
@@ -1877,8 +2550,8 @@ function sanitizeCommandHistory(items) {
     .map(p => ({
       ts: Number(p.ts),
       cost: nullableNumber(p.cost),
-      tokens: Number(p.tokens || 0),
-      projects: Number(p.projects || 0),
+      tokens: nullableNumber(p.tokens),
+      projects: nullableNumber(p.projects),
       sourcesOk: Number(p.sourcesOk || 0),
       sourcesTotal: Number(p.sourcesTotal || 0),
       apiQuotaAvailable: nullableNumber(p.apiQuotaAvailable),
@@ -1910,6 +2583,7 @@ function sanitizeCommandHistory(items) {
       sub2ApiModelTokens: nullableNumber(p.sub2ApiModelTokens),
       sub2ApiModelCost: nullableNumber(p.sub2ApiModelCost),
       sub2ApiModelRequests: nullableNumber(p.sub2ApiModelRequests),
+      semanticSamples: sanitizeCommandSemanticSamples(p.semanticSamples),
     }))
     .slice(-MAX_COMMAND_HISTORY_PTS);
 }
@@ -1948,8 +2622,8 @@ function recordCommandSnapshot(data) {
   const point = {
     ts: Number.isFinite(generated) ? generated : Date.now(),
     cost,
-    tokens: tokens || 0,
-    projects: projects || 0,
+    tokens,
+    projects,
     sourcesOk: counts.ok || 0,
     sourcesTotal: sources.length || 0,
     apiQuotaAvailable,
@@ -1971,6 +2645,7 @@ function recordCommandSnapshot(data) {
     sub2ApiModelTokens: sub2ApiModels.tokensKnown ? sub2ApiModels.tokens : null,
     sub2ApiModelCost: sub2ApiModels.costKnown ? sub2ApiModels.cost : null,
     sub2ApiModelRequests: sub2ApiModels.requestsKnown ? sub2ApiModels.requests : null,
+    semanticSamples: buildCommandSemanticSamples(data),
   };
 
   const history = sanitizeCommandHistory(commandHistoryStorage);
@@ -1984,21 +2659,410 @@ function recordCommandSnapshot(data) {
   localStorage.setItem(COMMAND_HISTORY_KEY, JSON.stringify(commandHistoryStorage));
 }
 
-function renderCommandTrend() {
-  const history = sanitizeCommandHistory(commandHistoryStorage);
-  const note = document.getElementById('command-trend-note');
-  const newApiNote = document.getElementById('command-newapi-trend-note');
-  const sub2ApiNote = document.getElementById('command-sub2api-trend-note');
-  const sub2ApiCostNote = document.getElementById('command-sub2api-cost-trend-note');
-  const relayTitleA = document.getElementById('command-relay-trend-a-title');
-  const relayUnitA = document.getElementById('command-relay-trend-a-unit');
-  const relayTitleB = document.getElementById('command-relay-trend-b-title');
-  const relayUnitB = document.getElementById('command-relay-trend-b-unit');
-  const relayTitleC = document.getElementById('command-relay-trend-c-title');
-  const relayUnitC = document.getElementById('command-relay-trend-c-unit');
+function buildSemanticTrendGroups(history) {
+  const groups = new Map();
+  for (const point of history) {
+    for (const sample of sanitizeCommandSemanticSamples(point.semanticSamples)) {
+      const group = groups.get(sample.groupKey) || {
+        key: sample.groupKey,
+        label: sample.groupLabel,
+        metricRole: sample.metricRole,
+        timeBehavior: sample.timeBehavior,
+        unit: sample.unit,
+        unitFamily: sample.unitFamily,
+        subjectType: sample.subjectType,
+        source: sample.source,
+        sources: new Set(),
+        knownness: new Set(),
+        extensionDomains: new Set(),
+        extensionLabels: new Set(),
+        presentationHints: new Set(),
+        series: new Map(),
+        latestAt: 0,
+        latestValue: null,
+      };
+      const seriesKey = `${sample.source || 'unknown'}|${sample.seriesKey}`;
+      const series = group.series.get(seriesKey) || {
+        key: seriesKey,
+        name: `${sample.source || 'unknown'} · ${sample.label || sample.seriesKey}`,
+        path: sample.path,
+        data: [],
+      };
+      series.data.push([point.ts, sample.value]);
+      group.series.set(seriesKey, series);
+      group.sources.add(sample.source || 'unknown');
+      group.knownness.add(sample.knownness || 'known');
+      group.extensionDomains.add(sample.extensionDomain || 'general_observation');
+      group.extensionLabels.add(sample.extensionLabel || '通用态势观察');
+      group.presentationHints.add(sample.presentationHint || '状态数值');
+      if (point.ts >= group.latestAt) {
+        group.latestAt = point.ts;
+        group.latestValue = sample.value;
+      }
+      groups.set(sample.groupKey, group);
+    }
+  }
+  return [...groups.values()]
+    .map(group => ({
+      ...group,
+      sources: [...group.sources].sort((a, b) => String(a).localeCompare(String(b))),
+      knownness: [...group.knownness].sort((a, b) => String(a).localeCompare(String(b))),
+      extensionDomains: [...group.extensionDomains].sort((a, b) => String(a).localeCompare(String(b))),
+      extensionLabels: [...group.extensionLabels].sort((a, b) => String(a).localeCompare(String(b))),
+      presentationHints: [...group.presentationHints].sort((a, b) => String(a).localeCompare(String(b))),
+    }))
+    .filter(group => [...group.series.values()].some(series => series.data.length))
+    .sort((a, b) => semanticTrendGroupRank(a) - semanticTrendGroupRank(b) || String(a.label).localeCompare(String(b.label)));
+}
+
+function semanticTrendKnownnessLabel(knownness) {
+  const labels = {
+    known: '已知',
+    derived: '推导',
+    reported_zero: '报告为 0',
+    unknown: '未知',
+    planned: '计划接入',
+  };
+  const items = Array.isArray(knownness)
+    ? knownness
+    : knownness instanceof Set
+      ? [...knownness]
+      : [knownness].filter(Boolean);
+  return items.map(item => labels[item] || item).filter(Boolean).join(' / ') || '已知';
+}
+
+function semanticTrendSourcesLabel(group) {
+  const sources = Array.isArray(group?.sources) ? group.sources : [group?.source].filter(Boolean);
+  return sources.length ? sources.join(' / ') : '来源待识别';
+}
+
+function semanticTrendChartDomId(prefix, key) {
+  return `${prefix}-${String(key).replace(/[^a-zA-Z0-9_-]/g, '-')}`;
+}
+
+function disposeMissingTrendCharts(chartMap, groupKeys) {
+  const keep = new Set(groupKeys);
+  for (const [key, chart] of chartMap.entries()) {
+    if (keep.has(key)) continue;
+    chart?.dispose?.();
+    chartMap.delete(key);
+  }
+}
+
+function renderSemanticTrendGrid({
+  gridId,
+  noteId,
+  chartMap,
+  chartIdPrefix,
+  groups,
+  emptyText,
+  noteText,
+}) {
+  const grid = document.getElementById(gridId);
+  const note = document.getElementById(noteId);
+  if (!grid) return;
+
+  disposeMissingTrendCharts(chartMap, groups.map(group => group.key));
+  if (!groups.length) {
+    for (const chart of chartMap.values()) chart?.dispose?.();
+    chartMap.clear();
+    grid.innerHTML = `<div class="command-semantic-empty">${escapeHtml(emptyText || '等待语义采样。')}</div>`;
+    if (note) note.textContent = noteText || '语义趋势不会把 USD、Token、次数、比例混在同一轴，也不会把 unknown 当作 0。';
+    return;
+  }
+
+  for (const chart of chartMap.values()) chart?.dispose?.();
+  chartMap.clear();
+  grid.innerHTML = groups.map(group => `
+    <section class="command-semantic-trend-card" data-semantic-trend-key="${escapeHtml(group.key)}">
+      <div class="command-semantic-trend-head">
+        <div>
+          <strong>${escapeHtml(group.label || group.groupLabel || '--')}</strong>
+          <span>${escapeHtml(semanticTrendGroupSubtitle(group))}</span>
+        </div>
+        <small>${escapeHtml((group.unit || group.unitFamily || '--').toUpperCase())}</small>
+      </div>
+      <div class="command-semantic-trend-chart" id="${escapeHtml(semanticTrendChartDomId(chartIdPrefix, group.key))}" role="img" aria-label="${escapeHtml(group.label || group.groupLabel || '语义趋势图')}"></div>
+    </section>
+  `).join('');
+
   const isDark = document.documentElement.getAttribute('data-theme') !== 'light';
   const textColor = isDark ? '#8b949e' : '#656d76';
   const splitColor = isDark ? '#21262d' : '#eaeef2';
+  const palette = COMMAND_MODEL_COLORS;
+  for (const group of groups) {
+    const elementId = semanticTrendChartDomId(chartIdPrefix, group.key);
+    const element = document.getElementById(elementId);
+    if (!element) continue;
+    let trendChart = chartMap.get(group.key);
+    if (!trendChart || trendChart.isDisposed?.()) {
+      trendChart = echarts.init(element, null, { renderer: 'canvas' });
+      chartMap.set(group.key, trendChart);
+    }
+    const formatValue = semanticTrendValueFormatter(group);
+    const series = [...group.series.values()].map((item, idx) => ({
+      name: item.name,
+      type: 'line',
+      smooth: true,
+      symbol: item.data.length <= 12 ? 'circle' : 'none',
+      lineStyle: { color: palette[idx % palette.length], width: 2 },
+      itemStyle: { color: palette[idx % palette.length] },
+      emphasis: { focus: 'series' },
+      data: item.data,
+    }));
+    trendChart.setOption({
+      backgroundColor: 'transparent',
+      color: palette,
+      textStyle: { color: textColor, fontFamily: 'Cascadia Code, Consolas, monospace' },
+      grid: { left: 74, right: 24, top: 34, bottom: 28 },
+      legend: {
+        type: 'scroll',
+        top: 0,
+        left: 0,
+        right: 0,
+        textStyle: { color: textColor, fontSize: 10 },
+      },
+      tooltip: {
+        trigger: 'axis',
+        backgroundColor: isDark ? '#21262d' : '#f6f8fa',
+        borderColor: isDark ? '#30363d' : '#d0d7de',
+        textStyle: { color: isDark ? '#e6edf3' : '#1f2328', fontSize: 12 },
+        formatter: params => {
+          const t = new Date(params[0]?.value?.[0] || params[0]?.axisValue).toLocaleString('zh-CN');
+          const rows = params.map(p => `${p.marker}${escapeHtml(p.seriesName)}: <b>${formatValue(p.value?.[1] ?? p.value)}</b>`);
+          return `${rows.join('<br>')}<div style="color:${textColor};font-size:10px;margin-top:4px">${t}</div>`;
+        },
+      },
+      xAxis: {
+        type: 'time',
+        axisLine: { lineStyle: { color: isDark ? '#30363d' : '#d0d7de' } },
+        axisLabel: { color: textColor, fontSize: 10 },
+        splitLine: { show: false },
+      },
+      yAxis: {
+        type: 'value',
+        name: group.unit || group.unitFamily,
+        nameTextStyle: { color: textColor, fontSize: 10 },
+        axisLabel: { color: textColor, fontSize: 10, formatter: v => formatValue(v) },
+        splitLine: { lineStyle: { color: splitColor } },
+      },
+      series,
+    }, { notMerge: true });
+  }
+
+  if (note) note.textContent = noteText || `${groups.length} 个语义趋势组；每组独立 y 轴，避免不同数量级互相压扁。`;
+}
+
+function isCommandDimensionTrendGroup(group) {
+  const roleOk = ['used', 'available', 'capacity', 'rate'].includes(group.metricRole);
+  const unitOk = ['currency', 'quota', 'token', 'count', 'ratio'].includes(group.unitFamily);
+  const timeOk = !['health', 'evidence', 'rank'].includes(group.metricRole);
+  return roleOk && unitOk && timeOk;
+}
+
+function renderCommandDimensionTrend(history, context = {}) {
+  const groups = buildSemanticTrendGroups(history)
+    .filter(isCommandDimensionTrendGroup)
+    .slice(0, 8);
+  const units = [...new Set(groups.map(group => group.unit || group.unitFamily).filter(Boolean))].join(' / ');
+  const sources = [...new Set(groups.flatMap(group => group.sources || []))].join(' / ');
+  const remote = [
+    context.hasApiQuota ? 'NewAPI' : null,
+    context.hasSub2Api ? 'Sub2API' : null,
+  ].filter(Boolean).join(' + ') || '远端额度等待可用 key';
+  const noteText = history.length < 2
+    ? '已开始记录当前浏览器的语义快照；第二次刷新后会形成走势。分图键为角色、时间行为、单位、对象，来源作为曲线。'
+    : `${history.length} 个快照 · ${groups.length} 个首屏语义组 · ${remote} · 单位 ${units || '--'} · 来源 ${sources || '--'}；unknown 跳过，reported_zero 保留为 0。`;
+  renderSemanticTrendGrid({
+    gridId: 'command-dimension-trend-grid',
+    noteId: 'command-trend-note',
+    chartMap: commandDimensionTrendCharts,
+    chartIdPrefix: 'dimension-trend',
+    groups,
+    emptyText: '等待语义采样；刷新后会按角色、时间、单位和对象自动分图。',
+    noteText,
+  });
+}
+
+function renderCommandSemanticTrend() {
+  const history = sanitizeCommandHistory(commandHistoryStorage);
+  const groups = buildSemanticTrendGroups(history).slice(0, 12);
+  const units = [...new Set(groups.map(group => group.unit || group.unitFamily).filter(Boolean))].join(' / ');
+  renderSemanticTrendGrid({
+    gridId: 'command-semantic-trend-grid',
+    noteId: 'command-semantic-trend-note',
+    chartMap: commandSemanticTrendCharts,
+    chartIdPrefix: 'semantic-trend',
+    groups,
+    emptyText: '等待语义采样；刷新后会按角色、窗口、单位和对象自动分图。',
+    noteText: groups.length
+      ? `${history.length} 个快照 · ${groups.length} 个语义趋势组 · 单位 ${units || '--'}；每组独立 y 轴，避免不同数量级互相压扁。`
+      : '语义趋势不会把 USD、Token、次数、比例混在同一轴，也不会把 unknown 当作 0。',
+  });
+}
+
+function relaySourceLabelFromSample(sample) {
+  const source = String(sample?.source || '');
+  const path = String(sample?.path || '').toLowerCase();
+  if (source.toLowerCase().includes('newapi') || path.includes('newapi')) return 'NewAPI';
+  if (source.toLowerCase().includes('sub2api') || path.includes('sub2api')) return 'Sub2API';
+  return source || '中转来源';
+}
+
+function relaySourceRankFromLabel(label) {
+  if (label === 'NewAPI') return 0;
+  if (label === 'Sub2API') return 1;
+  return 9;
+}
+
+function isRelaySemanticSample(sample) {
+  const source = String(sample?.source || '').toLowerCase();
+  const path = String(sample?.path || '').toLowerCase();
+  return source.includes('newapi')
+    || source.includes('sub2api')
+    || path.includes('newapi')
+    || path.includes('sub2api');
+}
+
+function relayTrendMetricKey(sample) {
+  const path = String(sample?.path || '');
+  const pathMetric = relayMetricFromPath(path);
+  if (pathMetric) return pathMetric;
+  if (path.includes('model.tokens')) return 'model_tokens';
+  if (path.includes('model.cost')) return 'model_cost';
+  if (path.includes('model.quota')) return 'model_quota';
+  if (path.includes('model.requests')) return 'model_requests';
+  return sample?.label || path || 'metric';
+}
+
+function relayTrendGroupSpec(sample, view = commandRelayView) {
+  const relaySource = relaySourceLabelFromSample(sample);
+  const metricKey = relayTrendMetricKey(sample);
+  const metricLabel = relayMetricLabel(metricKey) || sample.label || semanticTrendMetricLabel(sample.path);
+  if (view === 'metric') {
+    return {
+      key: [
+        'relay-metric',
+        metricKey,
+        sample.metricRole,
+        sample.timeBehavior,
+        sample.unitFamily,
+        sample.unit,
+        sample.subjectType,
+      ].join('|'),
+      label: metricLabel,
+      seriesKey: `${relaySource}|${sample.seriesKey || sample.path || metricKey}`,
+      seriesName: relaySource,
+      relaySource,
+      relayMetric: metricKey,
+    };
+  }
+  return {
+    key: [
+      'relay-source',
+      relaySource,
+      sample.metricRole,
+      sample.timeBehavior,
+      sample.unitFamily,
+      sample.unit,
+      sample.subjectType,
+    ].join('|'),
+    label: `${relaySource} · ${semanticTrendRoleLabel(sample.metricRole)} · ${semanticTrendTimeLabel(sample.timeBehavior)}`,
+    seriesKey: `${metricKey}|${sample.seriesKey || sample.path || relaySource}`,
+    seriesName: metricLabel,
+    relaySource,
+    relayMetric: metricKey,
+  };
+}
+
+function buildRelayTrendGroups(history, view = commandRelayView) {
+  const groups = new Map();
+  for (const point of history) {
+    for (const sample of sanitizeCommandSemanticSamples(point.semanticSamples).filter(isRelaySemanticSample)) {
+      const spec = relayTrendGroupSpec(sample, view);
+      const group = groups.get(spec.key) || {
+        key: spec.key,
+        label: spec.label,
+        metricRole: sample.metricRole,
+        timeBehavior: sample.timeBehavior,
+        unit: sample.unit,
+        unitFamily: sample.unitFamily,
+        subjectType: sample.subjectType,
+        source: spec.relaySource,
+        relaySource: spec.relaySource,
+        relayMetric: spec.relayMetric,
+        sources: new Set(),
+        knownness: new Set(),
+        extensionDomains: new Set(),
+        extensionLabels: new Set(),
+        presentationHints: new Set(),
+        series: new Map(),
+        latestAt: 0,
+        latestValue: null,
+      };
+      const series = group.series.get(spec.seriesKey) || {
+        key: spec.seriesKey,
+        name: spec.seriesName,
+        path: sample.path,
+        data: [],
+      };
+      series.data.push([point.ts, sample.value]);
+      group.series.set(spec.seriesKey, series);
+      group.sources.add(spec.relaySource);
+      group.knownness.add(sample.knownness || 'known');
+      group.extensionDomains.add(sample.extensionDomain || 'agent_api_relay');
+      group.extensionLabels.add(sample.extensionLabel || 'Agent/API 中转');
+      group.presentationHints.add(sample.presentationHint || '状态数值');
+      if (point.ts >= group.latestAt) {
+        group.latestAt = point.ts;
+        group.latestValue = sample.value;
+      }
+      groups.set(spec.key, group);
+    }
+  }
+
+  return [...groups.values()]
+    .map(group => ({
+      ...group,
+      sources: [...group.sources].sort((a, b) => relaySourceRankFromLabel(a) - relaySourceRankFromLabel(b) || String(a).localeCompare(String(b))),
+      knownness: [...group.knownness].sort((a, b) => String(a).localeCompare(String(b))),
+      extensionDomains: [...group.extensionDomains].sort((a, b) => String(a).localeCompare(String(b))),
+      extensionLabels: [...group.extensionLabels].sort((a, b) => String(a).localeCompare(String(b))),
+      presentationHints: [...group.presentationHints].sort((a, b) => String(a).localeCompare(String(b))),
+    }))
+    .filter(group => [...group.series.values()].some(series => series.data.length))
+    .sort((a, b) =>
+      relaySourceRankFromLabel(a.relaySource) - relaySourceRankFromLabel(b.relaySource)
+      || relayMetricRank(a.relayMetric) - relayMetricRank(b.relayMetric)
+      || semanticTrendGroupRank(a) - semanticTrendGroupRank(b)
+      || String(a.label).localeCompare(String(b.label))
+    );
+}
+
+function renderCommandRelayTrend(history, context = {}) {
+  const groups = buildRelayTrendGroups(history, commandRelayView).slice(0, 12);
+  const viewLabel = commandRelayView === 'metric' ? '按类型看中转站' : '按中转站看类型';
+  const relaySources = [
+    (context.hasApiQuota || context.hasNewApiModels) ? 'NewAPI' : null,
+    (context.hasSub2Api || context.hasSub2ApiModels) ? 'Sub2API' : null,
+  ].filter(Boolean).join(' / ') || '等待 NewAPI / Sub2API 采样';
+  const units = [...new Set(groups.map(group => group.unit || group.unitFamily).filter(Boolean))].join(' / ');
+  const noteText = groups.length
+    ? `${viewLabel} · ${history.length} 个快照 · ${groups.length} 个中转语义组 · ${relaySources} · 单位 ${units || '--'}；余额、可用、已用、成本、Token、请求独立分组，不共轴。`
+    : `${viewLabel} · 等待 NewAPI / Sub2API 采样；采到数据后会按语义角色、时间行为、单位和对象自动分图。`;
+  renderSemanticTrendGrid({
+    gridId: 'command-relay-trend-grid',
+    noteId: 'command-relay-trend-note',
+    chartMap: commandRelayTrendCharts,
+    chartIdPrefix: commandRelayView === 'metric' ? 'relay-metric-trend' : 'relay-source-trend',
+    groups,
+    emptyText: '等待 NewAPI / Sub2API 语义采样。',
+    noteText,
+  });
+}
+
+function renderCommandTrend() {
+  const history = sanitizeCommandHistory(commandHistoryStorage);
   const hasApiQuota = history.some(p => p.apiQuotaAvailable !== null || p.apiQuotaUsed !== null);
   const hasNewApiModels = history.some(p =>
     p.newApiModelTokens !== null || p.newApiModelQuota !== null || p.newApiModelRequests !== null
@@ -2009,268 +3073,9 @@ function renderCommandTrend() {
   const hasSub2ApiModels = history.some(p =>
     p.sub2ApiModelTokens !== null || p.sub2ApiModelCost !== null || p.sub2ApiModelRequests !== null
   );
-  const hasLocalUsdCost = history.some(p => p.cost !== null);
-  const latestApiUnit = [...history].reverse().find(p => p.apiQuotaUnit)?.apiQuotaUnit || 'quota';
-  const latestSub2BalanceUnit = [...history].reverse().find(p => p.sub2ApiBalanceUnit || p.sub2ApiUnit)?.sub2ApiBalanceUnit
-    || [...history].reverse().find(p => p.sub2ApiUnit)?.sub2ApiUnit
-    || 'usd';
-  const latestSub2CostUnit = [...history].reverse().find(p => p.sub2ApiCostUnit || p.sub2ApiUnit)?.sub2ApiCostUnit
-    || [...history].reverse().find(p => p.sub2ApiUnit)?.sub2ApiUnit
-    || 'usd';
-  const latestSub2ModelCostUnit = [...history].reverse().find(p => p.sub2ApiModelCostUnit || p.sub2ApiCostUnit || p.sub2ApiUnit)?.sub2ApiModelCostUnit
-    || latestSub2CostUnit;
-  const formatApiQuota = value => {
-    if (latestApiUnit === 'usd') return fmtUsd(value);
-    if (latestApiUnit === 'cny') return fmtCny(value);
-    if (latestApiUnit === 'token') return fmtTokens(value);
-    return fmtQuota(value);
-  };
-  const formatSub2BalanceValue = value => formatUnitAmount(value, latestSub2BalanceUnit);
-  const formatSub2CostValue = value => formatUnitAmount(value, latestSub2CostUnit);
-  const formatSub2ModelCostValue = value => formatUnitAmount(value, latestSub2ModelCostUnit);
-  const hasNumber = value => value !== null && value !== undefined && Number.isFinite(Number(value));
-  const formatApiQuotaValue = value => hasNumber(value) ? formatApiQuota(value) : '--';
-  const formatSub2BalanceTrendValue = value => hasNumber(value) ? formatSub2BalanceValue(value) : '--';
-  const formatSub2CostTrendValue = value => hasNumber(value) ? formatSub2CostValue(value) : '--';
-  const formatSub2ModelCostTrendValue = value => hasNumber(value) ? formatSub2ModelCostValue(value) : '--';
-  const setText = (node, text) => {
-    if (node) node.textContent = text;
-  };
-
-  if (note) {
-    if (history.length < 2) {
-      note.textContent = '已开始记录当前浏览器的聚合快照；第二次刷新后会形成走势。成本、Token 与中转额度分开计量。';
-    } else {
-      const first = new Date(history[0].ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
-      const last = new Date(history.at(-1).ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
-      const remote = [
-        hasApiQuota ? 'NewAPI' : null,
-        hasSub2Api ? 'Sub2API' : null,
-      ].filter(Boolean).join(' + ') || '远端额度等待可用 key';
-      note.textContent = `${history.length} 个采样点 · ${first} - ${last} · ${remote} · USD 成本、工作区 Token、中转额度分别成图。`;
-    }
-  }
-
-  const setSmallTrendChart = (chart, series, formatter, axisName, emptyText = '等待采样') => {
-    if (!chart) return;
-    const formatValue = value => (
-      !hasNumber(value) ? '--' : formatter(value)
-    );
-    const visibleSeries = series.filter(s =>
-      Array.isArray(s.data) && s.data.some(point => hasNumber(point?.[1]))
-    );
-    chart.setOption({
-      backgroundColor: 'transparent',
-      textStyle: { color: textColor, fontFamily: 'Cascadia Code, Consolas, monospace' },
-      grid: { left: 46, right: 12, top: 18, bottom: 24 },
-      graphic: visibleSeries.length ? [] : [{
-        type: 'text',
-        left: 'center',
-        top: 'middle',
-        style: {
-          text: emptyText,
-          fill: textColor,
-          fontSize: 11,
-          fontFamily: 'Cascadia Code, Consolas, monospace',
-        },
-      }],
-      tooltip: {
-        trigger: 'axis',
-        backgroundColor: isDark ? '#21262d' : '#f6f8fa',
-        borderColor: isDark ? '#30363d' : '#d0d7de',
-        textStyle: { color: isDark ? '#e6edf3' : '#1f2328', fontSize: 12 },
-        formatter: params => {
-          const t = new Date(params[0].value[0]).toLocaleString('zh-CN');
-          const rows = params.map(p => {
-            const source = visibleSeries.find(s => s.name === p.seriesName);
-            const seriesFormatter = source?.formatValue || formatValue;
-            return `${p.marker}${p.seriesName}: <b>${seriesFormatter(p.value[1])}</b>`;
-          });
-          return `${rows.join('<br>')}<div style="color:${textColor};font-size:10px;margin-top:4px">${t}</div>`;
-        },
-      },
-      legend: { top: 0, right: 0, textStyle: { color: textColor, fontSize: 10 } },
-      xAxis: {
-        type: 'time',
-        axisLine: { lineStyle: { color: isDark ? '#30363d' : '#d0d7de' } },
-        axisLabel: { color: textColor, fontSize: 9 },
-        splitLine: { show: false },
-      },
-      yAxis: {
-        type: 'value',
-        name: axisName,
-        nameTextStyle: { color: textColor, fontSize: 9 },
-        axisLine: { show: false },
-        axisLabel: { color: textColor, fontSize: 9, formatter: formatValue },
-        splitLine: { lineStyle: { color: splitColor } },
-      },
-      series: visibleSeries,
-    }, { notMerge: true });
-  };
-  const line = (name, color, data, formatValue) => ({
-    name,
-    type: 'line',
-    smooth: true,
-    symbol: history.length < 8 ? 'circle' : 'none',
-    lineStyle: { color, width: 2 },
-    itemStyle: { color },
-    data,
-    formatValue,
-  });
-
-  setSmallTrendChart(
-    commandCostTrendChart,
-    [
-      ...(hasLocalUsdCost ? [line('本地 Agent 成本', '#14b8a6', history.map(p => [p.ts, p.cost]), fmtUsd)] : []),
-    ],
-    fmtUsd,
-    'USD',
-    '等待成本采样'
-  );
-  setSmallTrendChart(
-    commandTokenTrendChart,
-    [
-      line('工作区 Token', '#388bfd', history.map(p => [p.ts, p.tokens]), fmtTokens),
-      ...(history.some(p => p.newApiModelTokens !== null) ? [line('NewAPI 模型 Token', '#a371f7', history.map(p => [p.ts, p.newApiModelTokens]), fmtTokens)] : []),
-      ...(history.some(p => p.sub2ApiTodayTokens !== null) ? [line('Sub2API 今日 Token', '#d29922', history.map(p => [p.ts, p.sub2ApiTodayTokens]), fmtTokens)] : []),
-      ...(history.some(p => p.sub2ApiModelTokens !== null) ? [line('Sub2API 模型 Token', '#db61a2', history.map(p => [p.ts, p.sub2ApiModelTokens]), fmtTokens)] : []),
-    ],
-    fmtTokens,
-    'Token',
-    '等待 Token 采样'
-  );
-
-  if (commandRelayView === 'metric') {
-    const latestRelay = [...history].reverse().find(p =>
-      p.apiQuotaAvailable !== null || p.apiQuotaUsed !== null || p.apiQuotaTotal !== null
-      || p.sub2ApiBalance !== null || p.sub2ApiTodayCost !== null || p.sub2ApiTotalCost !== null
-      || p.newApiModelQuota !== null || p.sub2ApiTodayTokens !== null || p.sub2ApiModelTokens !== null
-    );
-    setText(relayTitleA, '额度使用');
-    setText(relayUnitA, `NewAPI ${latestApiUnit.toUpperCase()}`);
-    setText(relayTitleB, '钱包余额');
-    setText(relayUnitB, `Sub2API ${latestSub2BalanceUnit.toUpperCase()}`);
-    setText(relayTitleC, '成本支出');
-    setText(relayUnitC, `Sub2API ${latestSub2CostUnit.toUpperCase()}`);
-    setText(newApiNote, latestRelay
-      ? `额度类型横向对比 · NewAPI 已用 ${formatApiQuotaValue(latestRelay.apiQuotaUsed)} · 可用 ${formatApiQuotaValue(latestRelay.apiQuotaAvailable)} · 总额 ${formatApiQuotaValue(latestRelay.apiQuotaTotal)} · 模型额度 ${formatApiQuotaValue(latestRelay.newApiModelQuota)}。`
-      : '等待 NewAPI 额度采样。');
-    setText(sub2ApiNote, latestRelay
-      ? `余额类型横向对比 · Sub2API 钱包余额 ${formatSub2BalanceTrendValue(latestRelay.sub2ApiBalance)}。`
-      : '等待 Sub2API 钱包余额采样。');
-    setText(sub2ApiCostNote, latestRelay
-      ? `成本类型横向对比 · 今日成本 ${formatSub2CostTrendValue(latestRelay.sub2ApiTodayCost)} · 累计成本 ${formatSub2CostTrendValue(latestRelay.sub2ApiTotalCost)} · 模型成本 ${formatSub2ModelCostTrendValue(latestRelay.sub2ApiModelCost)}。`
-      : '等待 Sub2API 成本采样。');
-    setSmallTrendChart(
-      commandNewApiTrendChart,
-      [
-        ...(history.some(p => p.apiQuotaUsed !== null) ? [line('NewAPI 已用', '#f0883e', history.map(p => [p.ts, p.apiQuotaUsed]), formatApiQuota)] : []),
-        ...(history.some(p => p.apiQuotaAvailable !== null) ? [line('NewAPI 可用', '#a371f7', history.map(p => [p.ts, p.apiQuotaAvailable]), formatApiQuota)] : []),
-        ...(history.some(p => p.apiQuotaTotal !== null) ? [line('NewAPI 总额', '#388bfd', history.map(p => [p.ts, p.apiQuotaTotal]), formatApiQuota)] : []),
-        ...(history.some(p => p.newApiModelQuota !== null) ? [line('NewAPI 模型额度', '#db61a2', history.map(p => [p.ts, p.newApiModelQuota]), formatApiQuota)] : []),
-      ],
-      formatApiQuota,
-      latestApiUnit.toUpperCase(),
-      '等待 NewAPI 额度采样'
-    );
-    setSmallTrendChart(
-      commandSub2ApiTrendChart,
-      [
-        ...(history.some(p => p.sub2ApiBalance !== null) ? [line('Sub2API 钱包余额', '#2da44e', history.map(p => [p.ts, p.sub2ApiBalance]), formatSub2BalanceValue)] : []),
-      ],
-      formatSub2BalanceValue,
-      latestSub2BalanceUnit.toUpperCase(),
-      '等待 Sub2API 钱包余额采样'
-    );
-    setSmallTrendChart(
-      commandSub2ApiCostTrendChart,
-      [
-        ...(history.some(p => p.sub2ApiTodayCost !== null) ? [line('Sub2API 今日成本', '#d29922', history.map(p => [p.ts, p.sub2ApiTodayCost]), formatSub2CostValue)] : []),
-        ...(history.some(p => p.sub2ApiTotalCost !== null) ? [line('Sub2API 累计成本', '#db61a2', history.map(p => [p.ts, p.sub2ApiTotalCost]), formatSub2CostValue)] : []),
-        ...(history.some(p => p.sub2ApiModelCost !== null) ? [line('Sub2API 模型成本', '#f0883e', history.map(p => [p.ts, p.sub2ApiModelCost]), formatSub2ModelCostValue)] : []),
-      ],
-      formatSub2CostValue,
-      latestSub2CostUnit.toUpperCase(),
-      '等待 Sub2API 成本采样'
-    );
-  } else {
-    setText(relayTitleA, 'NewAPI');
-    setText(relayUnitA, latestApiUnit.toUpperCase());
-    setText(relayTitleB, 'Sub2API 钱包余额');
-    setText(relayUnitB, latestSub2BalanceUnit.toUpperCase());
-    setText(relayTitleC, 'Sub2API 成本支出');
-    setText(relayUnitC, latestSub2CostUnit.toUpperCase());
-    if (newApiNote) {
-      if (!hasApiQuota && !hasNewApiModels) {
-        newApiNote.textContent = '暂无 NewAPI 采样；可用后会展示可用/已用额度。';
-      } else {
-        const latest = [...history].reverse().find(p =>
-          p.apiQuotaAvailable !== null || p.apiQuotaUsed !== null || p.newApiModelTokens !== null || p.newApiModelQuota !== null
-        );
-        const available = formatApiQuotaValue(latest?.apiQuotaAvailable);
-        const used = formatApiQuotaValue(latest?.apiQuotaUsed);
-        const modelQuota = formatApiQuotaValue(latest?.newApiModelQuota);
-        const modelTokens = hasNumber(latest?.newApiModelTokens) ? fmtTokens(latest.newApiModelTokens) : '--';
-        newApiNote.textContent = `单位 ${latestApiUnit.toUpperCase()} · 可用 ${available} · 已用 ${used} · 模型额度 ${modelQuota} · 模型 ${modelTokens} Token。`;
-      }
-    }
-    if (sub2ApiNote) {
-      if (!hasSub2Api && !hasSub2ApiModels) {
-        sub2ApiNote.textContent = '暂无 Sub2API 采样；钱包数据可用后会展示余额。';
-      } else {
-        const latest = [...history].reverse().find(p =>
-          p.sub2ApiBalance !== null || p.sub2ApiTodayTokens !== null || p.sub2ApiModelTokens !== null
-        );
-        const balance = formatSub2BalanceTrendValue(latest?.sub2ApiBalance);
-        const todayTokens = hasNumber(latest?.sub2ApiTodayTokens) ? fmtTokens(latest.sub2ApiTodayTokens) : '--';
-        sub2ApiNote.textContent = `余额单位 ${latestSub2BalanceUnit.toUpperCase()} · 钱包余额 ${balance} · 今日 ${todayTokens} Token。`;
-      }
-    }
-    if (sub2ApiCostNote) {
-      if (!hasSub2Api && !hasSub2ApiModels) {
-        sub2ApiCostNote.textContent = '暂无 Sub2API 成本采样。';
-      } else {
-        const latest = [...history].reverse().find(p =>
-          p.sub2ApiTodayCost !== null || p.sub2ApiTotalCost !== null || p.sub2ApiModelCost !== null
-        );
-        const todayCost = formatSub2CostTrendValue(latest?.sub2ApiTodayCost);
-        const totalCost = formatSub2CostTrendValue(latest?.sub2ApiTotalCost);
-        const modelCost = formatSub2ModelCostTrendValue(latest?.sub2ApiModelCost);
-        sub2ApiCostNote.textContent = `成本单位 ${latestSub2CostUnit.toUpperCase()} · 今日成本 ${todayCost} · 累计成本 ${totalCost} · 模型成本 ${modelCost}。`;
-      }
-    }
-    setSmallTrendChart(
-      commandNewApiTrendChart,
-      [
-        ...(history.some(p => p.apiQuotaAvailable !== null) ? [line('可用', '#a371f7', history.map(p => [p.ts, p.apiQuotaAvailable]), formatApiQuota)] : []),
-        ...(history.some(p => p.apiQuotaUsed !== null) ? [line('已用', '#f0883e', history.map(p => [p.ts, p.apiQuotaUsed]), formatApiQuota)] : []),
-        ...(history.some(p => p.newApiModelQuota !== null) ? [line('模型额度', '#db61a2', history.map(p => [p.ts, p.newApiModelQuota]), formatApiQuota)] : []),
-      ],
-      formatApiQuota,
-      latestApiUnit.toUpperCase(),
-      '等待 NewAPI 额度'
-    );
-    setSmallTrendChart(
-      commandSub2ApiTrendChart,
-      [
-        ...(history.some(p => p.sub2ApiBalance !== null) ? [line('余额', '#2da44e', history.map(p => [p.ts, p.sub2ApiBalance]), formatSub2BalanceValue)] : []),
-      ],
-      formatSub2BalanceValue,
-      latestSub2BalanceUnit.toUpperCase(),
-      '等待 Sub2API 钱包'
-    );
-    setSmallTrendChart(
-      commandSub2ApiCostTrendChart,
-      [
-        ...(history.some(p => p.sub2ApiTodayCost !== null) ? [line('今日成本', '#d29922', history.map(p => [p.ts, p.sub2ApiTodayCost]), formatSub2CostValue)] : []),
-        ...(history.some(p => p.sub2ApiTotalCost !== null) ? [line('累计成本', '#db61a2', history.map(p => [p.ts, p.sub2ApiTotalCost]), formatSub2CostValue)] : []),
-        ...(history.some(p => p.sub2ApiModelCost !== null) ? [line('模型成本', '#f0883e', history.map(p => [p.ts, p.sub2ApiModelCost]), formatSub2ModelCostValue)] : []),
-      ],
-      formatSub2CostValue,
-      latestSub2CostUnit.toUpperCase(),
-      '等待 Sub2API 成本'
-    );
-  }
+  renderCommandDimensionTrend(history, { hasApiQuota, hasSub2Api });
+  renderCommandRelayTrend(history, { hasApiQuota, hasNewApiModels, hasSub2Api, hasSub2ApiModels });
+  renderCommandSemanticTrend();
 }
 
 function renderCommandModelChart(modelRows) {
@@ -2518,7 +3323,7 @@ function renderCommandModelDailyTrend(trend) {
         gridIndex: 0,
         name: 'Token',
         nameTextStyle: { color: textColor, fontSize: 10 },
-        axisLabel: { color: textColor, fontSize: 10, formatter: v => fmtQuota(v) },
+        axisLabel: { color: textColor, fontSize: 10, formatter: v => fmtTokens(v) },
         splitLine: { lineStyle: { color: splitColor } },
       },
       {

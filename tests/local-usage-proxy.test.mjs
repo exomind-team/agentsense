@@ -2,13 +2,41 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  buildSemanticProjection,
+  buildSourceRegistry,
+  datasetSemantics,
   mergeWorkspaceProjects,
+  signalSemantics,
   summarizeClaudeProjects,
   summarizeNewApiModelStats,
   summarizeSub2ApiModelStats,
   summarizeSub2ApiUsage,
   sub2ApiSignals,
 } from '../local-usage-proxy.mjs';
+
+const SAMPLE_SUB2API_BALANCE = 123.45;
+const SAMPLE_SUB2API_TOTAL_COST = 67.89;
+
+const RELAY_ENV_NAMES = [
+  'AGENTSENSE_NEWAPI_BASE_URL',
+  'AGENTSENSE_NEWAPI_TOKEN',
+  'AGENTSENSE_SUB2API_BASE_URL',
+  'AGENTSENSE_SUB2API_API_KEY',
+  'AGENTSENSE_SUB2API_KEY',
+];
+
+function withRelayEnvUnset(fn) {
+  const saved = Object.fromEntries(RELAY_ENV_NAMES.map(name => [name, process.env[name]]));
+  for (const name of RELAY_ENV_NAMES) delete process.env[name];
+  try {
+    return fn();
+  } finally {
+    for (const name of RELAY_ENV_NAMES) {
+      if (saved[name] === undefined) delete process.env[name];
+      else process.env[name] = saved[name];
+    }
+  }
+}
 
 describe('workspace usage aggregation', () => {
   it('orders workspaces from input usage instead of workspace names', () => {
@@ -182,10 +210,10 @@ describe('relay source metric semantics', () => {
     const summary = summarizeSub2ApiUsage({
       data: {
         unit: 'usd',
-        wallet_balance: 1049.93,
+        wallet_balance: SAMPLE_SUB2API_BALANCE,
         usage: {
           today: { requests: 358, total_tokens: 4_242_000, cost: 12.34 },
-          total: { requests: 59_519, total_tokens: 11_904_000_000, cost: 4770.82 },
+          total: { requests: 59_519, total_tokens: 11_904_000_000, cost: SAMPLE_SUB2API_TOTAL_COST },
         },
         model_stats: [
           { model: 'model-beta', requests: 8, total_tokens: 1234, cost: 0.98 },
@@ -193,9 +221,9 @@ describe('relay source metric semantics', () => {
       },
     });
 
-    assert.equal(summary.available_balance, 1049.93);
+    assert.equal(summary.available_balance, SAMPLE_SUB2API_BALANCE);
     assert.equal(summary.today.cost, 12.34);
-    assert.equal(summary.total.cost, 4770.82);
+    assert.equal(summary.total.cost, SAMPLE_SUB2API_TOTAL_COST);
     assert.equal(summary.model_stats[0].cost_unit, 'usd');
 
     const signals = sub2ApiSignals(summary, '2026-06-08T12:00:00.000Z');
@@ -203,7 +231,7 @@ describe('relay source metric semantics', () => {
     const todayCost = signals.find(signal => signal.id === 'signal-sub2api-cost-today');
 
     assert.equal(balance.kind, 'balance');
-    assert.equal(balance.value, 1049.93);
+    assert.equal(balance.value, SAMPLE_SUB2API_BALANCE);
     assert.equal(todayCost.kind, 'usage');
     assert.equal(todayCost.value, 12.34);
   });
@@ -233,5 +261,183 @@ describe('relay source metric semantics', () => {
     assert.equal(rows[1].cost, null);
     assert.equal(rows[1].cost_known, false);
     assert.equal(rows[1].cost_unit, 'cny');
+  });
+});
+
+describe('semantic projection contract', () => {
+  it('classifies Sub2API balance as available key-level reserve', () => {
+    const semantics = signalSemantics({
+      path: 'api.sub2api.balance.available',
+      kind: 'balance',
+      value: SAMPLE_SUB2API_BALANCE,
+      unit: 'usd',
+      confidence: 'reported',
+    });
+
+    assert.equal(semantics.metric_role, 'available');
+    assert.equal(semantics.subject_type, 'api_key');
+    assert.equal(semantics.unit_family, 'currency');
+    assert.equal(semantics.knownness, 'known');
+  });
+
+  it('classifies Sub2API today cost as windowed used spending', () => {
+    const semantics = signalSemantics({
+      path: 'api.sub2api.cost.today',
+      kind: 'usage',
+      value: 12.34,
+      unit: 'usd',
+      confidence: 'reported',
+    });
+
+    assert.equal(semantics.metric_role, 'used');
+    assert.equal(semantics.time_behavior, 'window');
+    assert.equal(semantics.subject_type, 'api_key');
+  });
+
+  it('keeps reported zero cost distinct from unknown values', () => {
+    const semantics = signalSemantics({
+      path: 'api.sub2api.cost.today',
+      kind: 'usage',
+      value: 0,
+      unit: 'usd',
+      confidence: 'reported',
+    });
+
+    assert.equal(semantics.knownness, 'reported_zero');
+  });
+
+  it('classifies NewAPI available quota as account reserve', () => {
+    const semantics = signalSemantics({
+      path: 'api.newapi.quota.available',
+      kind: 'quota',
+      value: 42,
+      unit: 'credit',
+      confidence: 'reported',
+    });
+
+    assert.equal(semantics.metric_role, 'available');
+    assert.equal(semantics.subject_type, 'account');
+    assert.equal(semantics.unit_family, 'quota');
+  });
+
+  it('keeps dataset widget hints aligned with row subjects', () => {
+    assert.equal(datasetSemantics('top_projects').rows_subject_type, 'workspace');
+    assert.equal(datasetSemantics('top_projects').widget_hint, 'rank-table');
+    assert.equal(datasetSemantics('top_models').rows_subject_type, 'model');
+    assert.equal(datasetSemantics('top_models').widget_hint, 'rank-table');
+  });
+
+  it('builds layers, grouped contracts, widgets, and evidence notes', () => {
+    const projection = buildSemanticProjection({
+      sources: [
+        { id: 'sub2api-main', kind: 'sub2api', label: 'Sub2API', state: 'ok' },
+        { id: 'windows-power', kind: 'system_api', label: 'Windows 电源', state: 'planned' },
+      ],
+      signals: [
+        {
+          id: 'signal-sub2api-balance-available',
+          path: 'api.sub2api.balance.available',
+          kind: 'balance',
+          value: SAMPLE_SUB2API_BALANCE,
+          unit: 'usd',
+          confidence: 'reported',
+        },
+        {
+          id: 'signal-sub2api-cost-today',
+          path: 'api.sub2api.cost.today',
+          kind: 'usage',
+          value: 0,
+          unit: 'usd',
+          confidence: 'reported',
+        },
+        {
+          id: 'signal-codex-cost',
+          path: 'agent.codex.cost.aggregate',
+          kind: 'usage',
+          value: null,
+          unit: 'usd',
+          confidence: 'observed',
+        },
+      ],
+      datasets: {
+        top_projects: [
+          {
+            workspace: 'workspace-sample',
+            cost_usd: null,
+            cost_known: false,
+            tokens: 123,
+            sources: ['Codex'],
+          },
+        ],
+        newapi_model_stats: [{ model: 'gpt-test', quota_used: 1 }],
+      },
+    });
+
+    assert.deepEqual(projection.layers.map(layer => layer.name), [
+      '信息获取层',
+      '数据表征层',
+      '综合聚合层',
+      '面板呈现层',
+    ]);
+    assert.ok(projection.metric_groups.length >= 2);
+    assert.ok(projection.dataset_groups.some(group => group.dataset_id === 'top_projects'));
+    assert.ok(projection.widget_registry.some(widget => widget.id === 'evidence-table'));
+    assert.ok(projection.evidence_notes.some(note => note.id === 'dataset-top-projects-unknown-cost'));
+    assert.ok(projection.evidence_notes.some(note => note.id === 'dataset-newapi-quota-not-cost'));
+    assert.ok(projection.evidence_notes.some(note => note.id.includes('reported-zero')));
+    assert.equal(projection.data_representation.source_contract.count, 2);
+    assert.ok(projection.data_representation.signal_contract.roles.some(role => role.id === 'available'));
+    assert.ok(projection.data_representation.signal_contract.knownness.some(item => item.id === 'reported_zero'));
+    assert.ok(projection.presentation_blueprint.lanes.some(lane => lane.id === 'reserve-risk' && lane.widget === 'reserve-card'));
+    assert.ok(projection.presentation_blueprint.lanes.some(lane => lane.id === 'window-consumption' && lane.widget === 'window-trend'));
+    assert.ok(projection.presentation_blueprint.layout_policy.some(policy => policy.includes('来源作为过滤器')));
+  });
+
+  it('keeps legacy provider capabilities visible even when they are not mapped into the command dashboard', () => {
+    const registry = withRelayEnvUnset(() => buildSourceRegistry({
+      sources: [
+        { id: 'newapi-main', kind: 'newapi', label: 'NewAPI', state: 'missing', enabled: false },
+        { id: 'sub2api-main', kind: 'sub2api', label: 'Sub2API', state: 'missing', enabled: false },
+      ],
+      home: 'Z:/agent-sense-test-home',
+    }));
+
+    const minimax = registry.find(entry => entry.id === 'minimax-cn-legacy');
+    assert.ok(minimax);
+    assert.equal(minimax.code_capability, 'present');
+    assert.equal(minimax.command_demo_adapter, 'not_connected');
+    assert.equal(minimax.visibility_state, 'not_in_command_demo');
+
+    const newapi = registry.find(entry => entry.id === 'newapi-main');
+    const sub2api = registry.find(entry => entry.id === 'sub2api-main');
+    assert.equal(newapi.configuration_state, 'not_configured');
+    assert.equal(sub2api.configuration_state, 'not_configured');
+    assert.ok(newapi.missing_items.includes('AGENTSENSE_NEWAPI_TOKEN'));
+    assert.ok(sub2api.missing_items.includes('AGENTSENSE_SUB2API_API_KEY'));
+
+    const missingText = registry.flatMap(entry => entry.missing_items || []).join(' ');
+    assert.doesNotMatch(missingText, /sk-[a-z0-9]/i);
+    assert.doesNotMatch(missingText, /Bearer\s+/i);
+  });
+
+  it('projects source registry as a capability matrix with adapter evidence', () => {
+    const sourceRegistry = withRelayEnvUnset(() => buildSourceRegistry({
+      sources: [
+        { id: 'newapi-main', kind: 'newapi', label: 'NewAPI', state: 'missing', enabled: false },
+        { id: 'sub2api-main', kind: 'sub2api', label: 'Sub2API', state: 'missing', enabled: false },
+      ],
+      home: 'Z:/agent-sense-test-home',
+    }));
+    const projection = buildSemanticProjection({
+      datasets: {
+        source_registry: sourceRegistry,
+      },
+      sourceRegistry,
+    });
+
+    assert.ok(projection.dataset_groups.some(group => group.dataset_id === 'source_registry'));
+    assert.ok(projection.widget_registry.some(widget => widget.id === 'capability-matrix'));
+    assert.ok(projection.summary.source_registry_count > 0);
+    assert.ok(projection.evidence_notes.some(note => note.id.startsWith('registry-') && note.id.endsWith('-not-connected')));
   });
 });

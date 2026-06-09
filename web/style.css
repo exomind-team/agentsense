@@ -569,42 +569,87 @@
       width: 100%;
       height: 150px;
     }
-    .command-relay-grid {
-      display: grid;
-      grid-template-columns: 1fr;
-      gap: 10px;
-    }
-    .command-relay-card {
-      min-width: 0;
-      padding: 10px;
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      background: var(--bg2);
-    }
-    .command-relay-heading {
-      display: flex;
-      justify-content: space-between;
-      align-items: baseline;
-      gap: 10px;
-      margin-bottom: 4px;
-    }
-    .command-relay-heading div {
-      color: var(--text);
-      font-size: 12px;
-      font-weight: 700;
-    }
-    .command-relay-heading span {
-      color: var(--muted);
-      font-size: 11px;
-      white-space: nowrap;
-    }
-    .command-relay-chart {
-      width: 100%;
-      height: 280px;
-    }
     .command-wide-chart {
       width: 100%;
       height: 360px;
+    }
+    .command-semantic-trend-panel {
+      min-height: 330px;
+    }
+    .command-semantic-trend-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 10px;
+      padding: 0 12px;
+      min-width: 0;
+    }
+    .command-dimension-trend-grid {
+      padding: 0;
+    }
+    .command-relay-trend-grid {
+      padding: 0;
+    }
+    .command-semantic-trend-card {
+      min-width: 0;
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      background: var(--bg2);
+      padding: 10px;
+      overflow: hidden;
+    }
+    .command-semantic-trend-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 8px;
+    }
+    .command-semantic-trend-head > div {
+      min-width: 0;
+    }
+    .command-semantic-trend-head strong {
+      display: block;
+      color: var(--text);
+      font-size: 12px;
+      line-height: 1.35;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .command-semantic-trend-head span {
+      display: block;
+      margin-top: 2px;
+      color: var(--muted);
+      font-size: 10px;
+      line-height: 1.35;
+      overflow-wrap: anywhere;
+    }
+    .command-semantic-trend-head small {
+      flex-shrink: 0;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: var(--bg3);
+      color: var(--accent);
+      font-size: 10px;
+      line-height: 1.4;
+      padding: 2px 7px;
+      max-width: 120px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .command-semantic-trend-chart {
+      width: 100%;
+      height: 260px;
+      min-height: 240px;
+    }
+    .command-dimension-trend-grid .command-semantic-trend-chart {
+      height: 245px;
+      min-height: 220px;
+    }
+    .command-relay-trend-grid .command-semantic-trend-chart {
+      height: 280px;
+      min-height: 260px;
     }
     .command-chart-note {
       color: var(--muted);
@@ -652,6 +697,324 @@
     .source-state.disabled, .source-state.planned { color: var(--muted); }
     .source-state.stale, .source-state.auth-failed, .source-state.unavailable { color: var(--yellow); }
     .source-state.error { color: var(--red); }
+
+    .command-semantic-panel {
+      min-width: 0;
+    }
+    .command-semantic-summary {
+      display: grid;
+      grid-template-columns: repeat(7, minmax(0, 1fr));
+      gap: 8px;
+      padding: 10px 12px 0;
+    }
+    .command-semantic-stat {
+      min-width: 0;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--bg3);
+      padding: 8px;
+    }
+    .command-semantic-stat span {
+      display: block;
+      color: var(--muted);
+      font-size: 10px;
+      margin-bottom: 4px;
+    }
+    .command-semantic-stat strong {
+      display: block;
+      color: var(--text);
+      font-size: 17px;
+      font-variant-numeric: tabular-nums;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .command-blueprint-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
+      gap: 10px;
+      padding: 10px 12px 0;
+    }
+    .command-semantic-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.35fr);
+      gap: 10px;
+      padding: 10px 12px 12px;
+    }
+    .command-semantic-section {
+      min-width: 0;
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      background: var(--bg);
+      overflow: hidden;
+    }
+    .command-semantic-section h3 {
+      margin: 0;
+      padding: 8px 10px;
+      border-bottom: 1px solid var(--border);
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .command-semantic-table-wrap {
+      width: 100%;
+      min-width: 0;
+      overflow-x: auto;
+    }
+    .command-semantic-table-wrap table {
+      min-width: 520px;
+    }
+    .command-semantic-name {
+      max-width: 220px;
+      color: var(--text);
+      font-weight: 600;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .command-semantic-sub {
+      color: var(--muted);
+      font-size: 10px;
+      line-height: 1.35;
+      margin-top: 3px;
+    }
+    .command-blueprint-list,
+    .command-presentation-lanes {
+      display: grid;
+      gap: 8px;
+      padding: 10px;
+    }
+    .command-blueprint-principle {
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--bg2);
+      color: var(--text);
+      font-size: 11px;
+      line-height: 1.5;
+      padding: 8px 10px;
+    }
+    .command-blueprint-card,
+    .command-lane-card {
+      min-width: 0;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--bg2);
+      padding: 9px;
+    }
+    .command-blueprint-card-title,
+    .command-lane-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: flex-start;
+      margin-bottom: 8px;
+    }
+    .command-blueprint-card-title strong,
+    .command-lane-head strong {
+      display: block;
+      color: var(--text);
+      font-size: 12px;
+      line-height: 1.35;
+    }
+    .command-blueprint-card-title span,
+    .command-lane-head span {
+      color: var(--muted);
+      font-size: 10px;
+      line-height: 1.35;
+    }
+    .command-blueprint-card-title > span {
+      color: var(--accent);
+      font-size: 16px;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+    }
+    .command-blueprint-row {
+      display: grid;
+      grid-template-columns: 42px minmax(0, 1fr);
+      gap: 8px;
+      align-items: start;
+      padding-top: 6px;
+      border-top: 1px solid rgba(255,255,255,0.05);
+    }
+    .command-blueprint-row + .command-blueprint-row {
+      margin-top: 6px;
+    }
+    .command-blueprint-row > span {
+      color: var(--muted);
+      font-size: 10px;
+      line-height: 1.6;
+    }
+    .command-semantic-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      max-width: 100%;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: var(--bg3);
+      color: var(--muted);
+      font-size: 10px;
+      line-height: 1.35;
+      padding: 2px 7px;
+      margin: 1px 3px 2px 0;
+      vertical-align: middle;
+    }
+    .command-semantic-chip strong {
+      color: var(--text);
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+    }
+    .command-blueprint-rules,
+    .command-lane-card ul {
+      margin: 0;
+      padding-left: 16px;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.5;
+    }
+    .command-blueprint-rules li + li,
+    .command-lane-card li + li {
+      margin-top: 3px;
+    }
+    .command-lane-head > div {
+      min-width: 0;
+    }
+    .command-lane-head > div span {
+      display: block;
+      margin-top: 3px;
+    }
+    .command-lane-metrics {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 6px;
+      margin: 8px 0;
+    }
+    .command-lane-metrics span {
+      min-width: 0;
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      background: var(--bg3);
+      color: var(--muted);
+      font-size: 10px;
+      padding: 5px 6px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .command-lane-metrics strong {
+      color: var(--text);
+      font-variant-numeric: tabular-nums;
+    }
+    .command-semantic-pill {
+      display: inline-flex;
+      align-items: center;
+      max-width: 100%;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: var(--bg3);
+      color: var(--muted);
+      font-size: 10px;
+      line-height: 1.4;
+      padding: 1px 6px;
+      margin: 1px 3px 1px 0;
+      vertical-align: middle;
+      white-space: nowrap;
+    }
+    .command-semantic-pill.unit {
+      color: var(--accent);
+    }
+    .command-semantic-pill.widget {
+      color: var(--green);
+    }
+    .command-semantic-pill.knownness-unknown,
+    .command-semantic-pill.knownness-planned {
+      color: var(--yellow);
+    }
+    .command-semantic-pill.knownness-reported_zero,
+    .command-semantic-pill.knownness-derived {
+      color: var(--accent);
+    }
+    .command-widget-registry {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+      padding: 10px;
+    }
+    .command-widget-card {
+      min-width: 0;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--bg2);
+      padding: 9px;
+    }
+    .command-widget-card div {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 6px;
+    }
+    .command-widget-card strong {
+      color: var(--text);
+      font-size: 12px;
+    }
+    .command-widget-card span {
+      color: var(--muted);
+      font-size: 10px;
+      white-space: nowrap;
+    }
+    .command-widget-card p {
+      margin: 0 0 6px;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.45;
+    }
+    .command-widget-card small {
+      color: var(--accent);
+      font-size: 10px;
+      line-height: 1.35;
+    }
+    .command-evidence-section {
+      margin: 0 12px 12px;
+    }
+    .command-evidence-notes {
+      display: grid;
+      gap: 8px;
+      padding: 10px;
+    }
+    .command-evidence-note {
+      display: grid;
+      grid-template-columns: 66px minmax(0, 1fr);
+      gap: 10px;
+      align-items: start;
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--accent);
+      border-radius: 6px;
+      background: var(--bg2);
+      padding: 8px 10px;
+    }
+    .command-evidence-note.warning {
+      border-left-color: var(--yellow);
+    }
+    .command-evidence-note.risk,
+    .command-evidence-note.error {
+      border-left-color: var(--red);
+    }
+    .command-evidence-note strong {
+      color: var(--muted);
+      font-size: 10px;
+      text-transform: uppercase;
+    }
+    .command-evidence-note span {
+      color: var(--text);
+      font-size: 11px;
+      line-height: 1.45;
+    }
+    .command-semantic-empty {
+      color: var(--muted);
+      font-size: 11px;
+      padding: 12px;
+      text-align: center;
+    }
 
     /* ── Filter tabs (MiniMax) ── */
     .filter-bar {
@@ -1169,7 +1532,7 @@
       .filter-tab { padding: 2px 6px; font-size: 11px; }
       .command-hero { flex-direction: column; }
       .command-verdict { width: 100%; margin-left: 0; text-align: center; }
-      .command-metrics, .command-layout, .command-trend-grid, .command-relay-grid { grid-template-columns: 1fr; }
+      .command-metrics, .command-layout, .command-trend-grid { grid-template-columns: 1fr; }
       .command-relay-control-row { flex-direction: column; align-items: stretch; }
       .command-relay-toolbar { display: flex; width: 100%; box-sizing: border-box; }
       .command-relay-detail-toggle { width: 100%; }
@@ -1179,6 +1542,18 @@
       .command-relay-summary { grid-template-columns: 1fr; }
       .command-relay-matrix-row { grid-template-columns: 1fr; }
       .command-relay-source-values { grid-template-columns: 1fr; }
+      .command-semantic-trend-grid { padding-left: 8px; padding-right: 8px; }
+      .command-semantic-trend-chart { height: 240px; }
+      .command-dimension-trend-grid { padding-left: 0; padding-right: 0; }
+      .command-dimension-trend-grid .command-semantic-trend-chart { height: 230px; }
+      .command-semantic-trend-head { align-items: stretch; }
+      .command-semantic-trend-head small { max-width: 92px; }
+      .command-semantic-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .command-blueprint-grid { grid-template-columns: 1fr; padding-left: 8px; padding-right: 8px; }
+      .command-semantic-grid { grid-template-columns: 1fr; padding-left: 8px; padding-right: 8px; }
+      .command-widget-registry { grid-template-columns: 1fr; }
+      .command-evidence-section { margin-left: 8px; margin-right: 8px; }
+      .command-evidence-note { grid-template-columns: 1fr; gap: 3px; }
       .consumption-summary { grid-template-columns: 1fr; }
       .card-value { font-size: 20px; }
     }
