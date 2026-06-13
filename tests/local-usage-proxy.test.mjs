@@ -338,6 +338,7 @@ describe('semantic projection contract', () => {
     });
 
     assert.equal(semantics.metric_role, 'available');
+    assert.equal(semantics.metric_identity, 'balance');
     assert.equal(semantics.subject_type, 'api_key');
     assert.equal(semantics.unit_family, 'currency');
     assert.equal(semantics.knownness, 'known');
@@ -353,6 +354,7 @@ describe('semantic projection contract', () => {
     });
 
     assert.equal(semantics.metric_role, 'used');
+    assert.equal(semantics.metric_identity, 'cost');
     assert.equal(semantics.time_behavior, 'window');
     assert.equal(semantics.subject_type, 'api_key');
   });
@@ -379,8 +381,34 @@ describe('semantic projection contract', () => {
     });
 
     assert.equal(semantics.metric_role, 'available');
+    assert.equal(semantics.metric_identity, 'quota');
     assert.equal(semantics.subject_type, 'account');
     assert.equal(semantics.unit_family, 'quota');
+  });
+
+  it('classifies health and inventory signals with distinct metric identities', () => {
+    const health = signalSemantics({
+      path: 'api.sub2api.health.status',
+      kind: 'health',
+      value: 1,
+      unit: 'status',
+      confidence: 'reported',
+    });
+    const modelCount = signalSemantics({
+      path: 'agent.codex.models.count',
+      kind: 'inventory',
+      value: 4,
+      unit: 'count',
+      confidence: 'derived',
+    });
+
+    assert.equal(health.metric_role, 'health');
+    assert.equal(health.metric_identity, 'status');
+    assert.equal(health.unit_family, 'status');
+    assert.equal(modelCount.metric_role, 'evidence');
+    assert.equal(modelCount.metric_identity, 'models');
+    assert.equal(modelCount.subject_type, 'model');
+    assert.equal(modelCount.unit_family, 'count');
   });
 
   it('keeps dataset widget hints aligned with row subjects', () => {
@@ -414,12 +442,60 @@ describe('semantic projection contract', () => {
           confidence: 'reported',
         },
         {
+          id: 'signal-newapi-quota-available',
+          path: 'api.newapi.quota.available',
+          kind: 'quota',
+          value: 88.8,
+          unit: 'usd',
+          confidence: 'reported',
+        },
+        {
           id: 'signal-codex-cost',
           path: 'agent.codex.cost.aggregate',
           kind: 'usage',
           value: null,
           unit: 'usd',
           confidence: 'observed',
+        },
+        {
+          id: 'signal-sub2api-requests-today',
+          path: 'api.sub2api.requests.today',
+          kind: 'usage',
+          value: 12,
+          unit: 'count',
+          confidence: 'reported',
+        },
+        {
+          id: 'signal-codex-sessions-total',
+          path: 'agent.codex.sessions.total',
+          kind: 'inventory',
+          value: 7,
+          unit: 'count',
+          confidence: 'derived',
+        },
+        {
+          id: 'signal-codex-records-total',
+          path: 'agent.codex.records.total',
+          kind: 'inventory',
+          value: 21,
+          unit: 'count',
+          confidence: 'derived',
+        },
+        {
+          id: 'signal-codex-models-count',
+          path: 'agent.codex.models.count',
+          kind: 'inventory',
+          value: 3,
+          unit: 'count',
+          confidence: 'derived',
+        },
+        {
+          id: 'signal-sub2api-health',
+          path: 'api.sub2api.health.status',
+          kind: 'health',
+          value: 1,
+          unit: 'status',
+          confidence: 'reported',
         },
       ],
       datasets: {
@@ -433,6 +509,7 @@ describe('semantic projection contract', () => {
           },
         ],
         newapi_model_stats: [{ model: 'gpt-test', quota_used: 1 }],
+        sub2api_model_stats: [{ model: 'glm-test', total_tokens: 2000, cost: 0.12, cost_known: true, requests: 3 }],
       },
     });
 
@@ -451,9 +528,210 @@ describe('semantic projection contract', () => {
     assert.equal(projection.data_representation.source_contract.count, 2);
     assert.ok(projection.data_representation.signal_contract.roles.some(role => role.id === 'available'));
     assert.ok(projection.data_representation.signal_contract.knownness.some(item => item.id === 'reported_zero'));
+    assert.ok(projection.data_representation.observable_subject_contract);
+
+    const metricGroupSignatures = projection.metric_groups.map(group => [
+      group.metric_role,
+      group.time_behavior,
+      group.metric_identity,
+      group.unit_family,
+      group.unit,
+      group.subject_type,
+    ].join('|'));
+    assert.ok(metricGroupSignatures.includes('available|instant|balance|currency|usd|api_key'));
+    assert.ok(metricGroupSignatures.includes('used|window|cost|currency|usd|api_key'));
+    assert.ok(metricGroupSignatures.includes('available|instant|quota|currency|usd|account'));
+    assert.ok(metricGroupSignatures.includes('used|window|requests|count|count|api_key'));
+    assert.ok(metricGroupSignatures.includes('evidence|instant|sessions|count|count|source'));
+    assert.ok(metricGroupSignatures.includes('evidence|instant|records|count|count|source'));
+    assert.ok(metricGroupSignatures.includes('evidence|instant|models|count|count|model'));
+
+    const signalMetricIdentities = projection.data_representation.signal_contract.metric_identities.map(item => item.id);
+    for (const id of ['balance', 'cost', 'quota', 'requests', 'sessions', 'records', 'models', 'status']) {
+      assert.ok(signalMetricIdentities.includes(id), `missing signal metric identity ${id}`);
+    }
+
+    const rowMetricIdentities = projection.data_representation.dataset_contract.row_metric_identities.map(item => item.id);
+    for (const id of ['tokens', 'cost', 'quota', 'requests', 'sessions', 'records', 'models']) {
+      assert.ok(rowMetricIdentities.includes(id), `missing row metric identity ${id}`);
+    }
+    assert.ok(projection.data_representation.dataset_contract.row_metric_contract_count > 0);
     assert.ok(projection.presentation_blueprint.lanes.some(lane => lane.id === 'reserve-risk' && lane.widget === 'reserve-card'));
     assert.ok(projection.presentation_blueprint.lanes.some(lane => lane.id === 'window-consumption' && lane.widget === 'window-trend'));
     assert.ok(projection.presentation_blueprint.layout_policy.some(policy => policy.includes('来源作为过滤器')));
+  });
+
+  it('projects the intent-driven sensing loop as a backend contract', () => {
+    const sourceRegistry = [
+      {
+        id: 'minimax-cn-legacy',
+        label: 'MiniMax 国内版',
+        command_demo_adapter: 'not_connected',
+        configuration_state: 'configured',
+        collection_state: 'waiting',
+        visibility_state: 'not_in_command_demo',
+        missing_items: ['统一 Source/Signal/Dataset adapter'],
+      },
+      {
+        id: 'newapi-main',
+        label: 'NewAPI',
+        command_demo_adapter: 'connected',
+        configuration_state: 'not_configured',
+        collection_state: 'missing',
+        visibility_state: 'hidden_no_data',
+        missing_items: ['AGENTSENSE_NEWAPI_TOKEN'],
+      },
+      {
+        id: 'sub2api-main',
+        label: 'Sub2API',
+        command_demo_adapter: 'connected',
+        configuration_state: 'configured',
+        collection_state: 'auth_failed',
+        visibility_state: 'visible',
+        missing_items: ['Bearer sk-redactioncontract1234567890'],
+      },
+      {
+        id: 'windows-power',
+        label: 'Windows 电源',
+        command_demo_adapter: 'planned',
+        configuration_state: 'configured',
+        collection_state: 'planned',
+        visibility_state: 'planned',
+        missing_items: ['系统电池 adapter'],
+      },
+      {
+        id: 'glm-filtered',
+        label: 'GLM/Z.AI',
+        command_demo_adapter: 'connected',
+        configuration_state: 'configured',
+        collection_state: 'ok',
+        visibility_state: 'hidden_by_filter',
+        missing_items: ['当前视图过滤条件'],
+      },
+      {
+        id: 'mystery-source',
+        label: '未知来源',
+        command_demo_adapter: 'connected',
+        configuration_state: 'configured',
+        collection_state: 'unknown',
+        visibility_state: 'visible',
+      },
+    ];
+    const projection = buildSemanticProjection({
+      sources: [
+        { id: 'sub2api-main', kind: 'sub2api', label: 'Sub2API', state: 'auth_failed' },
+        { id: 'windows-power', kind: 'system_api', label: 'Windows 电源', state: 'planned' },
+      ],
+      signals: [
+        {
+          id: 'signal-sub2api-balance-available',
+          path: 'api.sub2api.balance.available',
+          kind: 'balance',
+          subject: 'sub2api-main',
+          sourceId: 'sub2api-main',
+          value: 100,
+          unit: 'usd',
+          confidence: 'reported',
+        },
+        {
+          id: 'signal-sub2api-cost-today',
+          path: 'api.sub2api.cost.today',
+          kind: 'usage',
+          subject: 'sub2api-main',
+          sourceId: 'sub2api-main',
+          value: 7.5,
+          unit: 'usd',
+          confidence: 'reported',
+        },
+        {
+          id: 'signal-sub2api-requests-today',
+          path: 'api.sub2api.requests.today',
+          kind: 'usage',
+          subject: 'sub2api-main',
+          sourceId: 'sub2api-main',
+          value: 12,
+          unit: 'count',
+          confidence: 'reported',
+        },
+      ],
+      datasets: {
+        source_registry: sourceRegistry,
+        top_projects: [],
+        top_models: [
+          {
+            model: 'gpt-test',
+            source: 'Sub2API',
+            input_tokens: 100,
+            output_tokens: 50,
+            cost_usd: 0.12,
+            cost_known: true,
+            requests: 3,
+          },
+        ],
+        model_trends: [
+          {
+            bucket: '2026-06-09T00:00:00.000Z',
+            model: 'gpt-test',
+            tokens: 150,
+            cost: 0.12,
+            cost_known: true,
+            requests: 3,
+          },
+        ],
+        sub2api_model_stats: [
+          {
+            model: 'gpt-test',
+            total_tokens: 150,
+            cost: 0.12,
+            cost_known: true,
+            cost_unit: 'usd',
+            requests: 3,
+          },
+        ],
+      },
+      sourceRegistry,
+    });
+
+    assert.equal(projection.summary.intent_count, projection.intent_manifest.length);
+    assert.ok(projection.question_type_registry.some(item => item.id === 'channel-observability'));
+    assert.ok(projection.visual_encoding_registry.some(item => item.id === 'separated-unit-trend'));
+
+    const mappings = Object.fromEntries(projection.intent_data_mappings.map(mapping => [mapping.intent_id, mapping]));
+    assert.equal(mappings['explain-sensing-channel'].status, 'ready');
+    assert.equal(mappings['observe-window-consumption'].status, 'ready');
+    assert.equal(mappings['compare-contribution'].status, 'ready');
+    assert.ok(mappings['judge-reserve-risk'].metric_group_ids.length > 0);
+    assert.ok(mappings['observe-window-consumption'].dataset_ids.includes('model_trends'));
+    assert.ok(mappings['compare-contribution'].dataset_ids.includes('top_models'));
+    assert.match(mappings['compare-contribution'].basis, /metric_groups \/ dataset_groups/);
+
+    const missingReasons = new Set(projection.missing_explanations.map(item => item.reason_code));
+    for (const reason of ['not_connected', 'not_configured', 'auth_failed', 'no_data', 'hidden_by_filter', 'unknown', 'planned']) {
+      assert.ok(missingReasons.has(reason), `missing explanation reason ${reason}`);
+    }
+    assert.equal(projection.summary.missing_explanation_count, projection.missing_explanations.length);
+    assert.equal(projection.situation_path.title, '首屏感知链');
+    assert.equal(projection.situation_path.cards.length, projection.presentation_blueprint.lanes.length);
+
+    const serialized = JSON.stringify(projection);
+    assert.doesNotMatch(serialized, /Bearer\s+[A-Za-z0-9._+\-/=]{12,}/i);
+    assert.doesNotMatch(serialized, /sk-redactioncontract/i);
+
+    for (const lane of projection.presentation_blueprint.lanes) {
+      assert.ok(lane.intent_id, `lane ${lane.id} should keep intent_id`);
+      assert.ok(lane.question_type, `lane ${lane.id} should keep question_type`);
+      assert.ok(lane.answer_contract, `lane ${lane.id} should keep answer_contract`);
+      assert.ok(lane.missing_policy, `lane ${lane.id} should keep missing_policy`);
+      assert.ok(lane.mapping_status, `lane ${lane.id} should keep mapping_status`);
+      assert.ok(lane.why_visible, `lane ${lane.id} should keep why_visible`);
+      assert.ok(lane.why_missing, `lane ${lane.id} should keep why_missing`);
+      assert.ok(Array.isArray(lane.evidence_refs), `lane ${lane.id} should keep evidence_refs`);
+      assert.ok(lane.next_action, `lane ${lane.id} should keep next_action`);
+    }
+
+    const loopStatuses = Object.fromEntries(projection.feedback_loop.intent_status.map(item => [item.intent_id, item]));
+    assert.equal(loopStatuses['observe-window-consumption'].status, 'ready');
+    assert.ok(projection.feedback_loop.review_checks.some(item => item.includes('unknown/reported_zero/derived/planned')));
   });
 
   it('keeps legacy provider capabilities visible even when they are not mapped into the command dashboard', () => {
@@ -579,6 +857,10 @@ describe('semantic projection contract', () => {
       response.body.datasets.find(dataset => dataset.id === 'sub2api_model_stats').row_count,
       1,
     );
+    assert.deepEqual(
+      response.body.datasets.find(dataset => dataset.id === 'sub2api_model_stats').metric_identities,
+      ['cost', 'requests', 'tokens'],
+    );
   });
 
   it('returns individual datasets with their presentation semantics', () => {
@@ -589,6 +871,23 @@ describe('semantic projection contract', () => {
     assert.equal(response.body.semantics.widget_hint, 'capability-matrix');
     assert.ok(response.body.row_count > 0);
     assert.ok(response.body.data.some(entry => entry.id === 'minimax-cn-legacy'));
+  });
+
+  it('returns individual relay model datasets with row metric semantics', () => {
+    const response = commandDemoLayerResponse(sampleLayeredDemo(), '/api/datasets/sub2api_model_stats');
+
+    assert.equal(response.status, 200);
+    assert.equal(response.body.id, 'sub2api_model_stats');
+    assert.equal(response.body.semantics.rows_subject_type, 'model');
+    assert.equal(response.body.semantics.widget_hint, 'relay-zone');
+    assert.deepEqual(
+      response.body.row_metrics.map(metric => metric.metric_identity).sort(),
+      ['cost', 'requests', 'tokens'],
+    );
+    assert.deepEqual(
+      response.body.row_metrics.map(metric => metric.unit_family).sort(),
+      ['count', 'dynamic', 'token'],
+    );
   });
 
   it('returns an explainable 404 for unknown layered datasets', () => {
@@ -606,6 +905,16 @@ describe('semantic projection contract', () => {
     const response = commandDemoLayerResponse(sampleLayeredDemo(), '/api/semantic-projection');
 
     assert.equal(response.status, 200);
+    assert.deepEqual(response.body.layers.map(layer => layer.name), [
+      '信息获取层',
+      '数据表征层',
+      '综合聚合层',
+      '面板呈现层',
+    ]);
+    assert.ok(response.body.data_representation.source_contract);
+    assert.ok(response.body.data_representation.signal_contract);
+    assert.ok(response.body.data_representation.dataset_contract);
+    assert.ok(response.body.presentation_blueprint);
     assert.deepEqual(response.body.semantic_projection.layers.map(layer => layer.name), [
       '信息获取层',
       '数据表征层',

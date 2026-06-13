@@ -4,11 +4,12 @@
 
 状态: 第一版规格草案 + demo 实践记录
 
-适用仓库: AgentSense 魔改分支 `dev-improve-2026-06-08`
+适用仓库: AgentSense 魔改分支 `ExoSense`
 
 关联文档:
 
 - `docs/specs/2026-06-09-data-observation-taxonomy.md`: 当前真实数据观察、内涵/外延分类法、以及后续重构数据呈现方式的基石。
+- `docs/specs/2026-06-10-exosense-intent-driven-dashboard.md`: 从“意图缺口”到“问题类型、语义综合、Widget 候选、Presentation Blueprint”的受控派生流程。
 
 ## 产品意图校准
 

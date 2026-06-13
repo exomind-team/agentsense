@@ -94,7 +94,7 @@ cargo build --release
 
 ## 个人仪表盘 Demo
 
-魔改分支 `dev-improve-2026-06-08` 保留原 Rust 服务，同时用 `local-usage-proxy.mjs` 提供本地聚合 demo：
+魔改分支 `ExoSense` 保留原 Rust 服务，同时用 `local-usage-proxy.mjs` 提供本地聚合 demo：
 
 - 页面入口：`http://127.0.0.1:7894/`
 - demo API：`/api/command-demo`
@@ -103,6 +103,7 @@ cargo build --release
 - 远端来源：NewAPI 与 Sub2API 通过显式环境变量或 `.agentsense.local.env` 接入。
 - 展示重点：多源模型消耗混排、多源工作区 Token 排行、模型 Token/成本趋势、按量纲拆分的采样趋势、NewAPI/Sub2API 中转专区趋势。
 - 观察契约：`/api/sources` 暴露来源与感知通道能力矩阵，`/api/signals` 支持按来源、单位、语义角色等筛选，`/api/datasets` 暴露结构化数据集目录，`/api/semantic-projection` 暴露“信息获取、数据表征、综合聚合、面板呈现”四层投影。
+- 设计规格：`docs/specs/2026-06-10-exosense-intent-driven-dashboard.md` 说明从“意图缺口”到“Widget 候选”和“Presentation Blueprint”的受控派生流程。
 - 密集排行表优先完整宽度承载；窄屏时只在表格容器内滚动，避免裁掉右侧来源/记录列。
 
 本地凭据只放在 `.agentsense.local.env` 或环境变量里，该文件已被 `.gitignore` 排除。提交物只应记录变量名和 `secret_ref`，不能写入真实 token、API key、cookie 或 Authorization header。
@@ -127,6 +128,10 @@ cargo check --no-default-features --features pure-rust
 # Node 代理读取 .agentsense.local.env 后提供 demo 页面
 $env:AGENTSENSE_PROXY_PORT = "7894"
 node local-usage-proxy.mjs
+
+# Demo 聚合与趋势派生测试
+node --test tests\local-usage-proxy.test.mjs
+node --test tests\web-command-trend.test.mjs
 ```
 
 ## 架构

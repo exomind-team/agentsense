@@ -4,12 +4,13 @@
 
 状态: 已落盘观察报告 + 分类法基石 + 呈现重构约束
 
-适用仓库: AgentSense 魔改分支 `dev-improve-2026-06-08`
+适用仓库: AgentSense 魔改分支 `ExoSense`
 
 关联文档:
 
 - `docs/specs/2026-06-08-unified-agent-api-dashboard-model.md`
 - `docs/specs/2026-06-08-personal-agent-usage-dashboard.md`
+- `docs/specs/2026-06-10-exosense-intent-driven-dashboard.md`
 
 ## 一句话结论
 
@@ -63,7 +64,7 @@ Sub2API 今日 token =
 
 这份文档后续应作为两类工作的前置输入:
 
-- **改数据契约前**: 先检查新增字段能否落入 `metric_role + time_behavior + unit + subject_type + aggregation + knownness`。
+- **改数据契约前**: 先检查新增字段能否落入 `metric_role + time_behavior + metric_identity + unit + subject_type + aggregation + knownness`。
 - **改前端面板前**: 先检查新增组件是否属于受控 widget registry，是否会混淆已用/可用、不同量纲或未知/零值。
 
 ## 使用约定
@@ -75,7 +76,7 @@ Sub2API 今日 token =
 | 变更类型 | 进入实现前必须说明 | 不满足时的处理 |
 |---|---|---|
 | 新增 source adapter | 它提供哪些观测对象、哪些字段是事实、哪些字段是推导、secret 如何引用。 | 只能作为 planned source 或审计明细，不进入主面板。 |
-| 新增 Signal | 必须填清 `metric_role`、`time_behavior`、`unit`、`subject_type`、`aggregation`、`knownness`。 | 不进入聚合和趋势图，避免 UI 继续猜字段含义。 |
+| 新增 Signal | 必须填清 `metric_role`、`time_behavior`、`metric_identity`、`unit`、`subject_type`、`aggregation`、`knownness`。 | 不进入聚合和趋势图，避免 UI 继续猜字段含义。 |
 | 新增 Dataset | 必须说明每一行的 `rows_subject_type`、主指标语义、可排序字段、可分组字段。 | 只能作为调试表，不进入跨源排行。 |
 | 新增 widget | 必须说明匹配哪些语义组合、负责回答哪个态势问题、不能混入哪些单位或角色。 | 不进入默认 dashboard，只能作为实验区组件。 |
 | 修改排行或趋势 | 必须说明排序口径、时间窗口、量纲分组和 unknown/reported_zero 处理。 | 不合并，先补语义契约和测试。 |
@@ -526,11 +527,11 @@ V0 建议收束成 6 个一级面板:
 | 余量与已用并存 | 可用额度、钱包余额、已用成本、今日成本 | 同是 USD 但语义相反，混图会误导。 | 余量趋势与已用趋势分图，风险方向分别标注。 |
 | 百分比/状态 | 电量、使用率、接口在线状态 | 与 USD/token/count 不可共轴。 | percent 单独趋势，status 用状态条或时间带。 |
 
-因此，趋势图默认不应该只问“单位是什么”，还要问“它是存量、流量、增量、速率，还是周期窗口”。推荐在 `time_behavior` 之外增加轻量的呈现 hint:
+因此，趋势图默认不应该只问“单位是什么”，还要问“它是存量、流量、增量、速率，还是周期窗口”。V0 先把呈现模式收束为四种受控模式:
 
 ```ts
 type TrendPresentationHint = {
-  scale_mode: "absolute" | "delta" | "normalized" | "local_zoom" | "log"
+  view_mode: "absolute" | "focused" | "delta" | "normalized"
   series_role: "stock" | "flow" | "rate" | "resetting_window" | "status"
   compare_mode: "same_axis" | "small_multiples" | "stacked_rows" | "separate"
 }
@@ -538,22 +539,33 @@ type TrendPresentationHint = {
 
 V0 不需要让用户手写这些配置。后端可以先按语义启发式生成，前端只暴露受控切换:
 
-1. **绝对值 / 增量切换**
-   余额、容量、累计值默认看绝对值；当变化太平缓时允许切到 delta。
+1. **absolute / 绝对值**
+   保留原始尺度，适合窗口消耗、比例和速率，也适合单条曲线的当前值观察。
 
-2. **已用 / 可用分离**
+2. **focused / 聚焦轴**
+   余额、可用额度、容量这类大基数小波动数据使用非零起点聚焦波动，同时必须在图卡标注“聚焦轴”，避免用户把视觉幅度误读成绝对比例。
+
+3. **delta / 窗口增量**
+   累计 token、累计成本、累计 session 先减去当前窗口首个值，用来观察近期压力，而不是只看一条持续上升的累计线。
+
+4. **normalized / 归一化**
+   多来源或多模型数量级跨度过大时，按首个非零点折算百分比变化，用来比较变化形态；原始值仍必须留在 tooltip。
+
+同时必须保留这些呈现边界:
+
+1. **已用 / 可用分离**
    已用成本、今日 token、请求数进入消耗趋势；余额、可用额度、容量进入余量趋势。
 
-3. **同单位纵向堆叠**
+2. **同单位纵向堆叠**
    多条趋势都属于 token 或 USD 时，也优先一图一行或小 multiples，避免横向拥挤和共轴误读。
 
-4. **周期重置显式标注**
+3. **周期重置显式标注**
    今日类、近 7 天类数据要显示窗口边界，避免把自然归零理解成掉线。
 
-5. **证据质量参与趋势**
+4. **证据质量参与趋势**
    `unknown` 不画成 0；`reported_zero` 可以画 0 但必须有证据标记；`derived` 应在 tooltip 或图例中注明。
 
-这组规则的目标不是让图表更复杂，而是让趋势图真正回答“发生了什么变化”。绝对值适合判断当前状态，增量适合判断近期压力，归一化适合比较不同来源的形态，局部缩放适合观察小幅波动；这些视图应受控切换，而不是把所有数据塞进同一个坐标轴。
+这组规则的目标不是让图表更复杂，而是让趋势图真正回答“发生了什么变化”。绝对值适合判断当前状态，聚焦轴适合观察小幅波动，窗口增量适合判断近期压力，归一化适合比较不同来源的形态；这些视图应由语义启发式选择，并在图卡上明示，而不是把所有数据塞进同一个坐标轴。
 
 ### 分类法到 widget 的落地映射
 
@@ -645,7 +657,37 @@ V0 不需要让用户手写这些配置。后端可以先按语义启发式生�
 
 ## 对统一数据模型的要求
 
-后续正式模型应为 Signal 和 Dataset 增加分类元数据。推荐最小形态:
+后续正式模型应为 Signal 和 Dataset 增加分类元数据。更重要的是，模型要从“平铺信号表”升级为“可观测对象树”: 先说明这个值挂在哪个对象上，再说明它是什么指标。推荐最小形态:
+
+```ts
+type ObservableSubject = {
+  subject_type:
+    | "source"
+    | "account"
+    | "api_key"
+    | "model"
+    | "workspace"
+    | "session"
+    | "device"
+    | "task"
+  subject_id: string
+  label: string
+  parent_subject_id?: string
+  source_id?: string
+  evidence_ref?: string
+}
+```
+
+`ObservableSubject` 解决“它描述谁”。例如 Sub2API 不是一个数字，而是:
+
+```text
+source: Sub2API
+  api_key: sk-[redacted]
+    model: glm-5.1
+      metric: tokens / cost / requests
+```
+
+前端只应该在 subject 可解释时做横向比较；没有 workspace subject 证据的来源，不应进入工作区榜。
 
 ```ts
 type MetricSemantics = {
@@ -664,6 +706,19 @@ type MetricSemantics = {
     | "rate"
     | "trend"
     | "resetting"
+  metric_identity:
+    | "tokens"
+    | "cost"
+    | "quota"
+    | "balance"
+    | "requests"
+    | "sessions"
+    | "records"
+    | "models"
+    | "projects"
+    | "usage_percent"
+    | "health"
+    | "latency"
   unit:
     | "usd"
     | "cny"
@@ -704,12 +759,15 @@ type MetricSemantics = {
 }
 ```
 
+`metric_identity` 是 V1 必须保留的分图锚点。`unit=usd` 只能说明量纲相同，不能说明语义相同；`cost`、`quota`、`balance` 即使同为 USD，也必须默认分图。`unit=count` 同理，`requests`、`sessions`、`records`、`models` 不能因为都是次数就共轴。
+
 Dataset 也应声明:
 
 ```ts
 type DatasetSemantics = {
   rows_subject_type: "source" | "model" | "workspace" | "account" | "api_key" | "device"
   primary_metric_role: "used" | "available" | "health" | "rank" | "evidence"
+  metric_identities?: Array<MetricSemantics["metric_identity"]>
   primary_unit?: "usd" | "cny" | "quota" | "credit" | "token" | "count" | "percent" | "ms" | "status" | "mixed"
   allowed_group_by?: string[]
   allowed_sort_by?: string[]
@@ -924,8 +982,17 @@ Dataset 应声明自己“每一行是什么对象”和“主指标是什么语
 
 1. `metric_role`: 已用、可用、容量、速率分开。
 2. `time_behavior`: 瞬时、窗口、累计、速率分开。
-3. `unit_family + unit`: USD、quota、token、count、percent 不共轴。
-4. `subject_type`: 来源、模型、工作区、账户/API Key 等对象分开。
+3. `metric_identity`: 成本、额度、余额、token、请求、会话、记录、模型数分开。
+4. `unit_family + unit`: USD、quota、token、count、percent 不共轴。
+5. `subject_type`: 来源、模型、工作区、账户/API Key 等对象分开。
+
+V0 的趋势分图键应理解为:
+
+```text
+metric_role + time_behavior + metric_identity + unit_family + unit + subject_type
+```
+
+这条规则的关键是“同单位不同指标不共轴”。例如 `unit=usd` 的 `cost`、`quota`、`balance` 默认分图；`unit=count` 的 `requests`、`sessions`、`records`、`models` 默认分图。只有分图键一致时，来源才可以作为同一图内的多条曲线出现。
 
 来源不再作为首层分图键。NewAPI、Sub2API、本地 Agent、后续设备源等外延来源，应作为同一语义图里的曲线、徽标或说明出现。这样可以避免“先按来源排序，再看指标”的旧视角，也便于横向比较相同语义的数据。
 
@@ -958,9 +1025,13 @@ Dataset 应声明自己“每一行是什么对象”和“主指标是什么语
 | 时间窗口 | 增加 `6h`、`1d`、`7d` 切换，并把本地采样保留窗口扩展到 7 天。 | 同一趋势必须先说明观察窗口，避免“今日”“近 6 小时”“近 7 天”混读。 |
 | 语义筛选 | 增加全部、余量/容量、消耗、中转、本地 Agent、比例/速率。 | 前端可以按内涵语义和外延对象切换，而不是只能按来源分区。 |
 | 派生摘要 | 展示分图规则、曲线生成规则、当前可见组数、量纲画像。 | 用户能看懂“为什么这些曲线被放在一起或分开”。 |
-| 量纲分离 | 继续按 `metric_role + time_behavior + unit + subject_type` 分图。 | USD、token、count、percent 不共轴；已用和可用不混图。 |
+| 量纲分离 | 继续按 `metric_role + time_behavior + metric_identity + unit_family + unit + subject_type` 分图。 | USD、token、count、percent 不共轴；同为 USD 的成本、额度、余额也不共轴。 |
 | 中转对照 | 下方中转专区趋势复用同一窗口口径，但保留来源视角。 | 同时支持“按类型看中转站”和“按中转站看类型”。 |
 | 证据边界 | 趋势说明继续保留 `unknown` 跳过、`reported_zero` 画 0 的规则。 | 防止未知成本被误读为 0，也防止接口报告 0 被误判为缺失。 |
+| 历史清洗 | 浏览器本地历史缓存中的 `unknown`、`planned` 采样也会被过滤。 | 防止旧缓存或异常样本绕过当前采集规则进入趋势曲线。 |
+| 覆盖优先 | 趋势组上限采用语义覆盖优先，而不是简单按排序截断。 | 尽量保留不同角色、单位、对象、来源和证据质量，避免 Top N 把小类挤没。 |
+| 点级证据 | `reported_zero`、`derived` 会随折线数据点进入 tooltip。 | 用户能定位某个点是接口报告 0 还是派生值，而不是只能看图卡副标题。 |
+| 视图模式 | 趋势图按语义自动选择 `absolute`、`focused`、`delta`、`normalized`。 | 大余额不再贴成平线，累计量可看窗口变化，多数量级曲线可看形态。 |
 | 图表空间 | 语义趋势区改为独立宽面板，一图一行纵向堆叠。 | 核心趋势图不再被文字明细或横向布局挤压。 |
 | 宽表边界 | Source Adapter、工作区榜等宽表在窄屏使用容器内横向滚动。 | 不撑破整页，也不把右侧列裁掉。 |
 | 资源清洁 | 页面增加内联 favicon。 | 消除无意义的 `/favicon.ico` 404，使浏览器控制台只暴露真实问题。 |
@@ -978,6 +1049,7 @@ Dataset 应声明自己“每一行是什么对象”和“主指标是什么语
 
 - 它的 `metric_role` 是什么？
 - 它是瞬时、窗口、累计、速率，还是趋势？
+- 它的 `metric_identity` 是什么？成本、余额、额度、token、请求、会话、记录是否会被混成一类？
 - 它的单位是什么？能和谁共轴？
 - 它的观测对象是什么？source、model、workspace、account/key、device 还是 task？
 - 它是已知、未知、接口报告 0、推导，还是计划接入？

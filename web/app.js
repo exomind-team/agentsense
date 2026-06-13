@@ -61,6 +61,10 @@ const COMMAND_MODEL_TREND_LABELS = {
 };
 const COMMAND_MODEL_SOURCE_ORDER = ['Claude', 'Codex', 'CC codex', 'CC claude', 'CC unknown', 'NewAPI', 'Sub2API'];
 const COMMAND_MODEL_COLORS = ['#14b8a6', '#388bfd', '#818cf8', '#3fb950', '#f59e0b', '#d97757', '#db61a2', '#a371f7'];
+const COMMAND_DIMENSION_TREND_GROUP_LIMIT = 16;
+const COMMAND_RELAY_TREND_GROUP_LIMIT = 16;
+const COMMAND_SEMANTIC_TREND_GROUP_LIMIT = 16;
+const COMMAND_SEMANTIC_SAMPLE_LIMIT = 240;
 
 // ── State ───────────────────────────────────────────────────────────────────
 
@@ -1357,23 +1361,37 @@ function collectCommandModelInputRows(data) {
   return [
     ...models.map(m => {
       const total = (m.input_tokens || 0) + (m.output_tokens || 0) + (m.cache_read_tokens || 0) + (m.cache_creation_tokens || 0);
-      return { source: 'Claude', model: m.model, cost: m.cost_usd, costUnit: 'usd', tokens: total, requests: null };
+      const cost = finiteOrNull(m.cost_usd);
+      return {
+        source: 'Claude',
+        model: m.model,
+        cost: cost ?? null,
+        costKnown: cost !== null,
+        costUnit: 'usd',
+        tokens: total,
+        requests: null,
+      };
     }),
     ...codexModels.map(m => ({
       source: 'Codex',
       model: normalizeCommandModelName('Codex', m.model, m.provider),
       cost: null,
+      costKnown: false,
       tokens: m.total_tokens,
       requests: m.sessions,
     })),
-    ...ccSwitchModels.map(m => ({
-      source: `CC ${m.app || ''}`.trim(),
-      model: normalizeCommandModelName('CC Switch', m.model, m.provider),
-      cost: m.cost,
-      costUnit: 'usd',
-      tokens: m.total_tokens,
-      requests: m.requests,
-    })),
+    ...ccSwitchModels.map(m => {
+      const cost = finiteOrNull(m.cost);
+      return {
+        source: `CC ${m.app || ''}`.trim(),
+        model: normalizeCommandModelName('CC Switch', m.model, m.provider),
+        cost: cost ?? null,
+        costKnown: cost !== null,
+        costUnit: 'usd',
+        tokens: m.total_tokens,
+        requests: m.requests,
+      };
+    }),
     ...newApiModels.map(m => ({
       source: 'NewAPI',
       model: normalizeCommandModelName('NewAPI', m.model),
@@ -1382,14 +1400,18 @@ function collectCommandModelInputRows(data) {
       tokens: m.total_tokens,
       requests: m.requests,
     })),
-    ...sub2Models.map(m => ({
-      source: 'Sub2API',
-      model: normalizeCommandModelName('Sub2API', m.model),
-      cost: m.cost,
-      costUnit: m.cost_unit || 'usd',
-      tokens: m.total_tokens,
-      requests: m.requests,
-    })),
+    ...sub2Models.map(m => {
+      const cost = m.cost_known === false ? null : finiteOrNull(m.cost);
+      return {
+        source: 'Sub2API',
+        model: normalizeCommandModelName('Sub2API', m.model),
+        cost: cost ?? null,
+        costKnown: m.cost_known === false ? false : cost !== null,
+        costUnit: m.cost_unit || 'usd',
+        tokens: m.total_tokens,
+        requests: m.requests,
+      };
+    }),
   ];
 }
 
@@ -1406,6 +1428,8 @@ function buildUnifiedCommandModelRows(data) {
       costKnown: false,
       costUnit: 'usd',
       costComparable: false,
+      unknownCostSourceSet: new Set(),
+      unknownCostSources: [],
       quota: 0,
       quotaKnown: false,
       quotaUnit: 'quota',
@@ -1429,6 +1453,11 @@ function buildUnifiedCommandModelRows(data) {
       current.costComparable = current.costComparable || isUsdCost(rowCostUnit);
       if (current.costUnit === 'mixed') current.costComparable = false;
     }
+    if (row.costKnown === false && !current.unknownCostSourceSet.has(row.source)) {
+      current.unknownCostSourceSet.add(row.source);
+      current.unknownCostSources.push(row.source);
+      current.unknownCostSources.sort((a, b) => commandModelSourceRank(a) - commandModelSourceRank(b) || a.localeCompare(b));
+    }
     const quota = finiteOrNull(row.quota);
     if (quota !== null) {
       current.quota += quota;
@@ -1449,6 +1478,7 @@ function buildUnifiedCommandModelRows(data) {
     cost: row.costKnown ? row.cost : null,
     quota: row.quotaKnown ? row.quota : null,
     requests: row.requestKnown ? row.requests : null,
+    unknownCostSources: [...row.unknownCostSources],
     primarySource: row.sources[0] || '',
   }));
 }
@@ -1458,7 +1488,7 @@ const COMMAND_RELAY_METRIC_LABELS = {
   quota_used: '已用额度',
   quota_available: '可用额度',
   usage_percent: '使用率',
-  balance_available: '钱包余额',
+  balance_available: '可用余额',
   requests_today: '今日请求',
   requests_total: '累计请求',
   tokens_today: '今日 Token',
@@ -1551,6 +1581,11 @@ function formatModelSpendCell(row) {
   }
   if (row?.quotaKnown) {
     parts.push(`<small>${escapeHtml(`NewAPI 额度 ${formatUnitAmount(row.quota, row.quotaUnit || 'quota')}`)}</small>`);
+  }
+  const unknownSources = Array.isArray(row?.unknownCostSources) ? row.unknownCostSources.filter(Boolean) : [];
+  if (unknownSources.length) {
+    const label = row?.costKnown ? '部分来源成本未知' : '成本未知';
+    parts.push(`<small class="cost-unknown">${escapeHtml(`${label}：${unknownSources.join('、')}`)}</small>`);
   }
   if (!parts.length) {
     return '<span class="cost-unknown">成本未知</span>';
@@ -1664,7 +1699,7 @@ function collectRelayMetrics(data) {
     return rows.reduce((acc, item) => {
       const requests = finiteOrNull(item.requests);
       const tokens = finiteOrNull(item.total_tokens);
-      const cost = finiteOrNull(item.cost);
+      const cost = item.cost_known === false ? null : finiteOrNull(item.cost);
       const quota = finiteOrNull(item.quota_used);
       if (requests !== null) acc.requests = (acc.requests || 0) + requests;
       if (tokens !== null) acc.tokens = (acc.tokens || 0) + tokens;
@@ -2037,6 +2072,235 @@ function renderDataRepresentationBlueprint(blueprint, container) {
   `;
 }
 
+function mappingStatusLabel(status) {
+  const labels = {
+    ready: '就绪',
+    partial: '部分就绪',
+    explainable_gap: '可解释缺口',
+    missing: '缺失',
+  };
+  return labels[status] || status || '--';
+}
+
+function renderCompactIdList(items, emptyText = '暂无') {
+  const ids = (Array.isArray(items) ? items : []).filter(Boolean);
+  if (!ids.length) return `<span class="command-semantic-sub">${escapeHtml(emptyText)}</span>`;
+  return ids.slice(0, 5).map(id => semanticPill(id, 'compact-id')).join('')
+    + (ids.length > 5 ? `<span class="command-semantic-sub">+${ids.length - 5}</span>` : '');
+}
+
+function renderSemanticRefList(items, emptyText = '暂无') {
+  const refs = (Array.isArray(items) ? items : []).filter(Boolean);
+  if (!refs.length) return `<span class="command-semantic-sub">${escapeHtml(emptyText)}</span>`;
+  return refs.slice(0, 5).map(ref => {
+    if (typeof ref === 'string') return semanticPill(ref, 'compact-id');
+    return semanticPill(ref.label || ref.id || '--', `${ref.kind || 'unknown'} compact-id`);
+  }).join('') + (refs.length > 5 ? `<span class="command-semantic-sub">+${refs.length - 5}</span>` : '');
+}
+
+function renderIntentManifest(manifest, container) {
+  if (!container) return;
+  const intents = Array.isArray(manifest) ? [...manifest].sort((a, b) => Number(a.priority || 999) - Number(b.priority || 999)) : [];
+  if (!intents.length) {
+    container.innerHTML = '<div class="command-semantic-empty">暂无意图清单。</div>';
+    return;
+  }
+
+  container.innerHTML = intents.map(intent => `
+    <article class="command-intent-card">
+      <div class="command-intent-head">
+        <div>
+          <strong>${escapeHtml(intent.name || intent.id || '--')}</strong>
+          <span>${escapeHtml(intent.id || '--')}</span>
+        </div>
+        ${semanticPill(intent.question_type || '--', 'question-type')}
+      </div>
+      <p>${escapeHtml(intent.core_question || '--')}</p>
+      <div class="command-intent-contract">
+        <span>契约</span>
+        <small>${escapeHtml(intent.answer_contract || '--')}</small>
+      </div>
+      <div class="command-intent-contract">
+        <span>缺失</span>
+        <small>${escapeHtml(intent.missing_policy || '--')}</small>
+      </div>
+      <div class="command-intent-widgets">${renderCompactIdList(intent.desired_widgets, '无指定组件')}</div>
+    </article>
+  `).join('');
+}
+
+function renderIntentDataMappings(mappings, container) {
+  if (!container) return;
+  const rows = Array.isArray(mappings) ? [...mappings].sort((a, b) => Number(a.priority || 999) - Number(b.priority || 999)) : [];
+  if (!rows.length) {
+    container.innerHTML = '<div class="command-semantic-empty">暂无意图到数据映射。</div>';
+    return;
+  }
+
+  container.innerHTML = rows.map(mapping => {
+    const metricCount = (mapping.metric_group_ids || []).length;
+    const datasetCount = (mapping.dataset_ids || []).length;
+    const evidenceCount = (mapping.evidence_note_ids || []).length;
+    return `
+      <article class="command-intent-card command-mapping-card ${escapeHtml(mapping.status || 'missing')}">
+        <div class="command-intent-head">
+          <div>
+            <strong>${escapeHtml(mapping.intent_name || mapping.intent_id || '--')}</strong>
+            <span>${escapeHtml(mapping.core_question || '--')}</span>
+          </div>
+          ${semanticPill(mappingStatusLabel(mapping.status), `mapping-${mapping.status || 'missing'}`)}
+        </div>
+        <div class="command-lane-metrics command-intent-metrics">
+          <span>指标组 <strong>${metricCount}</strong></span>
+          <span>数据集 <strong>${datasetCount}</strong></span>
+          <span>证据 <strong>${evidenceCount}</strong></span>
+        </div>
+        <div class="command-intent-contract">
+          <span>依据</span>
+          <small>${escapeHtml(mapping.basis || '--')}</small>
+        </div>
+        <div class="command-intent-contract">
+          <span>组件</span>
+          <small>${renderCompactIdList(mapping.available_widgets, '无可用组件')}</small>
+        </div>
+      </article>
+    `;
+  }).join('');
+}
+
+function renderMissingExplanations(explanations, container) {
+  if (!container) return;
+  const rows = Array.isArray(explanations) ? explanations : [];
+  if (!rows.length) {
+    container.innerHTML = '<div class="command-semantic-empty">暂无缺失解释；当前注册项都有可说明状态。</div>';
+    return;
+  }
+
+  container.innerHTML = rows.map(item => {
+    const missingItems = (item.missing_items || []).slice(0, 4).map(entry => `<code>${escapeHtml(entry)}</code>`).join('');
+    return `
+      <article class="command-missing-card ${escapeHtml(item.severity || 'info')}">
+        <div class="command-missing-head">
+          <div>
+            <strong>${escapeHtml(item.subject_label || item.subject_id || '--')}</strong>
+            <span>${escapeHtml(item.layer || '--')} · ${escapeHtml(item.subject_type || '--')}</span>
+          </div>
+          ${semanticPill(item.reason_label || item.reason_code || '--', `missing-${item.reason_code || 'unknown'}`)}
+        </div>
+        <p>${escapeHtml(item.message || '--')}</p>
+        ${missingItems ? `<div class="command-missing-items">${missingItems}</div>` : ''}
+        <small>${escapeHtml(item.suggested_action || '--')}</small>
+      </article>
+    `;
+  }).join('');
+}
+
+function renderFeedbackLoop(loop, container) {
+  if (!container) return;
+  if (!loop) {
+    container.innerHTML = '<div class="command-semantic-empty">暂无反馈闭环。</div>';
+    return;
+  }
+  const steps = Array.isArray(loop.loop) ? loop.loop : [];
+  const statuses = Array.isArray(loop.intent_status) ? loop.intent_status : [];
+  const checks = Array.isArray(loop.review_checks) ? loop.review_checks : [];
+
+  container.innerHTML = `
+    <div class="command-feedback-principle">
+      <strong>${escapeHtml(loop.title || '反馈闭环')}</strong>
+      <span>${escapeHtml(loop.principle || '--')}</span>
+    </div>
+    <div class="command-feedback-steps">
+      ${steps.map((step, index) => `
+        <div class="command-feedback-step">
+          <b>${index + 1}</b>
+          <div>
+            <strong>${escapeHtml(step.name || step.id || '--')}</strong>
+            <span>${escapeHtml(step.output || '--')}</span>
+          </div>
+        </div>
+      `).join('')}
+    </div>
+    <div class="command-feedback-status">
+      ${statuses.map(status => `
+        <div>
+          <span>${escapeHtml(status.name || status.intent_id || '--')}</span>
+          ${semanticPill(mappingStatusLabel(status.status), `mapping-${status.status || 'missing'}`)}
+          <small>${Number(status.metric_group_count || 0)} 指标 · ${Number(status.dataset_count || 0)} 数据集 · ${Number(status.evidence_count || 0)} 证据</small>
+        </div>
+      `).join('')}
+    </div>
+    <ul class="command-feedback-checks">
+      ${checks.map(check => `<li>${escapeHtml(check)}</li>`).join('')}
+    </ul>
+  `;
+}
+
+function renderSituationPath(path, container) {
+  if (!container) return;
+  if (!path) {
+    container.innerHTML = '<div class="command-semantic-empty">暂无首屏感知链。</div>';
+    return;
+  }
+
+  const cards = Array.isArray(path.cards) ? path.cards : [];
+  container.innerHTML = `
+    <div class="command-situation-principle">
+      <strong>${escapeHtml(path.title || '首屏感知链')}</strong>
+      <span>${escapeHtml(path.principle || '--')}</span>
+    </div>
+    <div class="command-situation-grid">
+      ${cards.length ? cards.map(card => `
+        <article class="command-situation-card">
+          <div class="command-situation-head">
+            <div>
+              <strong>${escapeHtml(card.name || card.id || '--')}</strong>
+              <span>${escapeHtml(card.id || '--')}</span>
+            </div>
+            <div class="command-situation-meta">
+              ${semanticPill(card.top_risk || '--', 'missing-unknown')}
+            </div>
+          </div>
+          <div class="command-situation-row">
+            <span>当前</span>
+            <small>${escapeHtml(card.current_focus || '--')}</small>
+          </div>
+          <div class="command-situation-row">
+            <span>风险</span>
+            <small>${escapeHtml(card.risk_reason || '--')}</small>
+          </div>
+          <div class="command-situation-row">
+            <span>缺口</span>
+            <small>${escapeHtml(card.missing_reason || '--')}</small>
+          </div>
+          <div class="command-situation-row">
+            <span>证据</span>
+            <small>${escapeHtml(card.evidence_entry || '--')}</small>
+          </div>
+          <div class="command-situation-row">
+            <span>下一步</span>
+            <small>${escapeHtml(card.next_action || '--')}</small>
+          </div>
+          <div class="command-situation-links">
+            <div class="command-situation-row">
+              <span>意图</span>
+              <div>${renderCompactIdList(card.linked_intent_ids, '暂无意图')}</div>
+            </div>
+            <div class="command-situation-row">
+              <span>泳道</span>
+              <div>${renderCompactIdList(card.linked_lane_ids, '暂无泳道')}</div>
+            </div>
+            <div class="command-situation-row">
+              <span>证据ID</span>
+              <div>${renderCompactIdList(card.linked_evidence_ids, '暂无证据')}</div>
+            </div>
+          </div>
+        </article>
+      `).join('') : '<div class="command-semantic-empty">当前没有可解释的首屏泳道。</div>'}
+    </div>
+  `;
+}
+
 function renderPresentationBlueprint(blueprint, container) {
   if (!container) return;
   if (!blueprint) {
@@ -2060,10 +2324,44 @@ function renderPresentationBlueprint(blueprint, container) {
             </div>
             ${semanticPill(semanticWidgetLabel(lane.widget), 'widget')}
           </div>
+          ${lane.question ? `<p class="command-lane-question">回答：${escapeHtml(lane.question)}</p>` : ''}
+          <div class="command-lane-intent">
+            <span>意图 ${escapeHtml(lane.intent_id || '--')}</span>
+            <span>问题类型 ${escapeHtml(lane.question_type || '--')}</span>
+            <span>映射 ${escapeHtml(mappingStatusLabel(lane.mapping_status))}</span>
+          </div>
+          ${lane.answer_contract ? `
+            <div class="command-lane-contract">
+              <span>回答契约</span>
+              <small>${escapeHtml(lane.answer_contract)}</small>
+            </div>
+          ` : ''}
+          ${lane.missing_policy ? `
+            <div class="command-lane-contract">
+              <span>缺失策略</span>
+              <small>${escapeHtml(lane.missing_policy)}</small>
+            </div>
+          ` : ''}
           <div class="command-lane-metrics">
             <span>指标组 <strong>${metricCount}</strong></span>
             <span>数据集 <strong>${datasetCount}</strong></span>
             <span>证据 <strong>${Number(lane.evidence_count || 0).toLocaleString()}</strong></span>
+          </div>
+          <div class="command-lane-explanation">
+            <span>为什么显示</span>
+            <small>${escapeHtml(lane.why_visible || '--')}</small>
+          </div>
+          <div class="command-lane-explanation">
+            <span>为什么缺失</span>
+            <small>${escapeHtml(lane.why_missing || '--')}</small>
+          </div>
+          <div class="command-lane-evidence">
+            <span>证据引用</span>
+            <div>${renderSemanticRefList(lane.evidence_refs, '暂无证据引用')}</div>
+          </div>
+          <div class="command-lane-explanation">
+            <span>下一步</span>
+            <small>${escapeHtml(lane.next_action || '--')}</small>
           </div>
           <ul>${rules}</ul>
         </article>
@@ -2075,8 +2373,13 @@ function renderPresentationBlueprint(blueprint, container) {
 function renderCommandSemanticProjection(data) {
   const projection = data?.semantic_projection;
   const summaryBox = document.getElementById('command-semantic-summary');
+  const situationBox = document.getElementById('command-situation-path');
   const representationBox = document.getElementById('command-data-representation');
   const presentationBox = document.getElementById('command-presentation-blueprint');
+  const intentManifestBox = document.getElementById('command-intent-manifest');
+  const intentMappingsBox = document.getElementById('command-intent-mappings');
+  const missingExplanationsBox = document.getElementById('command-missing-explanations');
+  const feedbackLoopBox = document.getElementById('command-feedback-loop');
   const layerBody = document.getElementById('command-semantic-layer-body');
   const metricBody = document.getElementById('command-semantic-group-body');
   const datasetBody = document.getElementById('command-dataset-group-body');
@@ -2091,8 +2394,13 @@ function renderCommandSemanticProjection(data) {
     datasetBody.innerHTML = renderSemanticTableEmpty(5);
     widgetBox.innerHTML = '<div class="command-semantic-empty">暂无 widget registry。</div>';
     evidenceBox.innerHTML = '<div class="command-semantic-empty">暂无证据说明。</div>';
+    renderSituationPath(null, situationBox);
     renderDataRepresentationBlueprint(null, representationBox);
     renderPresentationBlueprint(null, presentationBox);
+    renderIntentManifest(null, intentManifestBox);
+    renderIntentDataMappings(null, intentMappingsBox);
+    renderMissingExplanations(null, missingExplanationsBox);
+    renderFeedbackLoop(null, feedbackLoopBox);
     return;
   }
 
@@ -2100,6 +2408,9 @@ function renderCommandSemanticProjection(data) {
   const datasetGroups = projection.dataset_groups || [];
   const widgets = projection.widget_registry || [];
   const notes = projection.evidence_notes || [];
+  const intentManifest = projection.intent_manifest || [];
+  const intentMappings = projection.intent_data_mappings || [];
+  const missingExplanations = projection.missing_explanations || [];
   const summary = projection.summary || {};
   const layerCount = (projection.layers || []).length;
 
@@ -2111,6 +2422,8 @@ function renderCommandSemanticProjection(data) {
     ['数据集组', datasetGroups.length],
     ['Widget', summary.widget_count ?? widgets.length],
     ['证据', notes.length],
+    ['意图', summary.intent_count ?? intentManifest.length],
+    ['缺失解释', summary.missing_explanation_count ?? missingExplanations.length],
   ].map(([label, value]) => `
     <div class="command-semantic-stat">
       <span>${escapeHtml(label)}</span>
@@ -2118,8 +2431,13 @@ function renderCommandSemanticProjection(data) {
     </div>
   `).join('');
 
+  renderSituationPath(projection.situation_path, situationBox);
   renderDataRepresentationBlueprint(projection.data_representation, representationBox);
   renderPresentationBlueprint(projection.presentation_blueprint, presentationBox);
+  renderIntentManifest(intentManifest, intentManifestBox);
+  renderIntentDataMappings(intentMappings, intentMappingsBox);
+  renderMissingExplanations(missingExplanations, missingExplanationsBox);
+  renderFeedbackLoop(projection.feedback_loop, feedbackLoopBox);
 
   layerBody.innerHTML = (projection.layers || []).length ? projection.layers.map(layer => `
     <tr>
@@ -2203,7 +2521,7 @@ function sumCommandModelStats(items) {
   return (Array.isArray(items) ? items : []).reduce((acc, item) => {
     const requests = nullableNumber(item.requests);
     const tokens = nullableNumber(item.total_tokens ?? item.tokens);
-    const cost = nullableNumber(item.cost ?? item.cost_usd);
+    const cost = item.cost_known === false ? null : nullableNumber(item.cost ?? item.cost_usd);
     const quota = nullableNumber(item.quota_used ?? item.quota);
     if (requests !== null) {
       acc.requests += requests;
@@ -2316,7 +2634,7 @@ function semanticTrendMetricLabel(path, fallback = '') {
   const labels = {
     'agent.usage.cost.aggregate': '本地 Agent 成本',
     'agent.usage.tokens.total.aggregate': '工作区 Token',
-    'agent.usage.projects.count': '工作区数量',
+    'agent.usage.projects.count': '工作区数',
     'api.newapi.quota.total': '总额度',
     'api.newapi.quota.used': '已用额度',
     'api.newapi.quota.available': '可用额度',
@@ -2339,12 +2657,87 @@ function semanticTrendMetricLabel(path, fallback = '') {
   return labels[path] || fallback || path || '--';
 }
 
+function semanticTrendMetricIdentityLabel(metricIdentity, fallback = '') {
+  const labels = {
+    tokens: 'Token',
+    cost: '成本',
+    quota: '额度',
+    balance: '余额',
+    requests: '请求',
+    sessions: '会话',
+    records: '记录',
+    models: '模型数',
+    projects: '工作区数',
+    workspaces: '工作区数',
+    usage_percent: '使用率',
+    health: '健康状态',
+    latency: '延迟',
+  };
+  return labels[metricIdentity] || fallback || metricIdentity || '--';
+}
+
 function semanticTrendGroupRank(group) {
   const roleRank = { available: 0, used: 1, capacity: 2, rate: 3, health: 4, rank: 5, evidence: 6 };
   const unitRank = { currency: 0, quota: 1, token: 2, count: 3, ratio: 4, latency: 5, status: 6, mixed: 7 };
   return (roleRank[group.metricRole] ?? 9) * 100
     + (unitRank[group.unitFamily] ?? 9) * 10
     + String(group.source || '').localeCompare('') * 0;
+}
+
+function semanticTrendCoverageKeys(group) {
+  const keys = [];
+  const push = (prefix, value) => {
+    if (value) keys.push(`${prefix}:${value}`);
+  };
+  push('role', group.metricRole);
+  push('time', group.timeBehavior);
+  push('metric', group.metricIdentity);
+  push('unit', group.unit || group.unitFamily);
+  push('unitFamily', group.unitFamily);
+  push('subject', group.subjectType);
+  push('relayMetric', group.relayMetric);
+  push('relaySource', group.relaySource);
+  for (const domain of group.extensionDomains || []) push('domain', domain);
+  for (const source of group.sources || []) push('source', source);
+  for (const knownness of group.knownness || []) push('knownness', knownness);
+  return keys;
+}
+
+function pickRepresentativeSemanticTrendGroups(groups, limit = COMMAND_SEMANTIC_TREND_GROUP_LIMIT) {
+  const ordered = Array.isArray(groups) ? groups : [];
+  if (ordered.length <= limit) return ordered;
+  const candidates = ordered.map((group, index) => ({ group, index }));
+  const picked = [];
+  const covered = new Set();
+
+  while (picked.length < limit && candidates.length) {
+    let bestIndex = 0;
+    let bestScore = -Infinity;
+    for (let i = 0; i < candidates.length; i += 1) {
+      const { group, index } = candidates[i];
+      const keys = semanticTrendCoverageKeys(group);
+      const newCoverage = keys.filter(key => !covered.has(key)).length;
+      const seriesCount = group.series instanceof Map ? group.series.size : 0;
+      const pointCount = group.series instanceof Map
+        ? [...group.series.values()].reduce((sum, series) => sum + (series.data?.length || 0), 0)
+        : 0;
+      const score = newCoverage * 1000
+        + Math.min(seriesCount, 5) * 20
+        + Math.min(pointCount, 30)
+        - index / 1000;
+      if (score > bestScore) {
+        bestScore = score;
+        bestIndex = i;
+      }
+    }
+    const [selected] = candidates.splice(bestIndex, 1);
+    picked.push(selected);
+    for (const key of semanticTrendCoverageKeys(selected.group)) covered.add(key);
+  }
+
+  return picked
+    .sort((a, b) => a.index - b.index)
+    .map(item => item.group);
 }
 
 function semanticTrendValueFormatter(sampleOrGroup) {
@@ -2355,6 +2748,111 @@ function semanticTrendValueFormatter(sampleOrGroup) {
   if (family === 'count') return value => Number(value || 0).toLocaleString();
   if (family === 'ratio') return value => `${Number(value || 0).toFixed(2)}%`;
   return value => formatUnitAmount(value, unit || 'count');
+}
+
+function semanticTrendNumericValues(group) {
+  const values = [];
+  for (const series of group?.series?.values?.() || []) {
+    for (const point of series.data || []) {
+      const value = nullableNumber(Array.isArray(point?.value) ? point.value[1] : point?.value);
+      if (value !== null) values.push(value);
+    }
+  }
+  return values;
+}
+
+function semanticTrendNumericExtent(group) {
+  const values = semanticTrendNumericValues(group);
+  if (!values.length) return null;
+  return {
+    min: Math.min(...values),
+    max: Math.max(...values),
+  };
+}
+
+function semanticTrendMagnitudeRatio(group) {
+  const magnitudes = [];
+  for (const series of group?.series?.values?.() || []) {
+    const seriesMagnitude = Math.max(
+      0,
+      ...(series.data || [])
+        .map(point => Math.abs(nullableNumber(Array.isArray(point?.value) ? point.value[1] : point?.value) ?? 0))
+        .filter(value => value > 0),
+    );
+    if (seriesMagnitude > 0) magnitudes.push(seriesMagnitude);
+  }
+  if (magnitudes.length < 2) return 1;
+  const min = Math.min(...magnitudes);
+  const max = Math.max(...magnitudes);
+  return min > 0 ? max / min : Infinity;
+}
+
+function semanticTrendViewMode(group) {
+  const role = String(group?.metricRole || '');
+  const timeBehavior = String(group?.timeBehavior || '');
+  const unitFamily = String(group?.unitFamily || semanticUnitFamily(group?.unit));
+  if (role === 'available' || role === 'capacity') return 'focused';
+  if (role === 'rate' || timeBehavior === 'rate' || unitFamily === 'ratio') return 'absolute';
+  if (group?.metricIdentity === 'models') return 'absolute';
+  if ((group?.series?.size || 0) > 1 && semanticTrendMagnitudeRatio(group) >= 100) return 'normalized';
+  if (role === 'used' && timeBehavior === 'cumulative') return 'delta';
+  return 'absolute';
+}
+
+function semanticTrendViewModeLabel(mode) {
+  return {
+    absolute: '绝对值',
+    focused: '聚焦轴',
+    delta: '窗口增量',
+    normalized: '归一化',
+  }[mode] || '绝对值';
+}
+
+function semanticTrendViewModeNote(mode) {
+  return {
+    absolute: '保留原始尺度，适合窗口消耗、比例和速率。',
+    focused: '使用非零起点聚焦波动，适合余额、可用量和容量；请按原始值理解大小。',
+    delta: '每条曲线减去窗口内首个值，适合累计量看变化。',
+    normalized: '每条曲线按首个非零值折算百分比变化，适合多曲线数量级差异很大的比较。',
+  }[mode] || '';
+}
+
+function transformSemanticTrendSeriesData(data, mode) {
+  const points = Array.isArray(data) ? data : [];
+  const rawValues = points.map(point => nullableNumber(Array.isArray(point?.value) ? point.value[1] : point?.value));
+  const firstFinite = rawValues.find(value => value !== null);
+  const firstNonZero = rawValues.find(value => value !== null && Math.abs(value) > Number.EPSILON);
+  return points.map((point, index) => {
+    const rawValue = rawValues[index];
+    const ts = Array.isArray(point?.value) ? point.value[0] : point?.ts;
+    let viewValue = rawValue;
+    if (rawValue !== null && mode === 'delta' && firstFinite !== undefined) {
+      viewValue = rawValue - firstFinite;
+    } else if (rawValue !== null && mode === 'normalized') {
+      if (firstNonZero !== undefined) {
+        viewValue = ((rawValue - firstNonZero) / Math.abs(firstNonZero)) * 100;
+      } else {
+        viewValue = rawValue === 0 ? 0 : null;
+      }
+    }
+    return {
+      ...point,
+      rawValue,
+      value: [ts, viewValue],
+    };
+  });
+}
+
+function semanticTrendYAxisName(group, mode) {
+  const unit = group?.unit || group?.unitFamily || '';
+  if (mode === 'normalized') return '%变化';
+  if (mode === 'delta') return `Δ ${unit || 'value'}`;
+  return unit || 'value';
+}
+
+function semanticTrendYAxisFormatter(group, mode) {
+  if (mode === 'normalized') return value => `${Number(value || 0).toFixed(1)}%`;
+  return semanticTrendValueFormatter(group);
 }
 
 function deriveCommandSemanticExtension(sample = {}) {
@@ -2412,6 +2910,58 @@ function semanticTrendPresentationLabel(group) {
   return labels.length ? labels.join(' / ') : '';
 }
 
+function normalizeSemanticKnownness(value) {
+  const knownness = String(value || 'known').trim().toLowerCase();
+  return knownness || 'known';
+}
+
+function inferSemanticMetricIdentity(path = '') {
+  const text = String(path || '').toLowerCase();
+  if (text.includes('usage.percent') || text.includes('.percent') || text.includes('.ratio')) return 'usage_percent';
+  if (text.includes('.tokens.') || text.includes('.token.') || text.endsWith('.tokens') || text.endsWith('.token')) return 'tokens';
+  if (text.includes('.cost.') || text.endsWith('.cost')) return 'cost';
+  if (text.includes('.quota.') || text.endsWith('.quota')) return 'quota';
+  if (text.includes('.balance.') || text.endsWith('.balance')) return 'balance';
+  if (text.includes('.requests.') || text.endsWith('.requests') || text.endsWith('.request')) return 'requests';
+  if (text.includes('.sessions.') || text.endsWith('.sessions') || text.endsWith('.session')) return 'sessions';
+  if (text.includes('.records.') || text.endsWith('.records') || text.endsWith('.record')) return 'records';
+  if (text.includes('.models.') || text.endsWith('.models') || text.endsWith('.model_count')) return 'models';
+  if (text.includes('.projects.') || text.includes('.workspace') || text.endsWith('.projects')) return 'workspaces';
+  if (text.includes('.health') || text.includes('.status') || text.includes('.state')) return 'health';
+  if (text.includes('.latency') || text.endsWith('.ms')) return 'latency';
+  return text || 'metric';
+}
+
+function normalizeSemanticMetricIdentity(sample = {}, path = '') {
+  const raw = sample.metricIdentity
+    || sample.metric_identity
+    || sample.metricKey
+    || sample.metric_key
+    || sample.metric
+    || sample.metricName
+    || inferSemanticMetricIdentity(path);
+  const safe = redactCommandTrendText(raw, 'metric')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '_')
+    .replace(/[^a-z0-9._:/+-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 120);
+  // Normalize legacy aliases so old localStorage snapshots don't create duplicate groups
+  const alias = { projects: 'workspaces' };
+  return alias[safe] || safe || 'metric';
+}
+
+function redactCommandTrendText(value, fallback = '--') {
+  const raw = value === null || value === undefined || value === '' ? fallback : value;
+  return String(raw)
+    .replace(/Authorization:\s*Bearer\s+[^\s"'<>]+/gi, 'Authorization: Bearer [redacted]')
+    .replace(/\bBearer\s+(?:sk-[A-Za-z0-9]{20,}|[A-Za-z0-9+/_=-]{24,})\b/gi, 'Bearer [redacted]')
+    .replace(/\bsk-[A-Za-z0-9]{20,}\b/g, 'sk-[redacted]')
+    .replace(/\b(?:qy[A-Za-z0-9+/_-]{20,}|uM[A-Za-z0-9+/_-]{20,})\b/g, '[redacted-token]');
+}
+
 function semanticTrendGroupSubtitle(group) {
   return [
     semanticTrendExtensionsLabel(group),
@@ -2434,11 +2984,21 @@ function sanitizeCommandSemanticSamples(samples) {
       const metricRole = sample.metricRole || 'used';
       const timeBehavior = sample.timeBehavior || 'instant';
       const subjectType = sample.subjectType || 'source';
-      const source = sample.source || 'unknown';
-      const path = sample.path || sample.seriesKey || sample.label || '--';
+      const source = redactCommandTrendText(sample.source, 'unknown');
+      const path = redactCommandTrendText(sample.path || sample.seriesKey || sample.label, '--');
+      const seriesKey = redactCommandTrendText(sample.seriesKey || path, path);
+      const label = redactCommandTrendText(sample.label || semanticTrendMetricLabel(path), semanticTrendMetricLabel(path));
+      const metricIdentity = normalizeSemanticMetricIdentity(sample, path);
+      const metricLabel = redactCommandTrendText(
+        sample.metricLabel || sample.metric_label || semanticTrendMetricIdentityLabel(metricIdentity, semanticTrendMetricLabel(path)),
+        semanticTrendMetricIdentityLabel(metricIdentity, semanticTrendMetricLabel(path)),
+      );
+      const knownness = normalizeSemanticKnownness(sample.knownness);
+      if (knownness === 'unknown' || knownness === 'planned') return null;
       const groupKey = [
         metricRole,
         timeBehavior,
+        metricIdentity,
         unitFamily,
         unit,
         subjectType,
@@ -2449,15 +3009,18 @@ function sanitizeCommandSemanticSamples(samples) {
         unitFamily,
         metricRole,
         timeBehavior,
+        metricIdentity,
         subjectType,
         source,
         path,
       });
       return {
         groupKey,
-        seriesKey: sample.seriesKey || path,
-        label: sample.label || semanticTrendMetricLabel(path),
-        groupLabel: sample.groupLabel || `${semanticTrendRoleLabel(metricRole)} · ${semanticTrendTimeLabel(timeBehavior)} · ${semanticTrendSubjectLabel(subjectType)}`,
+        seriesKey,
+        label,
+        metricIdentity,
+        metricLabel,
+        groupLabel: sample.groupLabel || `${metricLabel} · ${semanticTrendRoleLabel(metricRole)} · ${semanticTrendTimeLabel(timeBehavior)} · ${semanticTrendSubjectLabel(subjectType)}`,
         value,
         unit,
         unitFamily,
@@ -2466,14 +3029,302 @@ function sanitizeCommandSemanticSamples(samples) {
         subjectType,
         source,
         path,
-        knownness: sample.knownness || 'known',
+        knownness,
         extensionDomain: sample.extensionDomain || extension.extensionDomain,
         extensionLabel: sample.extensionLabel || extension.extensionLabel,
         presentationHint: sample.presentationHint || extension.presentationHint,
       };
     })
     .filter(Boolean)
+    .slice(0, COMMAND_SEMANTIC_SAMPLE_LIMIT);
+}
+
+function commandSemanticSubjectLabel(value, fallback = 'unknown') {
+  const text = redactCommandTrendText(value, fallback).trim();
+  return text || fallback;
+}
+
+function commandSemanticTextHash(value) {
+  const text = String(value || '');
+  let hash = 2166136261;
+  for (let i = 0; i < text.length; i += 1) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+function commandSemanticSubjectKey(value, fallback = 'unknown') {
+  const label = commandSemanticSubjectLabel(value, fallback);
+  const slug = label
+    .toLowerCase()
+    .replace(/\s+/g, '_')
+    .replace(/[^a-z0-9._:/+-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
     .slice(0, 80);
+  return `${slug || fallback}-${commandSemanticTextHash(label)}`;
+}
+
+function commandRowKnownness(value, knownFlag = true) {
+  const numeric = nullableNumber(value);
+  if (numeric === null || knownFlag === false) return 'unknown';
+  return numeric === 0 ? 'reported_zero' : 'derived';
+}
+
+function commandRowTokenTotal(row = {}) {
+  const direct = nullableNumber(row.total_tokens ?? row.tokens);
+  if (direct !== null) return direct;
+  const tokenFields = ['input_tokens', 'output_tokens', 'cache_read_tokens', 'cache_creation_tokens'];
+  let total = 0;
+  let known = false;
+  for (const field of tokenFields) {
+    const value = nullableNumber(row[field]);
+    if (value !== null) {
+      total += value;
+      known = true;
+    }
+  }
+  return known ? total : null;
+}
+
+function commandDatasetSourceLabel(row, fallback) {
+  if (Array.isArray(row?.sources) && row.sources.length) return row.sources.join(' / ');
+  return row?.source || fallback;
+}
+
+function addCommandDatasetRowMetric(addSample, {
+  datasetId,
+  row,
+  source,
+  subjectType,
+  subjectId,
+  subjectLabel,
+  metric,
+  metricLabel,
+  value,
+  unit,
+  knownFlag = true,
+  metricRoleOverride,
+  timeBehaviorOverride,
+}) {
+  const numeric = nullableNumber(value);
+  if (numeric === null || knownFlag === false) return;
+  const safeSubjectId = commandSemanticSubjectKey(subjectId || subjectLabel, subjectType);
+  const safeSubjectLabel = commandSemanticSubjectLabel(subjectLabel || subjectId, subjectType);
+  const safeSource = commandSemanticSubjectLabel(source, 'unknown');
+  addSample({
+    value: numeric,
+    unit: unit || 'count',
+    metricRole: metricRoleOverride || 'used',
+    timeBehavior: timeBehaviorOverride || 'cumulative',
+    subjectType,
+    source: safeSource,
+    path: `dataset.${datasetId}.${subjectType}.${metric}.${safeSubjectId}`,
+    seriesKey: `dataset:${datasetId}|${subjectType}:${safeSubjectId}|metric:${metric}`,
+    label: `${safeSubjectLabel} · ${metricLabel}`,
+    metricIdentity: metric,
+    metricLabel,
+    knownness: commandRowKnownness(numeric, knownFlag),
+  });
+}
+
+function addCommandModelRowMetrics(addSample, datasetId, rows, spec) {
+  for (const row of Array.isArray(rows) ? rows : []) {
+    if (!row || typeof row !== 'object') continue;
+    const source = commandDatasetSourceLabel(row, spec.source);
+    const model = normalizeCommandModelName(source, row.model || row.model_name, row.provider || spec.provider);
+    const tokens = commandRowTokenTotal(row);
+    addCommandDatasetRowMetric(addSample, {
+      datasetId,
+      row,
+      source,
+      subjectType: 'model',
+      subjectId: model,
+      subjectLabel: model,
+      metric: 'tokens',
+      metricLabel: 'Token',
+      value: tokens,
+      unit: 'token',
+    });
+
+    if (spec.costField) {
+      addCommandDatasetRowMetric(addSample, {
+        datasetId,
+        row,
+        source,
+        subjectType: 'model',
+        subjectId: model,
+        subjectLabel: model,
+        metric: 'cost',
+        metricLabel: '成本',
+        value: row[spec.costField],
+        unit: row.cost_unit || spec.costUnit || 'usd',
+        knownFlag: row.cost_known !== false,
+      });
+    }
+
+    if (spec.quotaField) {
+      addCommandDatasetRowMetric(addSample, {
+        datasetId,
+        row,
+        source,
+        subjectType: 'model',
+        subjectId: model,
+        subjectLabel: model,
+        metric: 'quota',
+        metricLabel: '额度',
+        value: row[spec.quotaField],
+        unit: row.quota_unit || spec.quotaUnit || 'quota',
+      });
+    }
+
+    for (const countMetric of spec.countMetrics || []) {
+      addCommandDatasetRowMetric(addSample, {
+        datasetId,
+        row,
+        source,
+        subjectType: 'model',
+        subjectId: model,
+        subjectLabel: model,
+        metric: countMetric.metric,
+        metricLabel: countMetric.label,
+        value: row[countMetric.field],
+        unit: 'count',
+      });
+    }
+  }
+}
+
+function addCommandWorkspaceRowMetrics(addSample, rows) {
+  for (const row of Array.isArray(rows) ? rows : []) {
+    if (!row || typeof row !== 'object') continue;
+    const workspace = row.workspace || row.workspace_name || row.workspace_path || 'unknown';
+    const source = commandDatasetSourceLabel(row, '本地 Agent');
+    addCommandDatasetRowMetric(addSample, {
+      datasetId: 'top_projects',
+      row,
+      source,
+      subjectType: 'workspace',
+      subjectId: workspace,
+      subjectLabel: workspace,
+      metric: 'tokens',
+      metricLabel: 'Token',
+      value: row.tokens ?? commandRowTokenTotal(row),
+      unit: 'token',
+    });
+    addCommandDatasetRowMetric(addSample, {
+      datasetId: 'top_projects',
+      row,
+      source,
+      subjectType: 'workspace',
+      subjectId: workspace,
+      subjectLabel: workspace,
+      metric: 'cost',
+      metricLabel: '成本',
+      value: row.cost_usd,
+      unit: 'usd',
+      knownFlag: row.cost_known === true,
+    });
+    const recordKinds = Array.isArray(row.record_kinds) ? row.record_kinds : [];
+    const sessionOnly = recordKinds.length === 1 && recordKinds[0] === 'session';
+    const recordCount = Number(row.record_count || 0);
+    const sessionCount = Number(row.sessions || 0);
+    if (sessionOnly && recordCount === sessionCount) {
+      addCommandDatasetRowMetric(addSample, {
+        datasetId: 'top_projects',
+        row,
+        source,
+        subjectType: 'workspace',
+        subjectId: workspace,
+        subjectLabel: workspace,
+        metric: 'sessions',
+        metricLabel: '会话',
+        value: row.sessions,
+        unit: 'count',
+      });
+    } else {
+      addCommandDatasetRowMetric(addSample, {
+        datasetId: 'top_projects',
+        row,
+        source,
+        subjectType: 'workspace',
+        subjectId: workspace,
+        subjectLabel: workspace,
+        metric: 'records',
+        metricLabel: '记录',
+        value: row.record_count,
+        unit: 'count',
+      });
+      if (sessionCount > 0) {
+        addCommandDatasetRowMetric(addSample, {
+          datasetId: 'top_projects',
+          row,
+          source,
+          subjectType: 'workspace',
+          subjectId: workspace,
+          subjectLabel: workspace,
+          metric: 'sessions',
+          metricLabel: '会话',
+          value: row.sessions,
+          unit: 'count',
+        });
+      }
+    }
+    addCommandDatasetRowMetric(addSample, {
+      datasetId: 'top_projects',
+      row,
+      source,
+      subjectType: 'workspace',
+      subjectId: workspace,
+      subjectLabel: workspace,
+      metric: 'models',
+      metricLabel: '模型数',
+      value: row.model_count,
+      unit: 'count',
+    });
+  }
+}
+
+function addCommandDatasetRowSemanticSamples(addSample, data) {
+  const datasets = data?.datasets || {};
+  addCommandModelRowMetrics(addSample, 'top_models', datasets.top_models, {
+    source: 'Claude Code',
+    costField: 'cost_usd',
+    costUnit: 'usd',
+  });
+  addCommandModelRowMetrics(addSample, 'codex_model_stats', datasets.codex_model_stats, {
+    source: 'Codex',
+    countMetrics: [
+      { field: 'requests', metric: 'requests', label: '请求' },
+      { field: 'sessions', metric: 'sessions', label: '会话' },
+    ],
+  });
+  addCommandModelRowMetrics(addSample, 'cc_switch_model_stats', datasets.cc_switch_model_stats, {
+    source: 'CC Switch',
+    costField: 'cost',
+    costUnit: 'usd',
+    countMetrics: [
+      { field: 'requests', metric: 'requests', label: '请求' },
+    ],
+  });
+  addCommandModelRowMetrics(addSample, 'newapi_model_stats', datasets.newapi_model_stats, {
+    source: 'NewAPI',
+    quotaField: 'quota_used',
+    quotaUnit: 'quota',
+    countMetrics: [
+      { field: 'requests', metric: 'requests', label: '请求' },
+    ],
+  });
+  addCommandModelRowMetrics(addSample, 'sub2api_model_stats', datasets.sub2api_model_stats, {
+    source: 'Sub2API',
+    costField: 'cost',
+    costUnit: 'usd',
+    countMetrics: [
+      { field: 'requests', metric: 'requests', label: '请求' },
+    ],
+  });
+  addCommandWorkspaceRowMetrics(addSample, datasets.top_projects);
 }
 
 function buildCommandSemanticSamples(data) {
@@ -2505,9 +3356,12 @@ function buildCommandSemanticSamples(data) {
       path: signal.path || signal.id,
       seriesKey: signal.path || signal.id,
       label: semanticTrendMetricLabel(signal.path || signal.id),
+      metricIdentity: semantics.metric_identity || semantics.metricIdentity || signal.metric || signal.metricKey || signal.path || signal.id,
       knownness: semantics.knownness,
     });
   }
+
+  addCommandDatasetRowSemanticSamples(addSample, data);
 
   const newApiModels = sumCommandModelStats(data?.datasets?.newapi_model_stats);
   if (newApiModels.tokensKnown) {
@@ -2521,6 +3375,8 @@ function buildCommandSemanticSamples(data) {
       source: 'NewAPI',
       path: 'derived.newapi.model.tokens',
       label: semanticTrendMetricLabel('derived.newapi.model.tokens'),
+      metricIdentity: 'tokens',
+      metricLabel: 'Token',
       knownness: 'derived',
     });
   }
@@ -2534,6 +3390,8 @@ function buildCommandSemanticSamples(data) {
       source: 'NewAPI',
       path: 'derived.newapi.model.quota',
       label: semanticTrendMetricLabel('derived.newapi.model.quota'),
+      metricIdentity: 'quota',
+      metricLabel: '额度',
       knownness: 'derived',
     });
   }
@@ -2547,6 +3405,8 @@ function buildCommandSemanticSamples(data) {
       source: 'NewAPI',
       path: 'derived.newapi.model.requests',
       label: semanticTrendMetricLabel('derived.newapi.model.requests'),
+      metricIdentity: 'requests',
+      metricLabel: '请求',
       knownness: 'derived',
     });
   }
@@ -2563,6 +3423,8 @@ function buildCommandSemanticSamples(data) {
       source: 'Sub2API',
       path: 'derived.sub2api.model.tokens',
       label: semanticTrendMetricLabel('derived.sub2api.model.tokens'),
+      metricIdentity: 'tokens',
+      metricLabel: 'Token',
       knownness: 'derived',
     });
   }
@@ -2576,6 +3438,8 @@ function buildCommandSemanticSamples(data) {
       source: 'Sub2API',
       path: 'derived.sub2api.model.cost',
       label: semanticTrendMetricLabel('derived.sub2api.model.cost'),
+      metricIdentity: 'cost',
+      metricLabel: '成本',
       knownness: 'derived',
     });
   }
@@ -2589,6 +3453,8 @@ function buildCommandSemanticSamples(data) {
       source: 'Sub2API',
       path: 'derived.sub2api.model.requests',
       label: semanticTrendMetricLabel('derived.sub2api.model.requests'),
+      metricIdentity: 'requests',
+      metricLabel: '请求',
       knownness: 'derived',
     });
   }
@@ -2639,6 +3505,99 @@ function sanitizeCommandHistory(items) {
       semanticSamples: sanitizeCommandSemanticSamples(p.semanticSamples),
     }))
     .slice(-MAX_COMMAND_HISTORY_PTS);
+}
+
+function compactCommandSemanticSample(sample) {
+  const safe = sanitizeCommandSemanticSamples([sample])[0];
+  if (!safe) return null;
+  return {
+    value: safe.value,
+    unit: safe.unit,
+    metricRole: safe.metricRole,
+    timeBehavior: safe.timeBehavior,
+    subjectType: safe.subjectType,
+    source: safe.source,
+    path: safe.path,
+    seriesKey: safe.seriesKey,
+    label: safe.label,
+    metricIdentity: safe.metricIdentity,
+    knownness: safe.knownness,
+  };
+}
+
+function compactCommandHistoryForStorage(items, {
+  maxPoints = MAX_COMMAND_HISTORY_PTS,
+  semanticSampleLimit = COMMAND_SEMANTIC_SAMPLE_LIMIT,
+} = {}) {
+  const safeHistory = sanitizeCommandHistory(items).slice(-Math.max(1, Number(maxPoints) || 1));
+  return safeHistory.map(point => ({
+    ...point,
+    semanticSamples: semanticSampleLimit > 0
+      ? sanitizeCommandSemanticSamples(point.semanticSamples)
+        .slice(0, Math.max(0, Number(semanticSampleLimit) || 0))
+        .map(compactCommandSemanticSample)
+        .filter(Boolean)
+      : [],
+  }));
+}
+
+function persistCommandHistoryStorage(items, storage = globalThis.localStorage) {
+  const baseHistory = sanitizeCommandHistory(items);
+  if (!storage || typeof storage.setItem !== 'function') {
+    return {
+      history: baseHistory,
+      persisted: false,
+      degraded: false,
+      reason: 'storage_unavailable',
+    };
+  }
+
+  const candidates = [
+    {
+      tag: 'full',
+      history: baseHistory,
+    },
+    {
+      tag: 'compact-144x32',
+      history: compactCommandHistoryForStorage(baseHistory, { maxPoints: 144, semanticSampleLimit: 32 }),
+    },
+    {
+      tag: 'compact-72x16',
+      history: compactCommandHistoryForStorage(baseHistory, { maxPoints: 72, semanticSampleLimit: 16 }),
+    },
+    {
+      tag: 'compact-24x8',
+      history: compactCommandHistoryForStorage(baseHistory, { maxPoints: 24, semanticSampleLimit: 8 }),
+    },
+    {
+      tag: 'compact-12x0',
+      history: compactCommandHistoryForStorage(baseHistory, { maxPoints: 12, semanticSampleLimit: 0 }),
+    },
+  ];
+
+  let lastError = null;
+  for (const candidate of candidates) {
+    try {
+      storage.setItem(COMMAND_HISTORY_KEY, JSON.stringify(candidate.history));
+      return {
+        history: candidate.history,
+        persisted: true,
+        degraded: candidate.tag !== 'full',
+        reason: candidate.tag,
+      };
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  console.warn('command history persistence skipped:', lastError);
+  return {
+    history: baseHistory,
+    persisted: false,
+    degraded: true,
+    reason: 'persist_failed',
+    error: lastError,
+  };
 }
 
 function recordCommandSnapshot(data) {
@@ -2708,8 +3667,8 @@ function recordCommandSnapshot(data) {
   } else {
     history.push(point);
   }
-  commandHistoryStorage = sanitizeCommandHistory(history);
-  localStorage.setItem(COMMAND_HISTORY_KEY, JSON.stringify(commandHistoryStorage));
+  const persisted = persistCommandHistoryStorage(history);
+  commandHistoryStorage = persisted.history;
 }
 
 function buildSemanticTrendGroups(history) {
@@ -2721,6 +3680,8 @@ function buildSemanticTrendGroups(history) {
         label: sample.groupLabel,
         metricRole: sample.metricRole,
         timeBehavior: sample.timeBehavior,
+        metricIdentity: sample.metricIdentity,
+        metricLabel: sample.metricLabel,
         unit: sample.unit,
         unitFamily: sample.unitFamily,
         subjectType: sample.subjectType,
@@ -2741,7 +3702,12 @@ function buildSemanticTrendGroups(history) {
         path: sample.path,
         data: [],
       };
-      series.data.push([point.ts, sample.value]);
+      series.data.push({
+        value: [point.ts, sample.value],
+        knownness: sample.knownness || 'known',
+        path: sample.path,
+        label: sample.label,
+      });
       group.series.set(seriesKey, series);
       group.sources.add(sample.source || 'unknown');
       group.knownness.add(sample.knownness || 'known');
@@ -2815,7 +3781,7 @@ function semanticTrendDerivationStats(groups = []) {
   };
 }
 
-function renderCommandDimensionDerivationSummary(allGroups, visibleGroups, history) {
+function renderCommandDimensionDerivationSummary(allGroups, visibleGroups, history, matchedCount = visibleGroups.length) {
   const box = document.getElementById('command-dimension-derivation');
   const windowLabel = document.getElementById('command-trend-window');
   if (windowLabel) {
@@ -2830,8 +3796,8 @@ function renderCommandDimensionDerivationSummary(allGroups, visibleGroups, histo
   box.innerHTML = `
     <div class="command-dimension-rule">
       <span>分图内涵</span>
-      <strong>角色 + 时间行为 + 单位 + 对象</strong>
-      <small>已用、可用、容量、速率分开；USD、Token、次数、比例不共轴。</small>
+      <strong>角色 + 时间行为 + 指标身份 + 单位 + 对象</strong>
+      <small>成本、余额、额度即使同为 USD 也分图；请求、会话、记录、模型数即使同为 count 也分图。</small>
     </div>
     <div class="command-dimension-rule">
       <span>曲线外延</span>
@@ -2840,8 +3806,8 @@ function renderCommandDimensionDerivationSummary(allGroups, visibleGroups, histo
     </div>
     <div class="command-dimension-rule">
       <span>当前派生</span>
-      <strong>${Number(visibleGroups.length).toLocaleString()} / ${Number(allGroups.length).toLocaleString()} 组</strong>
-      <small>${Number(history.length).toLocaleString()} 个快照 · ${escapeHtml(filterNote)}</small>
+      <strong>${Number(visibleGroups.length).toLocaleString()} / ${Number(matchedCount).toLocaleString()} 组</strong>
+      <small>全集 ${Number(allGroups.length).toLocaleString()} 组 · ${Number(history.length).toLocaleString()} 个快照 · 覆盖优先 · ${escapeHtml(filterNote)}</small>
     </div>
     <div class="command-dimension-rule">
       <span>量纲画像</span>
@@ -2909,18 +3875,24 @@ function renderSemanticTrendGrid({
 
   for (const chart of chartMap.values()) chart?.dispose?.();
   chartMap.clear();
-  grid.innerHTML = groups.map(group => `
-    <section class="command-semantic-trend-card" data-semantic-trend-key="${escapeHtml(group.key)}">
-      <div class="command-semantic-trend-head">
-        <div>
-          <strong>${escapeHtml(group.label || group.groupLabel || '--')}</strong>
-          <span>${escapeHtml(semanticTrendGroupSubtitle(group))}</span>
+  grid.innerHTML = groups.map(group => {
+    const mode = semanticTrendViewMode(group);
+    return `
+      <section class="command-semantic-trend-card" data-semantic-trend-key="${escapeHtml(group.key)}">
+        <div class="command-semantic-trend-head">
+          <div>
+            <strong>${escapeHtml(group.label || group.groupLabel || '--')}</strong>
+            <span>${escapeHtml(semanticTrendGroupSubtitle(group))}</span>
+          </div>
+          <div class="command-semantic-trend-badges" aria-label="趋势显示模式">
+            <small>${escapeHtml((group.unit || group.unitFamily || '--').toUpperCase())}</small>
+            <small class="command-semantic-view-badge">${escapeHtml(semanticTrendViewModeLabel(mode))}</small>
+          </div>
         </div>
-        <small>${escapeHtml((group.unit || group.unitFamily || '--').toUpperCase())}</small>
-      </div>
-      <div class="command-semantic-trend-chart" id="${escapeHtml(semanticTrendChartDomId(chartIdPrefix, group.key))}" role="img" aria-label="${escapeHtml(group.label || group.groupLabel || '语义趋势图')}"></div>
-    </section>
-  `).join('');
+        <div class="command-semantic-trend-chart" id="${escapeHtml(semanticTrendChartDomId(chartIdPrefix, group.key))}" role="img" aria-label="${escapeHtml(group.label || group.groupLabel || '语义趋势图')}"></div>
+      </section>
+    `;
+  }).join('');
 
   const isDark = document.documentElement.getAttribute('data-theme') !== 'light';
   const textColor = isDark ? '#8b949e' : '#656d76';
@@ -2935,7 +3907,20 @@ function renderSemanticTrendGrid({
       trendChart = echarts.init(element, null, { renderer: 'canvas' });
       chartMap.set(group.key, trendChart);
     }
+    const mode = semanticTrendViewMode(group);
     const formatValue = semanticTrendValueFormatter(group);
+    const formatViewValue = semanticTrendYAxisFormatter(group, mode);
+    const extent = semanticTrendNumericExtent(group);
+    const range = extent ? extent.max - extent.min : 0;
+    const focusPadding = extent
+      ? Math.max(Math.abs(extent.max || extent.min) * 0.01, Math.abs(range) * 0.12, 1)
+      : 0;
+    const focusedMin = mode === 'focused' && extent
+      ? (extent.min >= 0 ? Math.max(0, extent.min - focusPadding) : extent.min - focusPadding)
+      : undefined;
+    const focusedMax = mode === 'focused' && extent
+      ? extent.max + focusPadding
+      : undefined;
     const series = [...group.series.values()].map((item, idx) => ({
       name: item.name,
       type: 'line',
@@ -2944,7 +3929,7 @@ function renderSemanticTrendGrid({
       lineStyle: { color: palette[idx % palette.length], width: 2 },
       itemStyle: { color: palette[idx % palette.length] },
       emphasis: { focus: 'series' },
-      data: item.data,
+      data: transformSemanticTrendSeriesData(item.data, mode),
     }));
     trendChart.setOption({
       backgroundColor: 'transparent',
@@ -2965,8 +3950,22 @@ function renderSemanticTrendGrid({
         textStyle: { color: isDark ? '#e6edf3' : '#1f2328', fontSize: 12 },
         formatter: params => {
           const t = new Date(params[0]?.value?.[0] || params[0]?.axisValue).toLocaleString('zh-CN');
-          const rows = params.map(p => `${p.marker}${escapeHtml(p.seriesName)}: <b>${formatValue(p.value?.[1] ?? p.value)}</b>`);
-          return `${rows.join('<br>')}<div style="color:${textColor};font-size:10px;margin-top:4px">${t}</div>`;
+          const rows = params.map(p => {
+            const evidence = semanticTrendKnownnessLabel(p.data?.knownness || 'known');
+            const evidenceText = evidence && evidence !== '已知'
+              ? ` <span style="color:${textColor};font-size:10px">(${escapeHtml(evidence)})</span>`
+              : '';
+            const displayValue = nullableNumber(p.value?.[1] ?? p.value);
+            const rawValue = nullableNumber(p.data?.rawValue);
+            const displayText = displayValue === null ? '--' : formatViewValue(displayValue);
+            const rawText = rawValue === null ? '--' : formatValue(rawValue);
+            const rawLine = mode === 'absolute'
+              ? ` <span style="color:${textColor};font-size:10px">原始 ${escapeHtml(rawText)}</span>`
+              : `<br><span style="color:${textColor};font-size:10px">原始 ${escapeHtml(rawText)}</span>`;
+            return `${p.marker}${escapeHtml(p.seriesName)}: <b>${escapeHtml(displayText)}</b>${rawLine}${evidenceText}`;
+          });
+          const modeLabel = semanticTrendViewModeLabel(mode);
+          return `${rows.join('<br>')}<div style="color:${textColor};font-size:10px;margin-top:4px">${escapeHtml(modeLabel)} · ${t}</div>`;
         },
       },
       xAxis: {
@@ -2977,16 +3976,26 @@ function renderSemanticTrendGrid({
       },
       yAxis: {
         type: 'value',
-        name: group.unit || group.unitFamily,
+        name: semanticTrendYAxisName(group, mode),
+        scale: mode === 'focused',
+        min: focusedMin,
+        max: focusedMax,
         nameTextStyle: { color: textColor, fontSize: 10 },
-        axisLabel: { color: textColor, fontSize: 10, formatter: v => formatValue(v) },
+        axisLabel: { color: textColor, fontSize: 10, formatter: v => formatViewValue(v) },
         splitLine: { lineStyle: { color: splitColor } },
       },
       series,
     }, { notMerge: true });
   }
 
-  if (note) note.textContent = noteText || `${groups.length} 个语义趋势组；每组独立 y 轴，避免不同数量级互相压扁。`;
+  if (note) {
+    const modeNotes = [...new Set(groups.map(group => semanticTrendViewMode(group)))]
+      .map(mode => `${semanticTrendViewModeLabel(mode)}: ${semanticTrendViewModeNote(mode)}`)
+      .filter(Boolean)
+      .join('；');
+    const baseNote = noteText || `${groups.length} 个语义趋势组；每组独立 y 轴，避免不同数量级互相压扁。`;
+    note.textContent = modeNotes ? `${baseNote} 视图模式: ${modeNotes}` : baseNote;
+  }
 }
 
 function isCommandDimensionTrendGroup(group) {
@@ -3000,10 +4009,10 @@ function renderCommandDimensionTrend(history, context = {}) {
   const windowedHistory = filterCommandTrendHistoryByWindow(history, commandDimensionTrendWindow);
   const allGroups = buildSemanticTrendGroups(windowedHistory)
     .filter(isCommandDimensionTrendGroup);
-  const groups = allGroups
-    .filter(group => semanticTrendGroupMatchesDimensionFilter(group))
-    .slice(0, 10);
-  renderCommandDimensionDerivationSummary(allGroups, groups, windowedHistory);
+  const matchedGroups = allGroups
+    .filter(group => semanticTrendGroupMatchesDimensionFilter(group));
+  const groups = pickRepresentativeSemanticTrendGroups(matchedGroups, COMMAND_DIMENSION_TREND_GROUP_LIMIT);
+  renderCommandDimensionDerivationSummary(allGroups, groups, windowedHistory, matchedGroups.length);
   const units = [...new Set(groups.map(group => group.unit || group.unitFamily).filter(Boolean))].join(' / ');
   const sources = [...new Set(groups.flatMap(group => group.sources || []))].join(' / ');
   const windowOption = COMMAND_TREND_WINDOW_OPTIONS[commandDimensionTrendWindow] || COMMAND_TREND_WINDOW_OPTIONS['6h'];
@@ -3013,22 +4022,25 @@ function renderCommandDimensionTrend(history, context = {}) {
     context.hasSub2Api ? 'Sub2API' : null,
   ].filter(Boolean).join(' + ') || '远端额度等待可用 key';
   const noteText = windowedHistory.length < 2
-    ? '已开始记录当前浏览器的语义快照；第二次刷新后会形成走势。分图键为角色、时间行为、单位、对象，来源作为曲线。'
-    : `${windowOption.label} · ${filterLabel} · ${windowedHistory.length} 个快照 · ${groups.length}/${allGroups.length} 个语义组 · ${remote} · 单位 ${units || '--'} · 来源 ${sources || '--'}；unknown 跳过，reported_zero 保留为 0，本地缓存最多 ${MAX_COMMAND_HISTORY_PTS} 个快照。`;
+    ? '已开始记录当前浏览器的语义快照；第二次刷新后会形成走势。分图键为角色、时间行为、指标身份、单位、对象，来源作为曲线。'
+    : matchedGroups.length
+      ? `${windowOption.label} · ${filterLabel} · ${windowedHistory.length} 个快照 · ${groups.length}/${matchedGroups.length} 个匹配语义组 · 全集 ${allGroups.length} 组 · 覆盖优先展示 · ${remote} · 单位 ${units || '--'} · 来源 ${sources || '--'}；unknown/planned 跳过，reported_zero 保留为 0，本地缓存最多 ${MAX_COMMAND_HISTORY_PTS} 个快照。`
+      : `${windowOption.label} · ${filterLabel} · ${windowedHistory.length} 个快照 · 当前筛选没有匹配语义组 · 全集 ${allGroups.length} 组；unknown/planned 不进入曲线。`;
   renderSemanticTrendGrid({
     gridId: 'command-dimension-trend-grid',
     noteId: 'command-trend-note',
     chartMap: commandDimensionTrendCharts,
     chartIdPrefix: 'dimension-trend',
     groups,
-    emptyText: '等待语义采样；刷新后会按角色、时间、单位和对象自动分图。',
+    emptyText: '等待语义采样；刷新后会按角色、时间、指标身份、单位和对象自动分图。',
     noteText,
   });
 }
 
 function renderCommandSemanticTrend() {
   const history = filterCommandTrendHistoryByWindow(commandHistoryStorage, commandDimensionTrendWindow);
-  const groups = buildSemanticTrendGroups(history).slice(0, 12);
+  const allGroups = buildSemanticTrendGroups(history);
+  const groups = pickRepresentativeSemanticTrendGroups(allGroups, COMMAND_SEMANTIC_TREND_GROUP_LIMIT);
   const units = [...new Set(groups.map(group => group.unit || group.unitFamily).filter(Boolean))].join(' / ');
   const windowOption = COMMAND_TREND_WINDOW_OPTIONS[commandDimensionTrendWindow] || COMMAND_TREND_WINDOW_OPTIONS['6h'];
   renderSemanticTrendGrid({
@@ -3037,10 +4049,10 @@ function renderCommandSemanticTrend() {
     chartMap: commandSemanticTrendCharts,
     chartIdPrefix: 'semantic-trend',
     groups,
-    emptyText: '等待语义采样；刷新后会按角色、窗口、单位和对象自动分图。',
+    emptyText: '等待语义采样；刷新后会按角色、窗口、指标身份、单位和对象自动分图。',
     noteText: groups.length
-      ? `${windowOption.label} · ${history.length} 个快照 · ${groups.length} 个语义趋势组 · 单位 ${units || '--'}；每组独立 y 轴，避免不同数量级互相压扁。`
-      : '语义趋势不会把 USD、Token、次数、比例混在同一轴，也不会把 unknown 当作 0。',
+      ? `${windowOption.label} · ${history.length} 个快照 · ${groups.length}/${allGroups.length} 个语义趋势组 · 覆盖优先展示 · 单位 ${units || '--'}；每组独立 y 轴，指标身份不同不共轴。`
+      : '语义趋势不会把成本/余额/额度、请求/会话/记录混在同一轴，也不会把 unknown 当作 0。',
   });
 }
 
@@ -3081,40 +4093,49 @@ function relayTrendMetricKey(sample) {
 function relayTrendGroupSpec(sample, view = commandRelayView) {
   const relaySource = relaySourceLabelFromSample(sample);
   const metricKey = relayTrendMetricKey(sample);
-  const metricLabel = relayMetricLabel(metricKey) || sample.label || semanticTrendMetricLabel(sample.path);
+  const metricIdentity = sample.metricIdentity || normalizeSemanticMetricIdentity(sample, sample.path || metricKey);
+  const metricLabel = relayMetricLabel(metricKey)
+    || sample.metricLabel
+    || sample.label
+    || semanticTrendMetricIdentityLabel(metricIdentity, semanticTrendMetricLabel(sample.path));
   if (view === 'metric') {
+    const comparableMetricLabel = sample.metricLabel
+      || semanticTrendMetricIdentityLabel(metricIdentity, metricLabel);
     return {
       key: [
         'relay-metric',
-        metricKey,
+        metricIdentity,
         sample.metricRole,
         sample.timeBehavior,
         sample.unitFamily,
         sample.unit,
-        sample.subjectType,
       ].join('|'),
-      label: metricLabel,
+      label: `${comparableMetricLabel} · ${semanticTrendRoleLabel(sample.metricRole)} · ${semanticTrendTimeLabel(sample.timeBehavior)}`,
       seriesKey: `${relaySource}|${sample.seriesKey || sample.path || metricKey}`,
       seriesName: relaySource,
       relaySource,
       relayMetric: metricKey,
+      metricIdentity,
     };
   }
   return {
     key: [
       'relay-source',
       relaySource,
+      metricKey,
+      metricIdentity,
       sample.metricRole,
       sample.timeBehavior,
       sample.unitFamily,
       sample.unit,
       sample.subjectType,
     ].join('|'),
-    label: `${relaySource} · ${semanticTrendRoleLabel(sample.metricRole)} · ${semanticTrendTimeLabel(sample.timeBehavior)}`,
+    label: `${relaySource} · ${metricLabel} · ${semanticTrendRoleLabel(sample.metricRole)} · ${semanticTrendTimeLabel(sample.timeBehavior)}`,
     seriesKey: `${metricKey}|${sample.seriesKey || sample.path || relaySource}`,
     seriesName: metricLabel,
     relaySource,
     relayMetric: metricKey,
+    metricIdentity,
   };
 }
 
@@ -3134,6 +4155,8 @@ function buildRelayTrendGroups(history, view = commandRelayView) {
         source: spec.relaySource,
         relaySource: spec.relaySource,
         relayMetric: spec.relayMetric,
+        metricIdentity: spec.metricIdentity || sample.metricIdentity,
+        metricLabel: sample.metricLabel || semanticTrendMetricIdentityLabel(spec.metricIdentity || sample.metricIdentity, sample.label),
         sources: new Set(),
         knownness: new Set(),
         extensionDomains: new Set(),
@@ -3149,7 +4172,12 @@ function buildRelayTrendGroups(history, view = commandRelayView) {
         path: sample.path,
         data: [],
       };
-      series.data.push([point.ts, sample.value]);
+      series.data.push({
+        value: [point.ts, sample.value],
+        knownness: sample.knownness || 'known',
+        path: sample.path,
+        label: sample.label,
+      });
       group.series.set(spec.seriesKey, series);
       group.sources.add(spec.relaySource);
       group.knownness.add(sample.knownness || 'known');
@@ -3184,7 +4212,8 @@ function buildRelayTrendGroups(history, view = commandRelayView) {
 
 function renderCommandRelayTrend(history, context = {}) {
   const windowedHistory = filterCommandTrendHistoryByWindow(history, commandDimensionTrendWindow);
-  const groups = buildRelayTrendGroups(windowedHistory, commandRelayView).slice(0, 12);
+  const allGroups = buildRelayTrendGroups(windowedHistory, commandRelayView);
+  const groups = pickRepresentativeSemanticTrendGroups(allGroups, COMMAND_RELAY_TREND_GROUP_LIMIT);
   const viewLabel = commandRelayView === 'metric' ? '按类型看中转站' : '按中转站看类型';
   const windowOption = COMMAND_TREND_WINDOW_OPTIONS[commandDimensionTrendWindow] || COMMAND_TREND_WINDOW_OPTIONS['6h'];
   const relaySources = [
@@ -3193,8 +4222,8 @@ function renderCommandRelayTrend(history, context = {}) {
   ].filter(Boolean).join(' / ') || '等待 NewAPI / Sub2API 采样';
   const units = [...new Set(groups.map(group => group.unit || group.unitFamily).filter(Boolean))].join(' / ');
   const noteText = groups.length
-    ? `${viewLabel} · ${windowOption.label} · ${windowedHistory.length} 个快照 · ${groups.length} 个中转语义组 · ${relaySources} · 单位 ${units || '--'}；余额、可用、已用、成本、Token、请求独立分组，不共轴。`
-    : `${viewLabel} · 等待 NewAPI / Sub2API 采样；采到数据后会按语义角色、时间行为、单位和对象自动分图。`;
+    ? `${viewLabel} · ${windowOption.label} · ${windowedHistory.length} 个快照 · ${groups.length}/${allGroups.length} 个中转语义组 · 覆盖优先展示 · ${relaySources} · 单位 ${units || '--'}；余额、额度、成本、Token、请求按指标身份独立分组，不共轴。`
+    : `${viewLabel} · 等待 NewAPI / Sub2API 采样；采到数据后会按语义角色、时间行为、指标身份、单位和对象自动分图。`;
   renderSemanticTrendGrid({
     gridId: 'command-relay-trend-grid',
     noteId: 'command-relay-trend-note',

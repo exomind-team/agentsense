@@ -705,6 +705,22 @@
       text-overflow: ellipsis;
       white-space: nowrap;
     }
+    .command-semantic-trend-badges {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 5px;
+      max-width: 190px;
+      flex-shrink: 0;
+    }
+    .command-semantic-trend-badges small {
+      max-width: none;
+    }
+    .command-semantic-trend-badges .command-semantic-view-badge {
+      color: var(--text);
+      background: rgba(20, 184, 166, 0.10);
+      border-color: rgba(20, 184, 166, 0.35);
+    }
     .command-semantic-trend-chart {
       width: 100%;
       height: 260px;
@@ -770,7 +786,7 @@
     }
     .command-semantic-summary {
       display: grid;
-      grid-template-columns: repeat(7, minmax(0, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(84px, 1fr));
       gap: 8px;
       padding: 10px 12px 0;
     }
@@ -958,6 +974,16 @@
       display: block;
       margin-top: 3px;
     }
+    .command-lane-question {
+      min-width: 0;
+      margin: 0 0 8px;
+      border-left: 2px solid var(--accent);
+      color: var(--text);
+      font-size: 11px;
+      line-height: 1.5;
+      padding-left: 8px;
+      overflow-wrap: anywhere;
+    }
     .command-lane-metrics {
       display: grid;
       grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -980,6 +1006,48 @@
       color: var(--text);
       font-variant-numeric: tabular-nums;
     }
+    .command-lane-intent {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+      margin: 8px 0;
+    }
+    .command-lane-intent span {
+      min-width: 0;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: var(--bg3);
+      color: var(--muted);
+      font-size: 10px;
+      line-height: 1.35;
+      padding: 2px 7px;
+      overflow-wrap: anywhere;
+    }
+    .command-lane-contract,
+    .command-intent-contract {
+      display: grid;
+      grid-template-columns: 44px minmax(0, 1fr);
+      gap: 8px;
+      align-items: start;
+      border-top: 1px solid rgba(255,255,255,0.05);
+      padding-top: 6px;
+      margin-top: 6px;
+    }
+    .command-lane-contract span,
+    .command-intent-contract span {
+      color: var(--muted);
+      font-size: 10px;
+      line-height: 1.45;
+      white-space: nowrap;
+    }
+    .command-lane-contract small,
+    .command-intent-contract small {
+      min-width: 0;
+      color: var(--text);
+      font-size: 10px;
+      line-height: 1.45;
+      overflow-wrap: anywhere;
+    }
     .command-semantic-pill {
       display: inline-flex;
       align-items: center;
@@ -1000,6 +1068,29 @@
     }
     .command-semantic-pill.widget {
       color: var(--green);
+    }
+    .command-semantic-pill.compact-id,
+    .command-semantic-pill.question-type {
+      color: var(--accent);
+    }
+    .command-semantic-pill.mapping-ready {
+      color: var(--green);
+    }
+    .command-semantic-pill.mapping-partial,
+    .command-semantic-pill.mapping-explainable_gap {
+      color: var(--yellow);
+    }
+    .command-semantic-pill.mapping-missing,
+    .command-semantic-pill.missing-auth_failed,
+    .command-semantic-pill.missing-fetch_failed {
+      color: var(--red);
+    }
+    .command-semantic-pill.missing-not_configured,
+    .command-semantic-pill.missing-not_connected,
+    .command-semantic-pill.missing-no_data,
+    .command-semantic-pill.missing-unknown,
+    .command-semantic-pill.missing-planned {
+      color: var(--yellow);
     }
     .command-semantic-pill.knownness-unknown,
     .command-semantic-pill.knownness-planned {
@@ -1083,6 +1174,280 @@
       color: var(--text);
       font-size: 11px;
       line-height: 1.45;
+    }
+    .command-intent-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .command-situation-shell {
+      margin: 0 12px;
+    }
+    .command-situation-path {
+      display: grid;
+      gap: 8px;
+      padding: 10px 0 0;
+    }
+    .command-situation-principle {
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--bg2);
+      padding: 9px 10px;
+    }
+    .command-situation-principle strong {
+      display: block;
+      color: var(--text);
+      font-size: 12px;
+      line-height: 1.35;
+      margin-bottom: 4px;
+    }
+    .command-situation-principle span {
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.5;
+    }
+    .command-situation-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+    }
+    .command-situation-card {
+      min-width: 0;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--bg2);
+      padding: 9px;
+    }
+    .command-situation-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+    .command-situation-head > div {
+      min-width: 0;
+    }
+    .command-situation-head strong {
+      display: block;
+      color: var(--text);
+      font-size: 12px;
+      line-height: 1.35;
+    }
+    .command-situation-head span {
+      display: block;
+      color: var(--muted);
+      font-size: 10px;
+      line-height: 1.35;
+      overflow-wrap: anywhere;
+    }
+    .command-situation-meta {
+      flex-shrink: 0;
+      text-align: right;
+    }
+    .command-situation-row,
+    .command-lane-explanation,
+    .command-lane-evidence {
+      display: grid;
+      grid-template-columns: 56px minmax(0, 1fr);
+      gap: 8px;
+      align-items: start;
+      border-top: 1px solid rgba(255,255,255,0.05);
+      padding-top: 6px;
+      margin-top: 6px;
+    }
+    .command-situation-row > span,
+    .command-lane-explanation > span,
+    .command-lane-evidence > span {
+      color: var(--muted);
+      font-size: 10px;
+      line-height: 1.5;
+      white-space: nowrap;
+    }
+    .command-situation-row small,
+    .command-lane-explanation small {
+      display: block;
+      min-width: 0;
+      color: var(--text);
+      font-size: 10px;
+      line-height: 1.5;
+      overflow-wrap: anywhere;
+    }
+    .command-situation-row > div,
+    .command-lane-evidence > div {
+      min-width: 0;
+    }
+    .command-situation-links {
+      display: grid;
+      gap: 0;
+      margin-top: 2px;
+    }
+    .command-intent-list,
+    .command-missing-list,
+    .command-feedback-loop {
+      display: grid;
+      gap: 8px;
+      padding: 10px;
+    }
+    .command-intent-card,
+    .command-missing-card {
+      min-width: 0;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--bg2);
+      padding: 9px;
+    }
+    .command-mapping-card.ready {
+      border-left: 3px solid var(--green);
+    }
+    .command-mapping-card.partial,
+    .command-mapping-card.explainable_gap {
+      border-left: 3px solid var(--yellow);
+    }
+    .command-mapping-card.missing {
+      border-left: 3px solid var(--red);
+    }
+    .command-intent-head,
+    .command-missing-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 7px;
+    }
+    .command-intent-head > div,
+    .command-missing-head > div {
+      min-width: 0;
+    }
+    .command-intent-head strong,
+    .command-missing-head strong {
+      display: block;
+      color: var(--text);
+      font-size: 12px;
+      line-height: 1.35;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .command-intent-head span,
+    .command-missing-head span {
+      display: block;
+      color: var(--muted);
+      font-size: 10px;
+      line-height: 1.35;
+      overflow-wrap: anywhere;
+    }
+    .command-intent-card p,
+    .command-missing-card p {
+      margin: 0 0 6px;
+      color: var(--text);
+      font-size: 11px;
+      line-height: 1.5;
+      overflow-wrap: anywhere;
+    }
+    .command-intent-widgets {
+      margin-top: 7px;
+    }
+    .command-intent-metrics {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      margin: 7px 0;
+    }
+    .command-missing-card.warning {
+      border-left: 3px solid var(--yellow);
+    }
+    .command-missing-card.error,
+    .command-missing-card.risk {
+      border-left: 3px solid var(--red);
+    }
+    .command-missing-items {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      margin: 7px 0;
+    }
+    .command-missing-items code {
+      max-width: 100%;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      background: var(--bg3);
+      color: var(--accent);
+      font-size: 10px;
+      padding: 2px 5px;
+      overflow-wrap: anywhere;
+    }
+    .command-missing-card small {
+      display: block;
+      color: var(--muted);
+      font-size: 10px;
+      line-height: 1.45;
+      overflow-wrap: anywhere;
+    }
+    .command-feedback-principle {
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--bg2);
+      padding: 9px;
+    }
+    .command-feedback-principle strong {
+      display: block;
+      color: var(--text);
+      font-size: 12px;
+      margin-bottom: 4px;
+    }
+    .command-feedback-principle span {
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.45;
+    }
+    .command-feedback-steps,
+    .command-feedback-status {
+      display: grid;
+      gap: 6px;
+    }
+    .command-feedback-step,
+    .command-feedback-status > div {
+      min-width: 0;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--bg2);
+      padding: 8px;
+    }
+    .command-feedback-step {
+      display: grid;
+      grid-template-columns: 22px minmax(0, 1fr);
+      gap: 7px;
+      align-items: start;
+    }
+    .command-feedback-step b {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 20px;
+      height: 20px;
+      border-radius: 999px;
+      background: var(--bg3);
+      color: var(--accent);
+      font-size: 10px;
+    }
+    .command-feedback-step strong,
+    .command-feedback-status span {
+      display: block;
+      color: var(--text);
+      font-size: 11px;
+      line-height: 1.35;
+      margin-bottom: 3px;
+    }
+    .command-feedback-step span,
+    .command-feedback-status small {
+      color: var(--muted);
+      font-size: 10px;
+      line-height: 1.45;
+      overflow-wrap: anywhere;
+    }
+    .command-feedback-checks {
+      margin: 0;
+      padding-left: 16px;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.5;
     }
     .command-semantic-empty {
       color: var(--muted);
@@ -1628,9 +1993,14 @@
       .command-dimension-trend-grid .command-semantic-trend-chart { height: 250px; }
       .command-semantic-trend-head { align-items: stretch; }
       .command-semantic-trend-head small { max-width: 92px; }
+      .command-semantic-trend-badges { max-width: 120px; }
+      .command-semantic-trend-badges small { max-width: 92px; }
       .command-semantic-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .command-blueprint-grid { grid-template-columns: 1fr; padding-left: 8px; padding-right: 8px; }
       .command-semantic-grid { grid-template-columns: 1fr; padding-left: 8px; padding-right: 8px; }
+      .command-intent-grid { grid-template-columns: 1fr; }
+      .command-situation-shell { margin-left: 8px; margin-right: 8px; }
+      .command-situation-grid { grid-template-columns: 1fr; }
       .command-widget-registry { grid-template-columns: 1fr; }
       .command-evidence-section { margin-left: 8px; margin-right: 8px; }
       .command-evidence-note { grid-template-columns: 1fr; gap: 3px; }
