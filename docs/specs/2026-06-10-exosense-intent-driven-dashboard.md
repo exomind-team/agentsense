@@ -349,3 +349,121 @@ metric_role + time_behavior + metric_identity + unit_family + unit + subject_typ
 6. 对本地 Agent prompt/response 正文做采集。
 
 ExoSense 当前最重要的是把个人态势观察的语义骨架立起来: 数据可以扩展，图表可以派生，缺失也能被解释。
+
+---
+
+## 翻译层与自适应生成数据面板的平衡方案
+
+### 核心矛盾
+
+**翻译层的需求**：
+- 从意图出发做数据结构的约束（面向上层聚合呈现的图表）
+- 做下层原始信号的转换（面向下层收集的各类信息）
+
+**风险**：
+- 翻译层容易导致定制化代码（为每个数据源写特定的转换逻辑）
+- 定制化代码与「自适应生成数据面板」冲突（自适应意味着动态生成，定制化意味着静态配置）
+
+### 平衡方案：声明式翻译层
+
+**核心思想**：用声明式配置代替命令式代码
+
+```javascript
+// 声明式翻译规则（配置文件）
+const translationRules = {
+  'newapi': {
+    'input_tokens': { target: 'system.model.tokens.input', unit: 'token' },
+    'output_tokens': { target: 'system.model.tokens.output', unit: 'token' },
+    'total_tokens': { target: 'system.model.tokens.total', unit: 'token' },
+    'quota_used': { target: 'system.model.quota.used', unit: 'quota' },
+  },
+  'sub2api': {
+    'input_tokens': { target: 'system.model.tokens.input', unit: 'token' },
+    'output_tokens': { target: 'system.model.tokens.output', unit: 'token' },
+    'total_tokens': { target: 'system.model.tokens.total', unit: 'token' },
+    'cost': { target: 'system.model.cost.total', unit: 'usd' },
+  },
+  'codex': {
+    'tokens_used': { target: 'system.model.tokens.total', unit: 'token' },
+  },
+};
+
+// 通用翻译函数（命令式代码，但逻辑通用）
+function translateSignal(source, rawData) {
+  const rules = translationRules[source] || {};
+  const translated = {};
+  
+  for (const [key, value] of Object.entries(rawData)) {
+    if (rules[key]) {
+      translated[rules[key].target] = {
+        value,
+        unit: rules[key].unit,
+        source,
+      };
+    }
+  }
+  
+  return translated;
+}
+```
+
+### 与自适应生成数据面板的协同
+
+**自适应生成数据面板的核心**：
+- 根据可用数据动态生成面板
+- 不预先定义固定的面板结构
+
+**翻译层如何支持自适应**：
+1. **元数据驱动**：翻译规则包含元数据（如 `metric_role`、`time_behavior`）
+2. **动态发现**：面板根据翻译后的元数据动态发现可展示的数据
+3. **语义推断**：翻译层自动推断语义（如 `input_tokens` → `metric_role: "used"`）
+
+```javascript
+// 翻译规则包含元数据
+const translationRules = {
+  'newapi': {
+    'input_tokens': { 
+      target: 'system.model.tokens.input', 
+      unit: 'token',
+      semantics: {
+        metric_role: 'used',
+        metric_identity: 'tokens',
+        time_behavior: 'cumulative',
+      }
+    },
+  },
+};
+
+// 自适应面板根据语义动态生成
+function generatePanel(translatedSignals) {
+  const panels = [];
+  
+  // 按 metric_role 分组
+  const usedSignals = translatedSignals.filter(s => s.semantics.metric_role === 'used');
+  if (usedSignals.length > 0) {
+    panels.push({
+      type: 'trend',
+      title: '消耗趋势',
+      signals: usedSignals,
+    });
+  }
+  
+  return panels;
+}
+```
+
+### 平衡原则
+
+1. **配置驱动**：翻译规则用配置文件定义，不是硬编码
+2. **语义丰富**：翻译规则包含语义元数据，支持自适应生成
+3. **通用逻辑**：翻译函数逻辑通用，不针对特定数据源
+4. **动态发现**：面板根据翻译后的元数据动态发现可展示的数据
+
+### 结论
+
+**翻译层与自适应生成数据面板可以协同工作**，关键是：
+- 用声明式配置代替命令式代码
+- 翻译规则包含丰富的语义元数据
+- 面板根据语义元数据动态生成，不预先定义固定结构
+
+这样既能完成数据转换，又不会导致过度定制化，还能支持自适应生成数据面板。
