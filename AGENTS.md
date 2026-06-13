@@ -28,6 +28,12 @@ Invoke-RestMethod http://127.0.0.1:7894/api/sources
 Invoke-RestMethod "http://127.0.0.1:7894/api/signals?source=sub2api-main&role=available"
 Invoke-RestMethod http://127.0.0.1:7894/api/datasets
 Invoke-RestMethod http://127.0.0.1:7894/api/semantic-projection
+# 系统信息 API
+Invoke-RestMethod http://127.0.0.1:7894/api/system/info
+Invoke-RestMethod http://127.0.0.1:7894/api/system/cpu
+Invoke-RestMethod http://127.0.0.1:7894/api/system/memory
+Invoke-RestMethod http://127.0.0.1:7894/api/system/disk
+Invoke-RestMethod http://127.0.0.1:7894/api/system/network
 ```
 
 ## 呈现约束
