@@ -26,18 +26,72 @@ const FILTER_CATEGORIES = [
 const LS_HISTORY_KEY = 'quota_local_history';
 const MAX_LOCAL_PTS = 60;
 const API_BASE = '';
+const COMMAND_HISTORY_KEY = 'command_usage_snapshots_v1';
+const COMMAND_HISTORY_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+const MAX_COMMAND_HISTORY_PTS = 720;
+const COMMAND_MODEL_SORT_KEY = 'command_model_sort_v1';
+const COMMAND_RELAY_VIEW_KEY = 'command_relay_view_v1';
+const COMMAND_RELAY_DETAILS_COLLAPSED_KEY = 'command_relay_details_collapsed_v1';
+const COMMAND_MODEL_TREND_WINDOW_KEY = 'command_model_trend_window_v1';
+const COMMAND_DIMENSION_TREND_WINDOW_KEY = 'command_dimension_trend_window_v1';
+const COMMAND_DIMENSION_TREND_FILTER_KEY = 'command_dimension_trend_filter_v1';
+const COMMAND_MODEL_SORT_LABELS = {
+  cost: '成本优先',
+  tokens: 'Token优先',
+  requests: '请求优先',
+  source: '来源分组',
+  model: '模型聚合',
+};
+const COMMAND_TREND_WINDOW_OPTIONS = {
+  '6h': { label: '近 6 小时', ms: 6 * 60 * 60 * 1000 },
+  '1d': { label: '近 1 天', ms: 24 * 60 * 60 * 1000 },
+  '7d': { label: '近 7 天', ms: 7 * 24 * 60 * 60 * 1000 },
+};
+const COMMAND_DIMENSION_TREND_FILTERS = {
+  all: { label: '全部', note: '展示所有可趋势化语义组。' },
+  reserve: { label: '余量/容量', note: '只看可用额度、余额、总量、容量这类还能用多少。' },
+  usage: { label: '消耗', note: '只看成本、Token、请求等已用消耗。' },
+  relay: { label: '中转', note: '只看 NewAPI/Sub2API 等 Agent/API 中转来源。' },
+  local: { label: '本地 Agent', note: '只看 Claude Code、Codex、CC Switch 等本地使用。' },
+  ratio: { label: '比例/速率', note: '只看百分比、速率、风险变化。' },
+};
+const COMMAND_MODEL_TREND_LABELS = {
+  '6h': '近 6 小时',
+  '1d': '近 1 天',
+  '7d': '近 7 天',
+};
+const COMMAND_MODEL_SOURCE_ORDER = ['Claude', 'Codex', 'CC codex', 'CC claude', 'CC unknown', 'NewAPI', 'Sub2API'];
+const COMMAND_MODEL_COLORS = ['#14b8a6', '#388bfd', '#818cf8', '#3fb950', '#f59e0b', '#d97757', '#db61a2', '#a371f7'];
+const COMMAND_DIMENSION_TREND_GROUP_LIMIT = 16;
+const COMMAND_RELAY_TREND_GROUP_LIMIT = 16;
+const COMMAND_SEMANTIC_TREND_GROUP_LIMIT = 16;
+const COMMAND_SEMANTIC_SAMPLE_LIMIT = 240;
 
 // ── State ───────────────────────────────────────────────────────────────────
 
 let rawData = [];
 let activeFilter = null;
-let activeService = 'minimax';
+let activeService = 'command';
 let activeAccountLabel = ''; // filtered by account label for multi-account
 let activeAccountIdx = 0;    // account index within provider (0=first)
 let dsAccountsData = null;   // cached DeepSeek accounts response
 let zaiAccountsData = null;  // cached ZAI accounts response
 let mimoAccountsData = null; // cached MiMo accounts response
 let zaiModelsData = null;    // cached ZAI models data
+let commandDemoData = null;  // cached personal command dashboard demo data
+let localUsageData = null;   // cached local Claude Code aggregate usage
+let commandModelChart = null;
+let commandModelTrendChart = null;
+let commandDimensionTrendCharts = new Map();
+let commandSemanticTrendCharts = new Map();
+let commandRelayTrendCharts = new Map();
+let commandHistoryStorage = [];
+let commandModelSort = 'cost';
+let commandRelayView = 'source';
+let commandRelayDetailsCollapsed = true;
+let commandModelTrendWindow = '7d';
+let commandDimensionTrendWindow = '6h';
+let commandDimensionTrendFilter = 'all';
 let chart = null;
 let weeklyBarChart = null;
 let dsUsageChart = null;
@@ -58,6 +112,8 @@ const MAX_POWER_PTS = 1800;
 // ── Init ─────────────────────────────────────────────────────────────────────
 
 function init() {
+  commandModelChart = echarts.init(document.getElementById('command-model-chart'), null, { renderer: 'canvas' });
+  commandModelTrendChart = echarts.init(document.getElementById('command-model-trend-chart'), null, { renderer: 'canvas' });
   chart = echarts.init(document.getElementById('trend-chart'), null, { renderer: 'canvas' });
   weeklyBarChart = echarts.init(document.getElementById('weekly-bar-chart'), null, { renderer: 'canvas' });
   zaiHourlyChart = echarts.init(document.getElementById('zai-hourly-chart'), null, { renderer: 'canvas' });
@@ -65,6 +121,103 @@ function init() {
   claudeHistoryChart = echarts.init(document.getElementById('claude-history-chart'), null, { renderer: 'canvas' });
   mimoHistoryChart = echarts.init(document.getElementById('mimo-history-chart'), null, { renderer: 'canvas' });
   powerTrendChart = echarts.init(document.getElementById('power-trend-chart'), null, { renderer: 'canvas' });
+  try { commandHistoryStorage = JSON.parse(localStorage.getItem(COMMAND_HISTORY_KEY) || '[]'); } catch(e) { commandHistoryStorage = []; }
+  commandModelSort = localStorage.getItem(COMMAND_MODEL_SORT_KEY) || 'cost';
+  if (!COMMAND_MODEL_SORT_LABELS[commandModelSort]) commandModelSort = 'cost';
+  const commandModelSortSelect = document.getElementById('command-model-sort');
+  if (commandModelSortSelect) {
+    commandModelSortSelect.value = commandModelSort;
+    commandModelSortSelect.addEventListener('change', () => {
+      commandModelSort = commandModelSortSelect.value;
+      localStorage.setItem(COMMAND_MODEL_SORT_KEY, commandModelSort);
+      renderCommandDemo(commandDemoData);
+    });
+  }
+  commandRelayView = localStorage.getItem(COMMAND_RELAY_VIEW_KEY) || 'source';
+  if (!['source', 'metric'].includes(commandRelayView)) commandRelayView = 'source';
+  commandRelayDetailsCollapsed = localStorage.getItem(COMMAND_RELAY_DETAILS_COLLAPSED_KEY) !== 'false';
+  const commandRelayDetailsToggle = document.getElementById('command-relay-details-toggle');
+  if (commandRelayDetailsToggle) {
+    commandRelayDetailsToggle.addEventListener('click', () => {
+      commandRelayDetailsCollapsed = !commandRelayDetailsCollapsed;
+      localStorage.setItem(COMMAND_RELAY_DETAILS_COLLAPSED_KEY, commandRelayDetailsCollapsed ? 'true' : 'false');
+      renderCommandRelayDetailsState();
+      requestAnimationFrame(() => {
+        for (const chart of commandRelayTrendCharts.values()) chart?.resize();
+      });
+    });
+  }
+  document.querySelectorAll('.command-relay-view-btn[data-relay-view]').forEach(btn => {
+    const active = btn.dataset.relayView === commandRelayView;
+    btn.classList.toggle('active', active);
+    btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+    btn.addEventListener('click', () => {
+      commandRelayView = btn.dataset.relayView || 'source';
+      localStorage.setItem(COMMAND_RELAY_VIEW_KEY, commandRelayView);
+      document.querySelectorAll('.command-relay-view-btn[data-relay-view]').forEach(item => {
+        const isActive = item.dataset.relayView === commandRelayView;
+        item.classList.toggle('active', isActive);
+        item.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+      });
+      renderCommandRelaySummary(commandDemoData);
+      renderCommandTrend();
+    });
+  });
+  renderCommandRelayDetailsState();
+  commandDimensionTrendWindow = localStorage.getItem(COMMAND_DIMENSION_TREND_WINDOW_KEY) || '6h';
+  if (!COMMAND_TREND_WINDOW_OPTIONS[commandDimensionTrendWindow]) commandDimensionTrendWindow = '6h';
+  commandDimensionTrendFilter = localStorage.getItem(COMMAND_DIMENSION_TREND_FILTER_KEY) || 'all';
+  if (!COMMAND_DIMENSION_TREND_FILTERS[commandDimensionTrendFilter]) commandDimensionTrendFilter = 'all';
+  document.querySelectorAll('.command-dimension-window-btn').forEach(btn => {
+    const active = btn.dataset.dimensionTrendWindow === commandDimensionTrendWindow;
+    btn.classList.toggle('active', active);
+    btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+    btn.addEventListener('click', () => {
+      commandDimensionTrendWindow = btn.dataset.dimensionTrendWindow || '6h';
+      if (!COMMAND_TREND_WINDOW_OPTIONS[commandDimensionTrendWindow]) commandDimensionTrendWindow = '6h';
+      localStorage.setItem(COMMAND_DIMENSION_TREND_WINDOW_KEY, commandDimensionTrendWindow);
+      document.querySelectorAll('.command-dimension-window-btn').forEach(item => {
+        const isActive = item.dataset.dimensionTrendWindow === commandDimensionTrendWindow;
+        item.classList.toggle('active', isActive);
+        item.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+      });
+      renderCommandTrend();
+    });
+  });
+  document.querySelectorAll('.command-dimension-filter-btn').forEach(btn => {
+    const active = btn.dataset.dimensionTrendFilter === commandDimensionTrendFilter;
+    btn.classList.toggle('active', active);
+    btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+    btn.addEventListener('click', () => {
+      commandDimensionTrendFilter = btn.dataset.dimensionTrendFilter || 'all';
+      if (!COMMAND_DIMENSION_TREND_FILTERS[commandDimensionTrendFilter]) commandDimensionTrendFilter = 'all';
+      localStorage.setItem(COMMAND_DIMENSION_TREND_FILTER_KEY, commandDimensionTrendFilter);
+      document.querySelectorAll('.command-dimension-filter-btn').forEach(item => {
+        const isActive = item.dataset.dimensionTrendFilter === commandDimensionTrendFilter;
+        item.classList.toggle('active', isActive);
+        item.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+      });
+      renderCommandTrend();
+    });
+  });
+  commandModelTrendWindow = localStorage.getItem(COMMAND_MODEL_TREND_WINDOW_KEY) || '7d';
+  if (!COMMAND_MODEL_TREND_LABELS[commandModelTrendWindow]) commandModelTrendWindow = '7d';
+  document.querySelectorAll('.command-model-trend-window-btn').forEach(btn => {
+    const active = btn.dataset.modelTrendWindow === commandModelTrendWindow;
+    btn.classList.toggle('active', active);
+    btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+    btn.addEventListener('click', () => {
+      commandModelTrendWindow = btn.dataset.modelTrendWindow || '7d';
+      if (!COMMAND_MODEL_TREND_LABELS[commandModelTrendWindow]) commandModelTrendWindow = '7d';
+      localStorage.setItem(COMMAND_MODEL_TREND_WINDOW_KEY, commandModelTrendWindow);
+      document.querySelectorAll('.command-model-trend-window-btn').forEach(item => {
+        const isActive = item.dataset.modelTrendWindow === commandModelTrendWindow;
+        item.classList.toggle('active', isActive);
+        item.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+      });
+      renderCommandModelTrend(commandDemoData?.datasets);
+    });
+  });
   try { powerLocalStorage = JSON.parse(localStorage.getItem(POWER_LS_KEY) || '[]'); } catch(e) { powerLocalStorage = []; }
 
   initTheme();
@@ -74,6 +227,11 @@ function init() {
   document.getElementById('refreshBtn').addEventListener('click', manualRefresh);
   document.getElementById('theme-btn').addEventListener('click', toggleTheme);
   window.addEventListener('resize', () => {
+    commandModelChart?.resize();
+    commandModelTrendChart?.resize();
+    for (const chart of commandDimensionTrendCharts.values()) chart?.resize();
+    for (const chart of commandSemanticTrendCharts.values()) chart?.resize();
+    for (const chart of commandRelayTrendCharts.values()) chart?.resize();
     chart?.resize();
     weeklyBarChart?.resize();
     dsUsageChart?.resize();
@@ -124,6 +282,9 @@ let tabsGenerated = false;
 function generateServiceTabs() {
   // Build tab list from API data
   const tabs = []; // {provider, label, display, accountIdx}
+
+  tabs.push({ provider: 'command', label: '', display: '态势台', accountIdx: 0 });
+  tabs.push({ provider: 'local', label: '', display: 'Local Usage', accountIdx: 0 });
 
   const mmxAccounts = Array.isArray(lastOverviewData?.minimax) ? lastOverviewData.minimax : [];
   mmxAccounts.forEach((a, i) => tabs.push({
@@ -232,9 +393,15 @@ function switchSection(provider) {
 
 function refreshActiveSection() {
   switch (activeService) {
+    case 'command':
+      renderCommandDemo(commandDemoData);
+      break;
     case 'minimax':
       renderCards(activeFilter);
       renderTable();
+      break;
+    case 'local':
+      renderLocalUsage(localUsageData);
       break;
     case 'deepseek':
       if (dsAccountsData) renderDeepSeek(dsAccountsData, activeAccountIdx);
@@ -675,7 +842,9 @@ function initFanCurveEditor() {
 
 async function fetchAll() {
   await Promise.all([
+    fetchCommandDemo(),
     fetchOverview(),
+    fetchLocalUsage(),
     fetchMiniMaxDetail(),
     fetchDeepSeekDetail(),
     fetchDeepSeekPlatformDetail(),
@@ -695,6 +864,16 @@ async function fetchAll() {
 
 let lastOverviewData = null;
 
+async function fetchCommandDemo() {
+  try {
+    const res = await fetch(`${API_BASE}/api/command-demo`);
+    commandDemoData = await res.json();
+    renderCommandDemo(commandDemoData);
+  } catch (err) {
+    console.error('fetchCommandDemo error:', err);
+  }
+}
+
 async function fetchOverview() {
   try {
     const res = await fetch(`${API_BASE}/api/all`);
@@ -707,6 +886,16 @@ async function fetchOverview() {
     }
   } catch (err) {
     console.error('fetchOverview error:', err);
+  }
+}
+
+async function fetchLocalUsage() {
+  try {
+    const res = await fetch(`${API_BASE}/api/local-usage`);
+    localUsageData = await res.json();
+    renderLocalUsage(localUsageData);
+  } catch (err) {
+    console.error('fetchLocalUsage error:', err);
   }
 }
 
@@ -883,6 +1072,22 @@ function ovCard(avatarCls, providerName, accountLabel, st, value, sub, barPct, b
 function renderOverview(data) {
   const cards = [];
 
+  // --- Local observed usage: Claude Code project aggregates from .claude.json ---
+  {
+    const summary = localUsageData?.summary;
+    const ok = localUsageData?.configured && localUsageData?.status?.state === 'ok' && summary;
+    const st = ok ? { text: '本机', cls: 'ok' } : { text: '未读取', cls: 'no_key' };
+    const value = ok ? '$' + Number(summary.cost_usd || 0).toFixed(2) : '--';
+    const sub = ok
+      ? `${summary.project_count || 0} 个工作区 · ${fmtTokens(summary.input_tokens || 0)} in / ${fmtTokens(summary.output_tokens || 0)} out`
+      : '本地聚合未读取';
+    const cache = ok ? fmtTokens((summary.cache_read_tokens || 0) + (summary.cache_creation_tokens || 0)) : '--';
+    const extra = ok
+      ? `<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border);display:flex;justify-content:space-between;"><div><div style="font-size:14px;font-weight:700;color:var(--text)">${cache}</div><div style="font-size:11px;color:var(--muted)">缓存 token</div></div><div style="text-align:right;"><div style="font-size:14px;font-weight:700;color:var(--text)">${summary.web_search_requests || 0}</div><div style="font-size:11px;color:var(--muted)">Web 搜索</div></div></div>`
+      : '';
+    cards.push(ovCard('local', '本地实际使用', null, st, value, sub, null, null, extra));
+  }
+
   // --- MiniMax: one card per account ---
   const mmxAccounts = Array.isArray(data.minimax) ? data.minimax : [];
   for (const acct of mmxAccounts) {
@@ -1005,6 +1210,3383 @@ function renderOverview(data) {
   layoutOverview();
 
   updateFooter(data);
+}
+
+// ── Render Local Usage ──────────────────────────────────────────────────────
+
+function fmtUsd(v) {
+  if (v === null || v === undefined || v === '') return '--';
+  return '$' + Number(v || 0).toFixed(2);
+}
+
+function fmtCny(v) {
+  return '¥' + Number(v || 0).toFixed(2);
+}
+
+function fmtQuota(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return '--';
+  const abs = Math.abs(n);
+  if (abs >= 1e9) return (n / 1e9).toFixed(2) + 'B';
+  if (abs >= 1e6) return (n / 1e6).toFixed(2) + 'M';
+  if (abs >= 1e4) return (n / 1e4).toFixed(2) + '万';
+  return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
+}
+
+function formatUnitAmount(value, unit = 'usd') {
+  if (value === null || value === undefined || value === '') return '--';
+  if (unit === 'usd') return fmtUsd(value);
+  if (unit === 'cny') return fmtCny(value);
+  if (unit === 'token') return fmtTokens(value);
+  if (unit === 'quota' || unit === 'credit') return fmtQuota(value);
+  if (unit === 'count') return Number(value || 0).toLocaleString();
+  return `${fmtQuota(value)} ${String(unit || '').toUpperCase()}`.trim();
+}
+
+function isUsdCost(unit) {
+  return String(unit || 'usd').toLowerCase() === 'usd';
+}
+
+function sourceStateLabel(state) {
+  if (state === 'ok') return '<span class="source-state ok">ok</span>';
+  if (state === 'missing') return '<span class="source-state missing">missing</span>';
+  if (state === 'disabled') return '<span class="source-state disabled">disabled</span>';
+  if (state === 'planned') return '<span class="source-state planned">planned</span>';
+  if (state === 'stale') return '<span class="source-state stale">stale</span>';
+  if (state === 'auth_failed') return '<span class="source-state auth-failed">auth_failed</span>';
+  if (state === 'unavailable') return '<span class="source-state unavailable">unavailable</span>';
+  if (state === 'error') return '<span class="source-state error">error</span>';
+  return `<span class="source-state">${escapeHtml(state || '--')}</span>`;
+}
+
+function registryStateLabel(value) {
+  const labels = {
+    present: ['能力存在', 'ok'],
+    absent: ['能力缺失', 'missing'],
+    planned: ['计划接入', 'planned'],
+    configured: ['已配置', 'ok'],
+    not_configured: ['未配置', 'missing'],
+    ok: ['ok', 'ok'],
+    auth_failed: ['凭证失败', 'auth-failed'],
+    fetch_failed: ['请求失败', 'error'],
+    no_data: ['无数据', 'stale'],
+    waiting: ['等待', 'stale'],
+    disabled: ['已禁用', 'disabled'],
+    missing: ['缺失', 'missing'],
+    connected: ['已接入', 'ok'],
+    not_connected: ['未接入', 'planned'],
+    hidden_by_filter: ['被过滤', 'stale'],
+    visible: ['可见', 'ok'],
+    not_in_command_demo: ['未进态势台', 'planned'],
+    unknown: ['未知', 'stale'],
+  };
+  const [label, klass] = labels[value] || [value || '--', ''];
+  return `<span class="source-state ${escapeHtml(klass)}">${escapeHtml(label)}</span>`;
+}
+
+function renderCommandSourceRegistry(sourceRegistry = [], sources = []) {
+  if (Array.isArray(sourceRegistry) && sourceRegistry.length) {
+    return sourceRegistry.map(entry => {
+      const missing = (entry.missing_items || []).filter(Boolean).join('、');
+      const message = [missing && `缺少：${missing}`, entry.message].filter(Boolean).join(' · ') || '--';
+      return `
+        <tr>
+          <td>
+            <div class="workspace-name">${escapeHtml(entry.label || entry.id || '--')}</div>
+            <div class="workspace-path">${escapeHtml(entry.category || entry.kind || entry.id || '--')}</div>
+          </td>
+          <td>${registryStateLabel(entry.code_capability)}</td>
+          <td>${registryStateLabel(entry.configuration_state)}</td>
+          <td>${registryStateLabel(entry.collection_state)}</td>
+          <td>${registryStateLabel(entry.command_demo_adapter)}</td>
+          <td>${registryStateLabel(entry.visibility_state)}</td>
+          <td>${escapeHtml(message)}</td>
+        </tr>
+      `;
+    }).join('');
+  }
+
+  if (Array.isArray(sources) && sources.length) {
+    return sources.map(source => `
+      <tr>
+        <td>${escapeHtml(source.label || source.id || '--')}</td>
+        <td>${registryStateLabel('unknown')}</td>
+        <td>${registryStateLabel('unknown')}</td>
+        <td>${sourceStateLabel(source.state)}</td>
+        <td>${registryStateLabel('unknown')}</td>
+        <td>${registryStateLabel('visible')}</td>
+        <td>${escapeHtml(source.message || (source.capabilities || []).join(', ') || '--')}</td>
+      </tr>
+    `).join('');
+  }
+
+  return '<tr><td colspan="7" style="color:var(--muted)">暂无 source registry；等待后端注册感知通道。</td></tr>';
+}
+
+function signalValue(signal) {
+  if (!signal || signal.value === null || signal.value === undefined) return '--';
+  if (signal.unit === 'usd') return fmtUsd(signal.value);
+  if (signal.unit === 'cny') return fmtCny(signal.value);
+  if (signal.unit === 'token') return fmtTokens(signal.value);
+  if (signal.unit === 'quota' || signal.unit === 'credit') return fmtQuota(signal.value);
+  if (signal.unit === 'percent') return Number(signal.value || 0).toFixed(2) + '%';
+  if (signal.unit === 'count') return Number(signal.value || 0).toLocaleString();
+  return String(signal.value);
+}
+
+function finiteOrNull(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function commandModelSourceRank(source) {
+  const idx = COMMAND_MODEL_SOURCE_ORDER.indexOf(source);
+  return idx === -1 ? COMMAND_MODEL_SOURCE_ORDER.length : idx;
+}
+
+function normalizeCommandModelName(source, model, provider) {
+  const raw = String(model || '').trim();
+  if (raw && raw !== 'unknown') return raw;
+  if (source === 'Codex' && provider) return `${provider} / unknown`;
+  return raw || 'unknown';
+}
+
+function collectCommandModelInputRows(data) {
+  const models = data?.datasets?.top_models || [];
+  const sub2Models = data?.datasets?.sub2api_model_stats || [];
+  const newApiModels = data?.datasets?.newapi_model_stats || [];
+  const codexModels = data?.datasets?.codex_model_stats || [];
+  const ccSwitchModels = data?.datasets?.cc_switch_model_stats || [];
+
+  return [
+    ...models.map(m => {
+      const total = (m.input_tokens || 0) + (m.output_tokens || 0) + (m.cache_read_tokens || 0) + (m.cache_creation_tokens || 0);
+      const cost = finiteOrNull(m.cost_usd);
+      return {
+        source: 'Claude',
+        model: m.model,
+        cost: cost ?? null,
+        costKnown: cost !== null,
+        costUnit: 'usd',
+        tokens: total,
+        requests: null,
+      };
+    }),
+    ...codexModels.map(m => ({
+      source: 'Codex',
+      model: normalizeCommandModelName('Codex', m.model, m.provider),
+      cost: null,
+      costKnown: false,
+      tokens: m.total_tokens,
+      requests: m.sessions,
+    })),
+    ...ccSwitchModels.map(m => {
+      const cost = finiteOrNull(m.cost);
+      return {
+        source: `CC ${m.app || ''}`.trim(),
+        model: normalizeCommandModelName('CC Switch', m.model, m.provider),
+        cost: cost ?? null,
+        costKnown: cost !== null,
+        costUnit: 'usd',
+        tokens: m.total_tokens,
+        requests: m.requests,
+      };
+    }),
+    ...newApiModels.map(m => ({
+      source: 'NewAPI',
+      model: normalizeCommandModelName('NewAPI', m.model),
+      quota: m.quota_used ?? m.cost,
+      quotaUnit: m.quota_unit || 'quota',
+      tokens: m.total_tokens,
+      requests: m.requests,
+    })),
+    ...sub2Models.map(m => {
+      const cost = m.cost_known === false ? null : finiteOrNull(m.cost);
+      return {
+        source: 'Sub2API',
+        model: normalizeCommandModelName('Sub2API', m.model),
+        cost: cost ?? null,
+        costKnown: m.cost_known === false ? false : cost !== null,
+        costUnit: m.cost_unit || 'usd',
+        tokens: m.total_tokens,
+        requests: m.requests,
+      };
+    }),
+  ];
+}
+
+function buildUnifiedCommandModelRows(data) {
+  const map = new Map();
+  for (const row of collectCommandModelInputRows(data)) {
+    const model = normalizeCommandModelName(row.source, row.model);
+    const key = model.toLowerCase();
+    const current = map.get(key) || {
+      model,
+      sources: [],
+      sourceSet: new Set(),
+      cost: 0,
+      costKnown: false,
+      costUnit: 'usd',
+      costComparable: false,
+      unknownCostSourceSet: new Set(),
+      unknownCostSources: [],
+      quota: 0,
+      quotaKnown: false,
+      quotaUnit: 'quota',
+      tokens: 0,
+      requests: 0,
+      requestKnown: false,
+    };
+    if (!current.sourceSet.has(row.source)) {
+      current.sourceSet.add(row.source);
+      current.sources.push(row.source);
+      current.sources.sort((a, b) => commandModelSourceRank(a) - commandModelSourceRank(b) || a.localeCompare(b));
+    }
+
+    const cost = finiteOrNull(row.cost);
+    if (cost !== null) {
+      const rowCostUnit = row.costUnit || 'usd';
+      const nextUnit = current.costKnown && current.costUnit !== rowCostUnit ? 'mixed' : rowCostUnit;
+      current.cost += cost;
+      current.costKnown = true;
+      current.costUnit = nextUnit;
+      current.costComparable = current.costComparable || isUsdCost(rowCostUnit);
+      if (current.costUnit === 'mixed') current.costComparable = false;
+    }
+    if (row.costKnown === false && !current.unknownCostSourceSet.has(row.source)) {
+      current.unknownCostSourceSet.add(row.source);
+      current.unknownCostSources.push(row.source);
+      current.unknownCostSources.sort((a, b) => commandModelSourceRank(a) - commandModelSourceRank(b) || a.localeCompare(b));
+    }
+    const quota = finiteOrNull(row.quota);
+    if (quota !== null) {
+      current.quota += quota;
+      current.quotaKnown = true;
+      current.quotaUnit = row.quotaUnit || current.quotaUnit || 'quota';
+    }
+    current.tokens += finiteOrNull(row.tokens) || 0;
+    const requests = finiteOrNull(row.requests);
+    if (requests !== null) {
+      current.requests += requests;
+      current.requestKnown = true;
+    }
+    map.set(key, current);
+  }
+
+  return [...map.values()].map(row => ({
+    ...row,
+    cost: row.costKnown ? row.cost : null,
+    quota: row.quotaKnown ? row.quota : null,
+    requests: row.requestKnown ? row.requests : null,
+    unknownCostSources: [...row.unknownCostSources],
+    primarySource: row.sources[0] || '',
+  }));
+}
+
+const COMMAND_RELAY_METRIC_LABELS = {
+  quota_total: '总额度',
+  quota_used: '已用额度',
+  quota_available: '可用额度',
+  usage_percent: '使用率',
+  balance_available: '可用余额',
+  requests_today: '今日请求',
+  requests_total: '累计请求',
+  tokens_today: '今日 Token',
+  tokens_total: '累计 Token',
+  cost_today: '今日成本',
+  cost_total: '累计成本',
+  model_tokens: '模型 Token',
+  model_cost: '模型成本',
+  model_quota: '模型额度',
+  model_requests: '模型请求',
+};
+
+const COMMAND_RELAY_METRIC_ORDER = [
+  'quota_available',
+  'quota_used',
+  'quota_total',
+  'usage_percent',
+  'balance_available',
+  'tokens_today',
+  'tokens_total',
+  'cost_today',
+  'cost_total',
+  'requests_today',
+  'requests_total',
+  'model_tokens',
+  'model_cost',
+  'model_quota',
+  'model_requests',
+];
+
+function relayMetricRank(metric) {
+  const idx = COMMAND_RELAY_METRIC_ORDER.indexOf(metric);
+  return idx === -1 ? COMMAND_RELAY_METRIC_ORDER.length : idx;
+}
+
+function relayMetricLabel(metric) {
+  return COMMAND_RELAY_METRIC_LABELS[metric] || metric;
+}
+
+function relayMetricFromPath(pathName) {
+  if (pathName === 'api.newapi.quota.total') return 'quota_total';
+  if (pathName === 'api.newapi.quota.used') return 'quota_used';
+  if (pathName === 'api.newapi.quota.available') return 'quota_available';
+  if (pathName === 'api.newapi.usage.percent') return 'usage_percent';
+  if (pathName === 'api.newapi.requests.total') return 'requests_total';
+  if (pathName === 'api.sub2api.balance.available') return 'balance_available';
+  if (pathName === 'api.sub2api.requests.today') return 'requests_today';
+  if (pathName === 'api.sub2api.requests.total') return 'requests_total';
+  if (pathName === 'api.sub2api.tokens.today') return 'tokens_today';
+  if (pathName === 'api.sub2api.tokens.total') return 'tokens_total';
+  if (pathName === 'api.sub2api.cost.today') return 'cost_today';
+  if (pathName === 'api.sub2api.cost.total') return 'cost_total';
+  return null;
+}
+
+function relayMetricGroup(metric, unit) {
+  if (unit === 'token' || metric.includes('tokens')) return 'token';
+  if (unit === 'percent' || metric === 'usage_percent') return 'percent';
+  if (metric.includes('quota')) return 'quota';
+  if (metric.includes('balance')) return 'balance';
+  if (unit === 'usd' || unit === 'cny' || metric.includes('cost')) return 'money';
+  if (unit === 'count' || metric.includes('requests')) return 'count';
+  return unit || 'value';
+}
+
+function relayGroupLabel(group, unit) {
+  if (group === 'quota') return unit === 'token' ? '额度单位 Token' : unit === 'cny' ? '额度单位 CNY' : unit === 'usd' ? '额度单位 USD' : '额度单位';
+  if (group === 'balance') return unit === 'cny' ? '钱包余额 CNY' : '钱包余额 USD';
+  if (group === 'money') return unit === 'cny' ? '成本 CNY' : '成本 USD';
+  if (group === 'token') return 'Token';
+  if (group === 'count') return '次数';
+  if (group === 'percent') return '百分比';
+  return String(unit || group || '数值').toUpperCase();
+}
+
+function formatRelayMetricValue(metric) {
+  if (!metric || metric.value === null || metric.value === undefined) return '--';
+  return signalValue(metric);
+}
+
+function formatCostCell(costKnown, cost) {
+  return costKnown ? fmtUsd(cost) : '<span class="cost-unknown">成本未知</span>';
+}
+
+function formatModelSpendCell(row) {
+  const parts = [];
+  if (row?.costKnown) {
+    const label = row.costComparable ? 'USD 成本' : '成本';
+    parts.push(`<span>${escapeHtml(`${label} ${formatUnitAmount(row.cost, row.costUnit || 'usd')}`)}</span>`);
+  }
+  if (row?.quotaKnown) {
+    parts.push(`<small>${escapeHtml(`NewAPI 额度 ${formatUnitAmount(row.quota, row.quotaUnit || 'quota')}`)}</small>`);
+  }
+  const unknownSources = Array.isArray(row?.unknownCostSources) ? row.unknownCostSources.filter(Boolean) : [];
+  if (unknownSources.length) {
+    const label = row?.costKnown ? '部分来源成本未知' : '成本未知';
+    parts.push(`<small class="cost-unknown">${escapeHtml(`${label}：${unknownSources.join('、')}`)}</small>`);
+  }
+  if (!parts.length) {
+    return '<span class="cost-unknown">成本未知</span>';
+  }
+  return `<div class="model-spend-cell">${parts.join('')}</div>`;
+}
+
+function recordKindLabel(kind) {
+  if (kind === 'session') return '会话';
+  if (kind === 'project_aggregate') return '项目聚合';
+  return String(kind || '证据');
+}
+
+function formatWorkspaceRecord(project) {
+  if (Array.isArray(project?.record_breakdown) && project.record_breakdown.length) {
+    const rows = project.record_breakdown
+      .filter(item => Number(item?.count || 0) > 0)
+      .map(item => {
+        const source = item.source || item.label || 'unknown';
+        const kind = recordKindLabel(item.kind || item.record_kind);
+        const prefix = item.synthetic ? '推断 ' : '';
+        return `${prefix}${source} ${Number(item.count || 0).toLocaleString()} ${kind}`;
+      });
+    if (rows.length) {
+      const latestAt = project?.latest_at ? Date.parse(project.latest_at) : NaN;
+      const latest = Number.isFinite(latestAt)
+        ? new Date(latestAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+        : '';
+      return `
+        <div class="workspace-record">
+          <strong>${escapeHtml(rows.join(' · '))}</strong>
+          <small>${escapeHtml(latest ? `最近 ${latest}` : '由使用记录聚合')}</small>
+        </div>
+      `;
+    }
+  }
+  const sessions = Number(project?.sessions || 0);
+  const recordCount = Number(project?.record_count || 0);
+  const kinds = Array.isArray(project?.record_kinds) && project.record_kinds.length
+    ? project.record_kinds
+    : (project?.record_kind ? [project.record_kind] : []);
+  const kindLabels = kinds.map(recordKindLabel);
+  const latestAt = project?.latest_at ? Date.parse(project.latest_at) : NaN;
+  const latest = Number.isFinite(latestAt)
+    ? new Date(latestAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+    : '';
+  let primary = recordCount > 0 ? `${recordCount.toLocaleString()} 条证据` : '聚合记录';
+  if (kinds.length === 1 && kinds[0] === 'session') primary = `${(sessions || recordCount).toLocaleString()} 会话`;
+  if (kinds.length === 1 && kinds[0] === 'project_aggregate') primary = `${recordCount || 1} 项目聚合`;
+  const details = [
+    kindLabels.length ? kindLabels.join(' + ') : '聚合字段',
+    latest ? `最近 ${latest}` : null,
+  ].filter(Boolean).join(' · ');
+  return `
+    <div class="workspace-record">
+      <strong>${escapeHtml(primary)}</strong>
+      <small>${escapeHtml(details || '仅聚合字段')}</small>
+    </div>
+  `;
+}
+
+function collectRelayMetrics(data) {
+  const sources = (data?.sources || [])
+    .filter(s => s.kind === 'newapi' || s.kind === 'sub2api')
+    .map(s => ({
+      id: s.id,
+      kind: s.kind,
+      label: s.label || (s.kind === 'newapi' ? 'NewAPI' : 'Sub2API'),
+      state: s.state || '--',
+      message: s.message || '',
+    }));
+  const sourceMap = new Map(sources.map(s => [s.id, s]));
+  const sourceIdByKind = new Map(sources.map(s => [s.kind, s.id]));
+  const metrics = [];
+
+  for (const signal of data?.signals || []) {
+    const metric = relayMetricFromPath(signal.path);
+    const source = sourceMap.get(signal.sourceId);
+    if (!metric || !source) continue;
+    metrics.push({
+      ...signal,
+      metric,
+      label: relayMetricLabel(metric),
+      source,
+      group: relayMetricGroup(metric, signal.unit),
+    });
+  }
+
+  const addModelMetric = (sourceId, metric, value, unit) => {
+    const source = sourceMap.get(sourceId);
+    if (!source || value === null || value === undefined) return;
+    metrics.push({
+      id: `${sourceId}-${metric}`,
+      path: `api.${source.kind}.models.${metric}`,
+      domain: 'api',
+      kind: 'usage',
+      subject: sourceId,
+      sourceId,
+      source,
+      metric,
+      label: relayMetricLabel(metric),
+      value,
+      unit,
+      confidence: 'derived',
+      group: relayMetricGroup(metric, unit),
+    });
+  };
+  const sumDataset = items => {
+    const rows = Array.isArray(items) ? items.filter(item => item && typeof item === 'object') : [];
+    if (!rows.length) return { hasRows: false, requests: null, tokens: null, cost: null, quota: null, costUnit: 'usd', quotaUnit: 'quota' };
+    return rows.reduce((acc, item) => {
+      const requests = finiteOrNull(item.requests);
+      const tokens = finiteOrNull(item.total_tokens);
+      const cost = item.cost_known === false ? null : finiteOrNull(item.cost);
+      const quota = finiteOrNull(item.quota_used);
+      if (requests !== null) acc.requests = (acc.requests || 0) + requests;
+      if (tokens !== null) acc.tokens = (acc.tokens || 0) + tokens;
+      if (cost !== null) {
+        acc.cost = (acc.cost || 0) + cost;
+        acc.costUnit = item.cost_unit || acc.costUnit || 'usd';
+      }
+      if (quota !== null) {
+        acc.quota = (acc.quota || 0) + quota;
+        acc.quotaUnit = item.quota_unit || acc.quotaUnit || 'quota';
+      }
+      return acc;
+    }, { hasRows: true, requests: null, tokens: null, cost: null, quota: null, costUnit: 'usd', quotaUnit: 'quota' });
+  };
+  const newApiModels = sumDataset(data?.datasets?.newapi_model_stats);
+  const sub2ApiModels = sumDataset(data?.datasets?.sub2api_model_stats);
+  const newApiSourceId = sourceIdByKind.get('newapi');
+  const sub2ApiSourceId = sourceIdByKind.get('sub2api');
+  addModelMetric(newApiSourceId, 'model_tokens', newApiModels.tokens, 'token');
+  addModelMetric(newApiSourceId, 'model_quota', newApiModels.quota, newApiModels.quotaUnit);
+  addModelMetric(newApiSourceId, 'model_requests', newApiModels.requests, 'count');
+  addModelMetric(sub2ApiSourceId, 'model_tokens', sub2ApiModels.tokens, 'token');
+  addModelMetric(sub2ApiSourceId, 'model_cost', sub2ApiModels.cost, sub2ApiModels.costUnit);
+  addModelMetric(sub2ApiSourceId, 'model_requests', sub2ApiModels.requests, 'count');
+
+  return { sources, metrics };
+}
+
+function renderRelayStatus(source) {
+  if (!source) return '<span class="source-state missing">missing</span>';
+  return sourceStateLabel(source.state);
+}
+
+function renderCommandRelayBySource(sources, metrics) {
+  return sources.map(source => {
+    const sourceMetrics = metrics
+      .filter(m => m.sourceId === source.id)
+      .sort((a, b) => relayMetricRank(a.metric) - relayMetricRank(b.metric) || String(a.label).localeCompare(String(b.label)));
+    const rows = sourceMetrics.length ? sourceMetrics.map(metric => `
+      <div class="command-relay-metric">
+        <div>
+          <span>${escapeHtml(metric.label)}</span>
+          <small>${escapeHtml(relayGroupLabel(metric.group, metric.unit))}</small>
+        </div>
+        <strong>${escapeHtml(formatRelayMetricValue(metric))}</strong>
+      </div>
+    `).join('') : '<div class="command-relay-empty">暂无可聚合指标</div>';
+    return `
+      <section class="command-relay-summary-card">
+        <div class="command-relay-card-head">
+          <div>
+            <strong>${escapeHtml(source.label)}</strong>
+            <small>${escapeHtml(source.message || '等待数据源响应')}</small>
+          </div>
+          ${renderRelayStatus(source)}
+        </div>
+        <div class="command-relay-metric-list">${rows}</div>
+      </section>
+    `;
+  }).join('');
+}
+
+function renderCommandRelayByMetric(sources, metrics) {
+  const metricMap = new Map();
+  for (const metric of metrics) {
+    const key = `${metric.metric}::${metric.unit || ''}`;
+    const entry = metricMap.get(key) || {
+      metric: metric.metric,
+      label: metric.label,
+      unit: metric.unit,
+      group: metric.group,
+      bySource: new Map(),
+    };
+    entry.bySource.set(metric.sourceId, metric);
+    metricMap.set(key, entry);
+  }
+  const groups = [...metricMap.values()]
+    .sort((a, b) => relayMetricRank(a.metric) - relayMetricRank(b.metric) || String(a.label).localeCompare(String(b.label)));
+  if (!groups.length) return '<div class="command-relay-empty">暂无可横向对比的中转指标</div>';
+
+  return groups.map(group => `
+    <section class="command-relay-matrix-row">
+      <div class="command-relay-matrix-title">
+        <strong>${escapeHtml(group.label)}</strong>
+        <span>${escapeHtml(relayGroupLabel(group.group, group.unit))}</span>
+      </div>
+      <div class="command-relay-source-values">
+        ${sources.map(source => {
+          const metric = group.bySource.get(source.id);
+          return `
+            <div class="command-relay-source-value ${metric ? '' : 'empty'}">
+              <span>${escapeHtml(source.label)}</span>
+              <strong>${metric ? escapeHtml(formatRelayMetricValue(metric)) : '--'}</strong>
+            </div>
+          `;
+        }).join('')}
+      </div>
+    </section>
+  `).join('');
+}
+
+function renderCommandRelayDetailsState() {
+  const container = document.getElementById('command-relay-summary');
+  const toggle = document.getElementById('command-relay-details-toggle');
+  if (container) {
+    container.classList.toggle('collapsed', commandRelayDetailsCollapsed);
+  }
+  if (toggle) {
+    toggle.textContent = commandRelayDetailsCollapsed ? '展开明细' : '折叠明细';
+    toggle.setAttribute('aria-expanded', commandRelayDetailsCollapsed ? 'false' : 'true');
+  }
+}
+
+function renderCommandRelaySummary(data) {
+  const container = document.getElementById('command-relay-summary');
+  if (!container) return;
+  document.querySelectorAll('.command-relay-view-btn[data-relay-view]').forEach(btn => {
+    const isActive = btn.dataset.relayView === commandRelayView;
+    btn.classList.toggle('active', isActive);
+    btn.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+  });
+
+  const { sources, metrics } = collectRelayMetrics(data);
+  if (!sources.length) {
+    container.innerHTML = '<div class="command-relay-empty">暂无 NewAPI / Sub2API 来源；配置后会展示中转指标聚合。</div>';
+    renderCommandRelayDetailsState();
+    return;
+  }
+
+  container.innerHTML = commandRelayView === 'metric'
+    ? renderCommandRelayByMetric(sources, metrics)
+    : renderCommandRelayBySource(sources, metrics);
+  container.classList.toggle('metric-view', commandRelayView === 'metric');
+  renderCommandRelayDetailsState();
+}
+
+function sortCommandModelRows(rows, sortMode = commandModelSort) {
+  const comparableCost = row => row?.costComparable ? Number(row.cost || 0) : 0;
+  const byCost = (a, b) =>
+    Number(b.costComparable) - Number(a.costComparable) ||
+    comparableCost(b) - comparableCost(a) ||
+    Number(b.costKnown) - Number(a.costKnown) ||
+    (b.tokens || 0) - (a.tokens || 0) ||
+    String(a.model).localeCompare(String(b.model));
+  const byTokens = (a, b) =>
+    (b.tokens || 0) - (a.tokens || 0) ||
+    byCost(a, b);
+  const byRequests = (a, b) =>
+    Number(b.requestKnown) - Number(a.requestKnown) ||
+    (b.requests || 0) - (a.requests || 0) ||
+    byTokens(a, b);
+  const bySource = (a, b) =>
+    commandModelSourceRank(a.primarySource) - commandModelSourceRank(b.primarySource) ||
+    byCost(a, b);
+
+  const sorter = sortMode === 'tokens'
+    ? byTokens
+    : sortMode === 'requests'
+      ? byRequests
+      : sortMode === 'source'
+        ? bySource
+        : byCost;
+  return [...rows].sort(sorter);
+}
+
+function renderCommandDemo(data) {
+  const verdict = document.getElementById('command-verdict');
+  const sub = document.getElementById('command-verdict-sub');
+  const generated = document.getElementById('command-generated');
+  if (!verdict || !sub || !generated) return;
+
+  if (!data || data.status?.state === 'error') {
+    verdict.textContent = '未就绪';
+    sub.textContent = data?.status?.message || 'demo 数据接口暂不可用。';
+    generated.textContent = '--';
+    return;
+  }
+
+  const signals = data.signals || [];
+  const cost = signals.find(s => s.path === 'agent.usage.cost.aggregate');
+  const tokens = signals.find(s => s.path === 'agent.usage.tokens.total.aggregate');
+  const sources = data.sources || [];
+  const counts = data.source_counts || {};
+  const newApiSource = sources.find(s => s.id === 'newapi-main' || s.kind === 'newapi');
+  const sub2ApiSource = sources.find(s => s.id === 'sub2api-main' || s.kind === 'sub2api');
+
+  verdict.textContent = data.verdict?.label || '--';
+  sub.textContent = data.verdict?.summary || data.intent?.title || '个人态势观察 demo';
+  generated.textContent = data.generated_at ? new Date(data.generated_at).toLocaleString('zh-CN') : '--';
+  document.getElementById('command-cost').textContent = signalValue(cost);
+  document.getElementById('command-tokens').textContent = signalValue(tokens);
+  document.getElementById('command-sources').textContent =
+    `${counts.ok || 0} / ${sources.length || 0}`;
+  const newApiValue = document.getElementById('command-newapi');
+  const newApiSub = document.getElementById('command-newapi-sub');
+  if (newApiValue && newApiSub) {
+    newApiValue.textContent = newApiSource?.state || '--';
+    newApiSub.textContent = newApiSource?.message || '未配置 NewAPI source';
+  }
+  const sub2ApiValue = document.getElementById('command-sub2api');
+  const sub2ApiSub = document.getElementById('command-sub2api-sub');
+  if (sub2ApiValue && sub2ApiSub) {
+    const balance = signals.find(s => s.path === 'api.sub2api.balance.available');
+    sub2ApiValue.textContent = balance ? signalValue(balance) : (sub2ApiSource?.state || '--');
+    sub2ApiSub.textContent = sub2ApiSource?.message || '未配置 Sub2API source';
+  }
+
+  const alertBox = document.getElementById('command-alerts');
+  const alerts = data.datasets?.alerts || [];
+  alertBox.innerHTML = alerts.length ? alerts.map(a => `
+    <div class="command-alert ${escapeHtml(a.level || 'info')}">
+      <strong>${escapeHtml(a.title || '--')}</strong>
+      <span>${escapeHtml(a.detail || '')}</span>
+    </div>
+  `).join('') : '<div class="command-alert ok"><strong>无告警</strong><span>当前 demo 未发现需要展示的异常。</span></div>';
+
+  document.getElementById('command-signal-body').innerHTML = signals.length ? signals.map(s => `
+    <tr>
+      <td>${escapeHtml(s.path || '--')}</td>
+      <td>${escapeHtml(signalValue(s))}</td>
+      <td>${escapeHtml(s.confidence || '--')}</td>
+    </tr>
+  `).join('') : '<tr><td colspan="3" style="color:var(--muted)">暂无 signal</td></tr>';
+
+  document.getElementById('command-source-body').innerHTML = renderCommandSourceRegistry(
+    data.datasets?.source_registry,
+    sources
+  );
+
+  const modelRows = buildUnifiedCommandModelRows(data);
+  const displayRows = sortCommandModelRows(modelRows).slice(0, 22);
+  document.getElementById('command-model-body').innerHTML = displayRows.length ? displayRows.map(m => {
+    const source = (m.sources || []).map(s => `<span class="acct-badge">${escapeHtml(s)}</span>`).join('');
+    const requests = Number.isFinite(Number(m.requests)) ? ` · ${Number(m.requests).toLocaleString()} 次` : '';
+    return `
+      <tr>
+        <td>${source}${escapeHtml(m.model || '--')}${requests}</td>
+        <td>${formatModelSpendCell(m)}</td>
+        <td>${fmtTokens(m.tokens)}</td>
+      </tr>
+    `;
+  }).join('') : '<tr><td colspan="3" style="color:var(--muted)">暂无模型数据</td></tr>';
+
+  const projects = data.datasets?.top_projects || [];
+  document.getElementById('command-project-body').innerHTML = projects.length ? projects.slice(0, 8).map(p => {
+    const sources = (p.sources || []).map(s => `<span class="acct-badge">${escapeHtml(s)}</span>`).join('');
+    const costKnown = p.cost_known !== false && p.cost_usd !== null && p.cost_usd !== undefined;
+    const tokens = p.tokens ?? ((p.input_tokens || 0) + (p.output_tokens || 0) + (p.cache_read_tokens || 0) + (p.cache_creation_tokens || 0));
+    const pathText = p.workspace_path && p.workspace_path !== p.workspace
+      ? `<div class="workspace-path" title="${escapeHtml(p.workspace_path)}">${escapeHtml(p.workspace_path)}</div>`
+      : '';
+    return `
+      <tr>
+        <td><div class="workspace-name">${escapeHtml(p.workspace || '--')}</div>${pathText}</td>
+        <td>${formatCostCell(costKnown, p.cost_usd)}</td>
+        <td>${fmtTokens(tokens || 0)}</td>
+        <td>${formatWorkspaceRecord(p)}</td>
+        <td>${sources || '--'}</td>
+      </tr>
+    `;
+  }).join('') : '<tr><td colspan="5" style="color:var(--muted)">暂无工作区数据</td></tr>';
+
+  recordCommandSnapshot(data);
+  renderCommandRelaySummary(data);
+  renderCommandTrend();
+  renderCommandModelChart(modelRows);
+  renderCommandModelTrend(data.datasets);
+  renderCommandSemanticProjection(data);
+}
+
+function semanticKnownnessLabel(knownness) {
+  const labels = {
+    known: '已知',
+    unknown: '未知',
+    reported_zero: '接口报告 0',
+    derived: '推导',
+    planned: '计划接入',
+  };
+  return labels[knownness] || knownness || '--';
+}
+
+function semanticWidgetLabel(widgetId) {
+  const labels = {
+    'status-matrix': '状态矩阵',
+    'capability-matrix': '能力矩阵',
+    'reserve-card': '余量卡',
+    'relay-zone': '中转专区',
+    'window-trend': '趋势图',
+    'rank-table': '排行表',
+    'evidence-table': '证据表',
+    'metric-card': '指标卡',
+  };
+  return labels[widgetId] || widgetId || '--';
+}
+
+function semanticPill(text, extraClass = '') {
+  return `<span class="command-semantic-pill ${escapeHtml(extraClass)}">${escapeHtml(text || '--')}</span>`;
+}
+
+function renderSemanticTableEmpty(colspan, text = '暂无语义投影数据') {
+  return `<tr><td colspan="${colspan}" style="color:var(--muted)">${escapeHtml(text)}</td></tr>`;
+}
+
+function renderSemanticCounts(items) {
+  return (Array.isArray(items) ? items : []).map(item => `
+    <span class="command-semantic-chip">
+      ${escapeHtml(item.label || item.id || '--')}
+      <strong>${Number(item.count || 0).toLocaleString()}</strong>
+    </span>
+  `).join('');
+}
+
+function renderDataRepresentationBlueprint(blueprint, container) {
+  if (!container) return;
+  if (!blueprint) {
+    container.innerHTML = '<div class="command-semantic-empty">等待数据表征蓝图。</div>';
+    return;
+  }
+
+  const source = blueprint.source_contract || {};
+  const signal = blueprint.signal_contract || {};
+  const dataset = blueprint.dataset_contract || {};
+  const blocks = [
+    {
+      name: source.name || 'SourceStatus',
+      count: source.count,
+      rows: [['状态', renderSemanticCounts(source.states)]],
+    },
+    {
+      name: signal.name || 'SignalSemantics',
+      count: signal.count,
+      rows: [
+        ['角色', renderSemanticCounts(signal.roles)],
+        ['量纲', renderSemanticCounts(signal.units)],
+        ['对象', renderSemanticCounts(signal.subjects)],
+        ['证据', renderSemanticCounts(signal.knownness)],
+      ],
+    },
+    {
+      name: dataset.name || 'DatasetSemantics',
+      count: dataset.count,
+      rows: [
+        ['组件', renderSemanticCounts(dataset.widgets)],
+        ['行对象', renderSemanticCounts(dataset.row_subjects)],
+      ],
+    },
+  ];
+
+  const invariants = (blueprint.invariants || []).map(item => `
+    <li>${escapeHtml(item)}</li>
+  `).join('');
+
+  container.innerHTML = `
+    <div class="command-blueprint-principle">${escapeHtml(blueprint.principle || '--')}</div>
+    ${blocks.map(block => `
+      <article class="command-blueprint-card">
+        <div class="command-blueprint-card-title">
+          <strong>${escapeHtml(block.name)}</strong>
+          <span>${Number(block.count || 0).toLocaleString()}</span>
+        </div>
+        ${block.rows.map(([label, chips]) => `
+          <div class="command-blueprint-row">
+            <span>${escapeHtml(label)}</span>
+            <div>${chips || '<span class="command-semantic-sub">暂无</span>'}</div>
+          </div>
+        `).join('')}
+      </article>
+    `).join('')}
+    <ul class="command-blueprint-rules">${invariants}</ul>
+  `;
+}
+
+function mappingStatusLabel(status) {
+  const labels = {
+    ready: '就绪',
+    partial: '部分就绪',
+    explainable_gap: '可解释缺口',
+    missing: '缺失',
+  };
+  return labels[status] || status || '--';
+}
+
+function renderCompactIdList(items, emptyText = '暂无') {
+  const ids = (Array.isArray(items) ? items : []).filter(Boolean);
+  if (!ids.length) return `<span class="command-semantic-sub">${escapeHtml(emptyText)}</span>`;
+  return ids.slice(0, 5).map(id => semanticPill(id, 'compact-id')).join('')
+    + (ids.length > 5 ? `<span class="command-semantic-sub">+${ids.length - 5}</span>` : '');
+}
+
+function renderSemanticRefList(items, emptyText = '暂无') {
+  const refs = (Array.isArray(items) ? items : []).filter(Boolean);
+  if (!refs.length) return `<span class="command-semantic-sub">${escapeHtml(emptyText)}</span>`;
+  return refs.slice(0, 5).map(ref => {
+    if (typeof ref === 'string') return semanticPill(ref, 'compact-id');
+    return semanticPill(ref.label || ref.id || '--', `${ref.kind || 'unknown'} compact-id`);
+  }).join('') + (refs.length > 5 ? `<span class="command-semantic-sub">+${refs.length - 5}</span>` : '');
+}
+
+function renderIntentManifest(manifest, container) {
+  if (!container) return;
+  const intents = Array.isArray(manifest) ? [...manifest].sort((a, b) => Number(a.priority || 999) - Number(b.priority || 999)) : [];
+  if (!intents.length) {
+    container.innerHTML = '<div class="command-semantic-empty">暂无意图清单。</div>';
+    return;
+  }
+
+  container.innerHTML = intents.map(intent => `
+    <article class="command-intent-card">
+      <div class="command-intent-head">
+        <div>
+          <strong>${escapeHtml(intent.name || intent.id || '--')}</strong>
+          <span>${escapeHtml(intent.id || '--')}</span>
+        </div>
+        ${semanticPill(intent.question_type || '--', 'question-type')}
+      </div>
+      <p>${escapeHtml(intent.core_question || '--')}</p>
+      <div class="command-intent-contract">
+        <span>契约</span>
+        <small>${escapeHtml(intent.answer_contract || '--')}</small>
+      </div>
+      <div class="command-intent-contract">
+        <span>缺失</span>
+        <small>${escapeHtml(intent.missing_policy || '--')}</small>
+      </div>
+      <div class="command-intent-widgets">${renderCompactIdList(intent.desired_widgets, '无指定组件')}</div>
+    </article>
+  `).join('');
+}
+
+function renderIntentDataMappings(mappings, container) {
+  if (!container) return;
+  const rows = Array.isArray(mappings) ? [...mappings].sort((a, b) => Number(a.priority || 999) - Number(b.priority || 999)) : [];
+  if (!rows.length) {
+    container.innerHTML = '<div class="command-semantic-empty">暂无意图到数据映射。</div>';
+    return;
+  }
+
+  container.innerHTML = rows.map(mapping => {
+    const metricCount = (mapping.metric_group_ids || []).length;
+    const datasetCount = (mapping.dataset_ids || []).length;
+    const evidenceCount = (mapping.evidence_note_ids || []).length;
+    return `
+      <article class="command-intent-card command-mapping-card ${escapeHtml(mapping.status || 'missing')}">
+        <div class="command-intent-head">
+          <div>
+            <strong>${escapeHtml(mapping.intent_name || mapping.intent_id || '--')}</strong>
+            <span>${escapeHtml(mapping.core_question || '--')}</span>
+          </div>
+          ${semanticPill(mappingStatusLabel(mapping.status), `mapping-${mapping.status || 'missing'}`)}
+        </div>
+        <div class="command-lane-metrics command-intent-metrics">
+          <span>指标组 <strong>${metricCount}</strong></span>
+          <span>数据集 <strong>${datasetCount}</strong></span>
+          <span>证据 <strong>${evidenceCount}</strong></span>
+        </div>
+        <div class="command-intent-contract">
+          <span>依据</span>
+          <small>${escapeHtml(mapping.basis || '--')}</small>
+        </div>
+        <div class="command-intent-contract">
+          <span>组件</span>
+          <small>${renderCompactIdList(mapping.available_widgets, '无可用组件')}</small>
+        </div>
+      </article>
+    `;
+  }).join('');
+}
+
+function renderMissingExplanations(explanations, container) {
+  if (!container) return;
+  const rows = Array.isArray(explanations) ? explanations : [];
+  if (!rows.length) {
+    container.innerHTML = '<div class="command-semantic-empty">暂无缺失解释；当前注册项都有可说明状态。</div>';
+    return;
+  }
+
+  container.innerHTML = rows.map(item => {
+    const missingItems = (item.missing_items || []).slice(0, 4).map(entry => `<code>${escapeHtml(entry)}</code>`).join('');
+    return `
+      <article class="command-missing-card ${escapeHtml(item.severity || 'info')}">
+        <div class="command-missing-head">
+          <div>
+            <strong>${escapeHtml(item.subject_label || item.subject_id || '--')}</strong>
+            <span>${escapeHtml(item.layer || '--')} · ${escapeHtml(item.subject_type || '--')}</span>
+          </div>
+          ${semanticPill(item.reason_label || item.reason_code || '--', `missing-${item.reason_code || 'unknown'}`)}
+        </div>
+        <p>${escapeHtml(item.message || '--')}</p>
+        ${missingItems ? `<div class="command-missing-items">${missingItems}</div>` : ''}
+        <small>${escapeHtml(item.suggested_action || '--')}</small>
+      </article>
+    `;
+  }).join('');
+}
+
+function renderFeedbackLoop(loop, container) {
+  if (!container) return;
+  if (!loop) {
+    container.innerHTML = '<div class="command-semantic-empty">暂无反馈闭环。</div>';
+    return;
+  }
+  const steps = Array.isArray(loop.loop) ? loop.loop : [];
+  const statuses = Array.isArray(loop.intent_status) ? loop.intent_status : [];
+  const checks = Array.isArray(loop.review_checks) ? loop.review_checks : [];
+
+  container.innerHTML = `
+    <div class="command-feedback-principle">
+      <strong>${escapeHtml(loop.title || '反馈闭环')}</strong>
+      <span>${escapeHtml(loop.principle || '--')}</span>
+    </div>
+    <div class="command-feedback-steps">
+      ${steps.map((step, index) => `
+        <div class="command-feedback-step">
+          <b>${index + 1}</b>
+          <div>
+            <strong>${escapeHtml(step.name || step.id || '--')}</strong>
+            <span>${escapeHtml(step.output || '--')}</span>
+          </div>
+        </div>
+      `).join('')}
+    </div>
+    <div class="command-feedback-status">
+      ${statuses.map(status => `
+        <div>
+          <span>${escapeHtml(status.name || status.intent_id || '--')}</span>
+          ${semanticPill(mappingStatusLabel(status.status), `mapping-${status.status || 'missing'}`)}
+          <small>${Number(status.metric_group_count || 0)} 指标 · ${Number(status.dataset_count || 0)} 数据集 · ${Number(status.evidence_count || 0)} 证据</small>
+        </div>
+      `).join('')}
+    </div>
+    <ul class="command-feedback-checks">
+      ${checks.map(check => `<li>${escapeHtml(check)}</li>`).join('')}
+    </ul>
+  `;
+}
+
+function renderSituationPath(path, container) {
+  if (!container) return;
+  if (!path) {
+    container.innerHTML = '<div class="command-semantic-empty">暂无首屏感知链。</div>';
+    return;
+  }
+
+  const cards = Array.isArray(path.cards) ? path.cards : [];
+  container.innerHTML = `
+    <div class="command-situation-principle">
+      <strong>${escapeHtml(path.title || '首屏感知链')}</strong>
+      <span>${escapeHtml(path.principle || '--')}</span>
+    </div>
+    <div class="command-situation-grid">
+      ${cards.length ? cards.map(card => `
+        <article class="command-situation-card">
+          <div class="command-situation-head">
+            <div>
+              <strong>${escapeHtml(card.name || card.id || '--')}</strong>
+              <span>${escapeHtml(card.id || '--')}</span>
+            </div>
+            <div class="command-situation-meta">
+              ${semanticPill(card.top_risk || '--', 'missing-unknown')}
+            </div>
+          </div>
+          <div class="command-situation-row">
+            <span>当前</span>
+            <small>${escapeHtml(card.current_focus || '--')}</small>
+          </div>
+          <div class="command-situation-row">
+            <span>风险</span>
+            <small>${escapeHtml(card.risk_reason || '--')}</small>
+          </div>
+          <div class="command-situation-row">
+            <span>缺口</span>
+            <small>${escapeHtml(card.missing_reason || '--')}</small>
+          </div>
+          <div class="command-situation-row">
+            <span>证据</span>
+            <small>${escapeHtml(card.evidence_entry || '--')}</small>
+          </div>
+          <div class="command-situation-row">
+            <span>下一步</span>
+            <small>${escapeHtml(card.next_action || '--')}</small>
+          </div>
+          <div class="command-situation-links">
+            <div class="command-situation-row">
+              <span>意图</span>
+              <div>${renderCompactIdList(card.linked_intent_ids, '暂无意图')}</div>
+            </div>
+            <div class="command-situation-row">
+              <span>泳道</span>
+              <div>${renderCompactIdList(card.linked_lane_ids, '暂无泳道')}</div>
+            </div>
+            <div class="command-situation-row">
+              <span>证据ID</span>
+              <div>${renderCompactIdList(card.linked_evidence_ids, '暂无证据')}</div>
+            </div>
+          </div>
+        </article>
+      `).join('') : '<div class="command-semantic-empty">当前没有可解释的首屏泳道。</div>'}
+    </div>
+  `;
+}
+
+function renderPresentationBlueprint(blueprint, container) {
+  if (!container) return;
+  if (!blueprint) {
+    container.innerHTML = '<div class="command-semantic-empty">等待面板呈现蓝图。</div>';
+    return;
+  }
+
+  const lanes = blueprint.lanes || [];
+  container.innerHTML = `
+    <div class="command-blueprint-principle">${escapeHtml(blueprint.principle || '--')}</div>
+    ${lanes.map(lane => {
+      const metricCount = (lane.metric_group_ids || []).length;
+      const datasetCount = (lane.dataset_ids || []).length;
+      const rules = (lane.rules || []).slice(0, 3).map(rule => `<li>${escapeHtml(rule)}</li>`).join('');
+      return `
+        <article class="command-lane-card">
+          <div class="command-lane-head">
+            <div>
+              <strong>${escapeHtml(lane.name || lane.id || '--')}</strong>
+              <span>${escapeHtml(lane.purpose || '--')}</span>
+            </div>
+            ${semanticPill(semanticWidgetLabel(lane.widget), 'widget')}
+          </div>
+          ${lane.question ? `<p class="command-lane-question">回答：${escapeHtml(lane.question)}</p>` : ''}
+          <div class="command-lane-intent">
+            <span>意图 ${escapeHtml(lane.intent_id || '--')}</span>
+            <span>问题类型 ${escapeHtml(lane.question_type || '--')}</span>
+            <span>映射 ${escapeHtml(mappingStatusLabel(lane.mapping_status))}</span>
+          </div>
+          ${lane.answer_contract ? `
+            <div class="command-lane-contract">
+              <span>回答契约</span>
+              <small>${escapeHtml(lane.answer_contract)}</small>
+            </div>
+          ` : ''}
+          ${lane.missing_policy ? `
+            <div class="command-lane-contract">
+              <span>缺失策略</span>
+              <small>${escapeHtml(lane.missing_policy)}</small>
+            </div>
+          ` : ''}
+          <div class="command-lane-metrics">
+            <span>指标组 <strong>${metricCount}</strong></span>
+            <span>数据集 <strong>${datasetCount}</strong></span>
+            <span>证据 <strong>${Number(lane.evidence_count || 0).toLocaleString()}</strong></span>
+          </div>
+          <div class="command-lane-explanation">
+            <span>为什么显示</span>
+            <small>${escapeHtml(lane.why_visible || '--')}</small>
+          </div>
+          <div class="command-lane-explanation">
+            <span>为什么缺失</span>
+            <small>${escapeHtml(lane.why_missing || '--')}</small>
+          </div>
+          <div class="command-lane-evidence">
+            <span>证据引用</span>
+            <div>${renderSemanticRefList(lane.evidence_refs, '暂无证据引用')}</div>
+          </div>
+          <div class="command-lane-explanation">
+            <span>下一步</span>
+            <small>${escapeHtml(lane.next_action || '--')}</small>
+          </div>
+          <ul>${rules}</ul>
+        </article>
+      `;
+    }).join('')}
+  `;
+}
+
+function renderCommandSemanticProjection(data) {
+  const projection = data?.semantic_projection;
+  const summaryBox = document.getElementById('command-semantic-summary');
+  const situationBox = document.getElementById('command-situation-path');
+  const representationBox = document.getElementById('command-data-representation');
+  const presentationBox = document.getElementById('command-presentation-blueprint');
+  const intentManifestBox = document.getElementById('command-intent-manifest');
+  const intentMappingsBox = document.getElementById('command-intent-mappings');
+  const missingExplanationsBox = document.getElementById('command-missing-explanations');
+  const feedbackLoopBox = document.getElementById('command-feedback-loop');
+  const layerBody = document.getElementById('command-semantic-layer-body');
+  const metricBody = document.getElementById('command-semantic-group-body');
+  const datasetBody = document.getElementById('command-dataset-group-body');
+  const widgetBox = document.getElementById('command-widget-registry');
+  const evidenceBox = document.getElementById('command-evidence-notes');
+  if (!summaryBox || !layerBody || !metricBody || !datasetBody || !widgetBox || !evidenceBox) return;
+
+  if (!projection) {
+    summaryBox.innerHTML = '<div class="command-semantic-empty">等待后端 semantic_projection。</div>';
+    layerBody.innerHTML = renderSemanticTableEmpty(3);
+    metricBody.innerHTML = renderSemanticTableEmpty(6);
+    datasetBody.innerHTML = renderSemanticTableEmpty(5);
+    widgetBox.innerHTML = '<div class="command-semantic-empty">暂无 widget registry。</div>';
+    evidenceBox.innerHTML = '<div class="command-semantic-empty">暂无证据说明。</div>';
+    renderSituationPath(null, situationBox);
+    renderDataRepresentationBlueprint(null, representationBox);
+    renderPresentationBlueprint(null, presentationBox);
+    renderIntentManifest(null, intentManifestBox);
+    renderIntentDataMappings(null, intentMappingsBox);
+    renderMissingExplanations(null, missingExplanationsBox);
+    renderFeedbackLoop(null, feedbackLoopBox);
+    return;
+  }
+
+  const metricGroups = projection.metric_groups || [];
+  const datasetGroups = projection.dataset_groups || [];
+  const widgets = projection.widget_registry || [];
+  const notes = projection.evidence_notes || [];
+  const intentManifest = projection.intent_manifest || [];
+  const intentMappings = projection.intent_data_mappings || [];
+  const missingExplanations = projection.missing_explanations || [];
+  const summary = projection.summary || {};
+  const layerCount = (projection.layers || []).length;
+
+  summaryBox.innerHTML = [
+    ['层', layerCount],
+    ['Signal', summary.signal_count ?? 0],
+    ['数据集', summary.dataset_count ?? datasetGroups.length],
+    ['指标组', metricGroups.length],
+    ['数据集组', datasetGroups.length],
+    ['Widget', summary.widget_count ?? widgets.length],
+    ['证据', notes.length],
+    ['意图', summary.intent_count ?? intentManifest.length],
+    ['缺失解释', summary.missing_explanation_count ?? missingExplanations.length],
+  ].map(([label, value]) => `
+    <div class="command-semantic-stat">
+      <span>${escapeHtml(label)}</span>
+      <strong>${escapeHtml(String(value))}</strong>
+    </div>
+  `).join('');
+
+  renderSituationPath(projection.situation_path, situationBox);
+  renderDataRepresentationBlueprint(projection.data_representation, representationBox);
+  renderPresentationBlueprint(projection.presentation_blueprint, presentationBox);
+  renderIntentManifest(intentManifest, intentManifestBox);
+  renderIntentDataMappings(intentMappings, intentMappingsBox);
+  renderMissingExplanations(missingExplanations, missingExplanationsBox);
+  renderFeedbackLoop(projection.feedback_loop, feedbackLoopBox);
+
+  layerBody.innerHTML = (projection.layers || []).length ? projection.layers.map(layer => `
+    <tr>
+      <td>${escapeHtml(layer.name || layer.id || '--')}</td>
+      <td>${escapeHtml(layer.purpose || '--')}</td>
+      <td>${Number(layer.item_count || 0).toLocaleString()}</td>
+    </tr>
+  `).join('') : renderSemanticTableEmpty(3);
+
+  metricBody.innerHTML = metricGroups.length ? metricGroups.map(group => {
+    const knownness = (group.knownness || []).map(item => semanticPill(semanticKnownnessLabel(item), `knownness-${item}`)).join('');
+    const units = (group.units || []).map(item => semanticPill(item, 'unit')).join('');
+    return `
+      <tr>
+        <td>
+          <div class="command-semantic-name">${escapeHtml(group.name || group.id || '--')}</div>
+          <div class="command-semantic-sub">${Number(group.count || 0).toLocaleString()} 个 Signal · ${knownness || '--'}</div>
+        </td>
+        <td>${escapeHtml(group.metric_role_label || group.metric_role || '--')}</td>
+        <td>${escapeHtml(group.time_behavior_label || group.time_behavior || '--')}</td>
+        <td>${escapeHtml(group.unit_family_label || group.unit_family || '--')}<div class="command-semantic-sub">${units || '--'}</div></td>
+        <td>${escapeHtml(group.subject_type_label || group.subject_type || '--')}</td>
+        <td>${semanticPill(semanticWidgetLabel(group.widget_hint), 'widget')}</td>
+      </tr>
+    `;
+  }).join('') : renderSemanticTableEmpty(6);
+
+  datasetBody.innerHTML = datasetGroups.length ? datasetGroups.map(group => {
+    const windows = (group.allowed_windows || []).join(' / ');
+    const sorts = (group.allowed_sort_by || []).slice(0, 4).join(' / ');
+    const controls = [windows && `窗口 ${windows}`, sorts && `排序 ${sorts}`].filter(Boolean).join(' · ') || '--';
+    return `
+      <tr>
+        <td>
+          <div class="command-semantic-name">${escapeHtml(group.name || group.dataset_id || '--')}</div>
+          <div class="command-semantic-sub">${escapeHtml(group.dataset_id || '--')} · ${Number(group.row_count || 0).toLocaleString()} 行</div>
+        </td>
+        <td>${escapeHtml(group.rows_subject_label || group.rows_subject_type || '--')}</td>
+        <td>${escapeHtml(group.primary_metric_label || group.primary_metric_role || '--')}</td>
+        <td>${semanticPill(group.primary_unit || '--', 'unit')}</td>
+        <td>
+          <div>${semanticPill(semanticWidgetLabel(group.widget_hint), 'widget')}</div>
+          <div class="command-semantic-sub">${escapeHtml(controls)}</div>
+        </td>
+      </tr>
+    `;
+  }).join('') : renderSemanticTableEmpty(5);
+
+  widgetBox.innerHTML = widgets.length ? widgets.map(widget => `
+    <article class="command-widget-card">
+      <div>
+        <strong>${escapeHtml(widget.name || widget.id || '--')}</strong>
+        <span>${escapeHtml(widget.id || '--')}</span>
+      </div>
+      <p>${escapeHtml(widget.purpose || '--')}</p>
+      <small>${escapeHtml(widget.match || '--')}</small>
+    </article>
+  `).join('') : '<div class="command-semantic-empty">暂无 widget registry。</div>';
+
+  evidenceBox.innerHTML = notes.length ? notes.map(note => `
+    <div class="command-evidence-note ${escapeHtml(note.severity || 'info')}">
+      <strong>${escapeHtml(note.severity || 'info')}</strong>
+      <span>${escapeHtml(note.message || '--')}</span>
+    </div>
+  `).join('') : '<div class="command-semantic-empty">暂无证据风险；当前可见值均按语义分类。</div>';
+}
+
+function signalNumber(signals, path) {
+  const signal = (signals || []).find(s => s.path === path);
+  const value = Number(signal?.value);
+  return Number.isFinite(value) ? value : null;
+}
+
+function nullableNumber(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function sumCommandModelStats(items) {
+  return (Array.isArray(items) ? items : []).reduce((acc, item) => {
+    const requests = nullableNumber(item.requests);
+    const tokens = nullableNumber(item.total_tokens ?? item.tokens);
+    const cost = item.cost_known === false ? null : nullableNumber(item.cost ?? item.cost_usd);
+    const quota = nullableNumber(item.quota_used ?? item.quota);
+    if (requests !== null) {
+      acc.requests += requests;
+      acc.requestsKnown = true;
+    }
+    if (tokens !== null) {
+      acc.tokens += tokens;
+      acc.tokensKnown = true;
+    }
+    if (cost !== null) {
+      acc.cost += cost;
+      acc.costKnown = true;
+    }
+    if (quota !== null) {
+      acc.quota += quota;
+      acc.quotaKnown = true;
+    }
+    return acc;
+  }, { requests: 0, requestsKnown: false, tokens: 0, tokensKnown: false, cost: 0, costKnown: false, quota: 0, quotaKnown: false });
+}
+
+function semanticUnitFamily(unit) {
+  const normalized = String(unit || '').toLowerCase();
+  if (['usd', 'cny', 'eur', 'jpy'].includes(normalized)) return 'currency';
+  if (['quota', 'credit'].includes(normalized)) return 'quota';
+  if (['token', 'tokens'].includes(normalized)) return 'token';
+  if (['count', 'request', 'requests'].includes(normalized)) return 'count';
+  if (['percent', '%', 'ratio'].includes(normalized)) return 'ratio';
+  if (['ms', 'latency'].includes(normalized)) return 'latency';
+  if (['status', 'state'].includes(normalized)) return 'status';
+  return normalized || 'mixed';
+}
+
+function normalizeSignalSemantics(signal = {}) {
+  if (signal.semantics && typeof signal.semantics === 'object') return signal.semantics;
+  const path = String(signal.path || signal.id || '').toLowerCase();
+  const kind = String(signal.kind || '').toLowerCase();
+  const value = nullableNumber(signal.value);
+  const unit = String(signal.unit || 'count').toLowerCase();
+  const metricRole = path.includes('available') || kind === 'balance'
+    ? 'available'
+    : path.includes('total') || path.includes('capacity')
+      ? 'capacity'
+      : kind === 'rate' || path.includes('rpm') || path.includes('tpm')
+        ? 'rate'
+        : kind === 'status' || path.includes('status') || path.includes('state')
+          ? 'health'
+          : 'used';
+  const timeBehavior = kind === 'rate' || metricRole === 'rate'
+    ? 'rate'
+    : path.includes('today') || path.includes('window')
+      ? 'window'
+      : path.includes('total') || path.includes('aggregate')
+        ? 'cumulative'
+        : 'instant';
+  const subjectType = path.includes('sub2api')
+    ? 'api_key'
+    : path.includes('newapi')
+      ? 'account'
+      : path.includes('project') || path.includes('workspace')
+        ? 'workspace'
+        : 'source';
+  return {
+    metric_role: metricRole,
+    time_behavior: timeBehavior,
+    unit,
+    unit_family: semanticUnitFamily(unit),
+    subject_type: subjectType,
+    aggregation: metricRole === 'rate' ? 'avg' : 'latest',
+    knownness: value === null ? 'unknown' : (value === 0 && signal.confidence === 'reported' && path.includes('.cost.') ? 'reported_zero' : 'known'),
+  };
+}
+
+function semanticTrendRoleLabel(role) {
+  return {
+    health: '健康',
+    capacity: '容量',
+    available: '可用',
+    used: '已用',
+    rate: '速率',
+    rank: '排行',
+    evidence: '证据',
+  }[role] || role || '--';
+}
+
+function semanticTrendTimeLabel(timeBehavior) {
+  return {
+    instant: '瞬时',
+    window: '窗口',
+    cumulative: '累计',
+    rate: '速率',
+    trend: '趋势',
+    resetting: '周期',
+  }[timeBehavior] || timeBehavior || '--';
+}
+
+function semanticTrendSubjectLabel(subjectType) {
+  return {
+    source: '来源',
+    model: '模型',
+    workspace: '工作区',
+    account: '账户',
+    api_key: 'API Key',
+    device: '设备',
+    task: '任务',
+  }[subjectType] || subjectType || '--';
+}
+
+function semanticTrendMetricLabel(path, fallback = '') {
+  const labels = {
+    'agent.usage.cost.aggregate': '本地 Agent 成本',
+    'agent.usage.tokens.total.aggregate': '工作区 Token',
+    'agent.usage.projects.count': '工作区数',
+    'api.newapi.quota.total': '总额度',
+    'api.newapi.quota.used': '已用额度',
+    'api.newapi.quota.available': '可用额度',
+    'api.newapi.requests.total': '累计请求',
+    'api.newapi.usage.percent': '使用率',
+    'api.sub2api.balance.available': '钱包余额',
+    'api.sub2api.requests.today': '今日请求',
+    'api.sub2api.tokens.today': '今日 Token',
+    'api.sub2api.cost.today': '今日成本',
+    'api.sub2api.requests.total': '累计请求',
+    'api.sub2api.tokens.total': '累计 Token',
+    'api.sub2api.cost.total': '累计成本',
+    'derived.newapi.model.tokens': '模型 Token',
+    'derived.newapi.model.quota': '模型额度',
+    'derived.newapi.model.requests': '模型请求',
+    'derived.sub2api.model.tokens': '模型 Token',
+    'derived.sub2api.model.cost': '模型成本',
+    'derived.sub2api.model.requests': '模型请求',
+  };
+  return labels[path] || fallback || path || '--';
+}
+
+function semanticTrendMetricIdentityLabel(metricIdentity, fallback = '') {
+  const labels = {
+    tokens: 'Token',
+    cost: '成本',
+    quota: '额度',
+    balance: '余额',
+    requests: '请求',
+    sessions: '会话',
+    records: '记录',
+    models: '模型数',
+    projects: '工作区数',
+    workspaces: '工作区数',
+    usage_percent: '使用率',
+    health: '健康状态',
+    latency: '延迟',
+  };
+  return labels[metricIdentity] || fallback || metricIdentity || '--';
+}
+
+function semanticTrendGroupRank(group) {
+  const roleRank = { available: 0, used: 1, capacity: 2, rate: 3, health: 4, rank: 5, evidence: 6 };
+  const unitRank = { currency: 0, quota: 1, token: 2, count: 3, ratio: 4, latency: 5, status: 6, mixed: 7 };
+  return (roleRank[group.metricRole] ?? 9) * 100
+    + (unitRank[group.unitFamily] ?? 9) * 10
+    + String(group.source || '').localeCompare('') * 0;
+}
+
+function semanticTrendCoverageKeys(group) {
+  const keys = [];
+  const push = (prefix, value) => {
+    if (value) keys.push(`${prefix}:${value}`);
+  };
+  push('role', group.metricRole);
+  push('time', group.timeBehavior);
+  push('metric', group.metricIdentity);
+  push('unit', group.unit || group.unitFamily);
+  push('unitFamily', group.unitFamily);
+  push('subject', group.subjectType);
+  push('relayMetric', group.relayMetric);
+  push('relaySource', group.relaySource);
+  for (const domain of group.extensionDomains || []) push('domain', domain);
+  for (const source of group.sources || []) push('source', source);
+  for (const knownness of group.knownness || []) push('knownness', knownness);
+  return keys;
+}
+
+function pickRepresentativeSemanticTrendGroups(groups, limit = COMMAND_SEMANTIC_TREND_GROUP_LIMIT) {
+  const ordered = Array.isArray(groups) ? groups : [];
+  if (ordered.length <= limit) return ordered;
+  const candidates = ordered.map((group, index) => ({ group, index }));
+  const picked = [];
+  const covered = new Set();
+
+  while (picked.length < limit && candidates.length) {
+    let bestIndex = 0;
+    let bestScore = -Infinity;
+    for (let i = 0; i < candidates.length; i += 1) {
+      const { group, index } = candidates[i];
+      const keys = semanticTrendCoverageKeys(group);
+      const newCoverage = keys.filter(key => !covered.has(key)).length;
+      const seriesCount = group.series instanceof Map ? group.series.size : 0;
+      const pointCount = group.series instanceof Map
+        ? [...group.series.values()].reduce((sum, series) => sum + (series.data?.length || 0), 0)
+        : 0;
+      const score = newCoverage * 1000
+        + Math.min(seriesCount, 5) * 20
+        + Math.min(pointCount, 30)
+        - index / 1000;
+      if (score > bestScore) {
+        bestScore = score;
+        bestIndex = i;
+      }
+    }
+    const [selected] = candidates.splice(bestIndex, 1);
+    picked.push(selected);
+    for (const key of semanticTrendCoverageKeys(selected.group)) covered.add(key);
+  }
+
+  return picked
+    .sort((a, b) => a.index - b.index)
+    .map(item => item.group);
+}
+
+function semanticTrendValueFormatter(sampleOrGroup) {
+  const unit = String(sampleOrGroup?.unit || '').toLowerCase();
+  const family = sampleOrGroup?.unitFamily || semanticUnitFamily(unit);
+  if (family === 'currency' || unit === 'quota' || unit === 'credit') return value => formatUnitAmount(value, unit || 'quota');
+  if (family === 'token') return fmtTokens;
+  if (family === 'count') return value => Number(value || 0).toLocaleString();
+  if (family === 'ratio') return value => `${Number(value || 0).toFixed(2)}%`;
+  return value => formatUnitAmount(value, unit || 'count');
+}
+
+function semanticTrendNumericValues(group) {
+  const values = [];
+  for (const series of group?.series?.values?.() || []) {
+    for (const point of series.data || []) {
+      const value = nullableNumber(Array.isArray(point?.value) ? point.value[1] : point?.value);
+      if (value !== null) values.push(value);
+    }
+  }
+  return values;
+}
+
+function semanticTrendNumericExtent(group) {
+  const values = semanticTrendNumericValues(group);
+  if (!values.length) return null;
+  return {
+    min: Math.min(...values),
+    max: Math.max(...values),
+  };
+}
+
+function semanticTrendMagnitudeRatio(group) {
+  const magnitudes = [];
+  for (const series of group?.series?.values?.() || []) {
+    const seriesMagnitude = Math.max(
+      0,
+      ...(series.data || [])
+        .map(point => Math.abs(nullableNumber(Array.isArray(point?.value) ? point.value[1] : point?.value) ?? 0))
+        .filter(value => value > 0),
+    );
+    if (seriesMagnitude > 0) magnitudes.push(seriesMagnitude);
+  }
+  if (magnitudes.length < 2) return 1;
+  const min = Math.min(...magnitudes);
+  const max = Math.max(...magnitudes);
+  return min > 0 ? max / min : Infinity;
+}
+
+function semanticTrendViewMode(group) {
+  const role = String(group?.metricRole || '');
+  const timeBehavior = String(group?.timeBehavior || '');
+  const unitFamily = String(group?.unitFamily || semanticUnitFamily(group?.unit));
+  if (role === 'available' || role === 'capacity') return 'focused';
+  if (role === 'rate' || timeBehavior === 'rate' || unitFamily === 'ratio') return 'absolute';
+  if (group?.metricIdentity === 'models') return 'absolute';
+  if ((group?.series?.size || 0) > 1 && semanticTrendMagnitudeRatio(group) >= 100) return 'normalized';
+  if (role === 'used' && timeBehavior === 'cumulative') return 'delta';
+  return 'absolute';
+}
+
+function semanticTrendViewModeLabel(mode) {
+  return {
+    absolute: '绝对值',
+    focused: '聚焦轴',
+    delta: '窗口增量',
+    normalized: '归一化',
+  }[mode] || '绝对值';
+}
+
+function semanticTrendViewModeNote(mode) {
+  return {
+    absolute: '保留原始尺度，适合窗口消耗、比例和速率。',
+    focused: '使用非零起点聚焦波动，适合余额、可用量和容量；请按原始值理解大小。',
+    delta: '每条曲线减去窗口内首个值，适合累计量看变化。',
+    normalized: '每条曲线按首个非零值折算百分比变化，适合多曲线数量级差异很大的比较。',
+  }[mode] || '';
+}
+
+function transformSemanticTrendSeriesData(data, mode) {
+  const points = Array.isArray(data) ? data : [];
+  const rawValues = points.map(point => nullableNumber(Array.isArray(point?.value) ? point.value[1] : point?.value));
+  const firstFinite = rawValues.find(value => value !== null);
+  const firstNonZero = rawValues.find(value => value !== null && Math.abs(value) > Number.EPSILON);
+  return points.map((point, index) => {
+    const rawValue = rawValues[index];
+    const ts = Array.isArray(point?.value) ? point.value[0] : point?.ts;
+    let viewValue = rawValue;
+    if (rawValue !== null && mode === 'delta' && firstFinite !== undefined) {
+      viewValue = rawValue - firstFinite;
+    } else if (rawValue !== null && mode === 'normalized') {
+      if (firstNonZero !== undefined) {
+        viewValue = ((rawValue - firstNonZero) / Math.abs(firstNonZero)) * 100;
+      } else {
+        viewValue = rawValue === 0 ? 0 : null;
+      }
+    }
+    return {
+      ...point,
+      rawValue,
+      value: [ts, viewValue],
+    };
+  });
+}
+
+function semanticTrendYAxisName(group, mode) {
+  const unit = group?.unit || group?.unitFamily || '';
+  if (mode === 'normalized') return '%变化';
+  if (mode === 'delta') return `Δ ${unit || 'value'}`;
+  return unit || 'value';
+}
+
+function semanticTrendYAxisFormatter(group, mode) {
+  if (mode === 'normalized') return value => `${Number(value || 0).toFixed(1)}%`;
+  return semanticTrendValueFormatter(group);
+}
+
+function deriveCommandSemanticExtension(sample = {}) {
+  const path = String(sample.path || sample.seriesKey || '').toLowerCase();
+  const source = String(sample.source || '').toLowerCase();
+  const subjectType = String(sample.subjectType || 'source');
+  const metricRole = String(sample.metricRole || 'used');
+  const timeBehavior = String(sample.timeBehavior || 'instant');
+  const unitFamily = String(sample.unitFamily || semanticUnitFamily(sample.unit));
+  let extensionDomain = 'general_observation';
+  let extensionLabel = '通用态势观察';
+
+  if (path.includes('newapi') || path.includes('sub2api') || source.includes('newapi') || source.includes('sub2api')) {
+    extensionDomain = 'agent_api_relay';
+    extensionLabel = 'Agent/API 中转';
+  } else if (path.includes('agent.usage') || source.includes('codex') || source.includes('claude') || source.includes('cc ')) {
+    extensionDomain = 'local_agent_usage';
+    extensionLabel = '本地 Agent 使用';
+  } else if (subjectType === 'device') {
+    extensionDomain = 'device_observation';
+    extensionLabel = '设备态势';
+  }
+
+  if (subjectType === 'model') {
+    extensionLabel = `${extensionLabel} · 模型用量`;
+  } else if (subjectType === 'workspace') {
+    extensionLabel = `${extensionLabel} · 工作区画像`;
+  } else if (subjectType === 'api_key' || subjectType === 'account') {
+    extensionLabel = `${extensionLabel} · 账户/Key`;
+  }
+
+  let presentationHint = '状态数值';
+  if (metricRole === 'available' || metricRole === 'capacity') {
+    presentationHint = '余量 / 容量趋势';
+  } else if (metricRole === 'used' && timeBehavior === 'window') {
+    presentationHint = '窗口消耗趋势';
+  } else if (metricRole === 'used' && timeBehavior === 'cumulative') {
+    presentationHint = '累计画像趋势';
+  } else if (metricRole === 'rate' || timeBehavior === 'rate') {
+    presentationHint = '速率趋势';
+  } else if (unitFamily === 'ratio') {
+    presentationHint = '比例趋势';
+  }
+
+  return { extensionDomain, extensionLabel, presentationHint };
+}
+
+function semanticTrendExtensionsLabel(group) {
+  const labels = Array.isArray(group?.extensionLabels) ? group.extensionLabels : [group?.extensionLabel].filter(Boolean);
+  return labels.length ? labels.join(' / ') : '';
+}
+
+function semanticTrendPresentationLabel(group) {
+  const labels = Array.isArray(group?.presentationHints) ? group.presentationHints : [group?.presentationHint].filter(Boolean);
+  return labels.length ? labels.join(' / ') : '';
+}
+
+function normalizeSemanticKnownness(value) {
+  const knownness = String(value || 'known').trim().toLowerCase();
+  return knownness || 'known';
+}
+
+function inferSemanticMetricIdentity(path = '') {
+  const text = String(path || '').toLowerCase();
+  if (text.includes('usage.percent') || text.includes('.percent') || text.includes('.ratio')) return 'usage_percent';
+  if (text.includes('.tokens.') || text.includes('.token.') || text.endsWith('.tokens') || text.endsWith('.token')) return 'tokens';
+  if (text.includes('.cost.') || text.endsWith('.cost')) return 'cost';
+  if (text.includes('.quota.') || text.endsWith('.quota')) return 'quota';
+  if (text.includes('.balance.') || text.endsWith('.balance')) return 'balance';
+  if (text.includes('.requests.') || text.endsWith('.requests') || text.endsWith('.request')) return 'requests';
+  if (text.includes('.sessions.') || text.endsWith('.sessions') || text.endsWith('.session')) return 'sessions';
+  if (text.includes('.records.') || text.endsWith('.records') || text.endsWith('.record')) return 'records';
+  if (text.includes('.models.') || text.endsWith('.models') || text.endsWith('.model_count')) return 'models';
+  if (text.includes('.projects.') || text.includes('.workspace') || text.endsWith('.projects')) return 'workspaces';
+  if (text.includes('.health') || text.includes('.status') || text.includes('.state')) return 'health';
+  if (text.includes('.latency') || text.endsWith('.ms')) return 'latency';
+  return text || 'metric';
+}
+
+function normalizeSemanticMetricIdentity(sample = {}, path = '') {
+  const raw = sample.metricIdentity
+    || sample.metric_identity
+    || sample.metricKey
+    || sample.metric_key
+    || sample.metric
+    || sample.metricName
+    || inferSemanticMetricIdentity(path);
+  const safe = redactCommandTrendText(raw, 'metric')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '_')
+    .replace(/[^a-z0-9._:/+-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 120);
+  // Normalize legacy aliases so old localStorage snapshots don't create duplicate groups
+  const alias = { projects: 'workspaces' };
+  return alias[safe] || safe || 'metric';
+}
+
+function redactCommandTrendText(value, fallback = '--') {
+  const raw = value === null || value === undefined || value === '' ? fallback : value;
+  return String(raw)
+    .replace(/Authorization:\s*Bearer\s+[^\s"'<>]+/gi, 'Authorization: Bearer [redacted]')
+    .replace(/\bBearer\s+(?:sk-[A-Za-z0-9]{20,}|[A-Za-z0-9+/_=-]{24,})\b/gi, 'Bearer [redacted]')
+    .replace(/\bsk-[A-Za-z0-9]{20,}\b/g, 'sk-[redacted]')
+    .replace(/\b(?:qy[A-Za-z0-9+/_-]{20,}|uM[A-Za-z0-9+/_-]{20,})\b/g, '[redacted-token]');
+}
+
+function semanticTrendGroupSubtitle(group) {
+  return [
+    semanticTrendExtensionsLabel(group),
+    semanticTrendPresentationLabel(group),
+    semanticTrendSubjectLabel(group.subjectType),
+    semanticTrendRoleLabel(group.metricRole),
+    semanticTrendTimeLabel(group.timeBehavior),
+    semanticTrendSourcesLabel(group),
+    semanticTrendKnownnessLabel(group.knownness),
+  ].filter(Boolean).join(' · ');
+}
+
+function sanitizeCommandSemanticSamples(samples) {
+  return (Array.isArray(samples) ? samples : [])
+    .map(sample => {
+      const value = nullableNumber(sample?.value);
+      if (value === null) return null;
+      const unit = String(sample.unit || 'count').toLowerCase();
+      const unitFamily = sample.unitFamily || semanticUnitFamily(unit);
+      const metricRole = sample.metricRole || 'used';
+      const timeBehavior = sample.timeBehavior || 'instant';
+      const subjectType = sample.subjectType || 'source';
+      const source = redactCommandTrendText(sample.source, 'unknown');
+      const path = redactCommandTrendText(sample.path || sample.seriesKey || sample.label, '--');
+      const seriesKey = redactCommandTrendText(sample.seriesKey || path, path);
+      const label = redactCommandTrendText(sample.label || semanticTrendMetricLabel(path), semanticTrendMetricLabel(path));
+      const metricIdentity = normalizeSemanticMetricIdentity(sample, path);
+      const metricLabel = redactCommandTrendText(
+        sample.metricLabel || sample.metric_label || semanticTrendMetricIdentityLabel(metricIdentity, semanticTrendMetricLabel(path)),
+        semanticTrendMetricIdentityLabel(metricIdentity, semanticTrendMetricLabel(path)),
+      );
+      const knownness = normalizeSemanticKnownness(sample.knownness);
+      if (knownness === 'unknown' || knownness === 'planned') return null;
+      const groupKey = [
+        metricRole,
+        timeBehavior,
+        metricIdentity,
+        unitFamily,
+        unit,
+        subjectType,
+      ].join('|');
+      const extension = deriveCommandSemanticExtension({
+        ...sample,
+        unit,
+        unitFamily,
+        metricRole,
+        timeBehavior,
+        metricIdentity,
+        subjectType,
+        source,
+        path,
+      });
+      return {
+        groupKey,
+        seriesKey,
+        label,
+        metricIdentity,
+        metricLabel,
+        groupLabel: sample.groupLabel || `${metricLabel} · ${semanticTrendRoleLabel(metricRole)} · ${semanticTrendTimeLabel(timeBehavior)} · ${semanticTrendSubjectLabel(subjectType)}`,
+        value,
+        unit,
+        unitFamily,
+        metricRole,
+        timeBehavior,
+        subjectType,
+        source,
+        path,
+        knownness,
+        extensionDomain: sample.extensionDomain || extension.extensionDomain,
+        extensionLabel: sample.extensionLabel || extension.extensionLabel,
+        presentationHint: sample.presentationHint || extension.presentationHint,
+      };
+    })
+    .filter(Boolean)
+    .slice(0, COMMAND_SEMANTIC_SAMPLE_LIMIT);
+}
+
+function commandSemanticSubjectLabel(value, fallback = 'unknown') {
+  const text = redactCommandTrendText(value, fallback).trim();
+  return text || fallback;
+}
+
+function commandSemanticTextHash(value) {
+  const text = String(value || '');
+  let hash = 2166136261;
+  for (let i = 0; i < text.length; i += 1) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+function commandSemanticSubjectKey(value, fallback = 'unknown') {
+  const label = commandSemanticSubjectLabel(value, fallback);
+  const slug = label
+    .toLowerCase()
+    .replace(/\s+/g, '_')
+    .replace(/[^a-z0-9._:/+-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 80);
+  return `${slug || fallback}-${commandSemanticTextHash(label)}`;
+}
+
+function commandRowKnownness(value, knownFlag = true) {
+  const numeric = nullableNumber(value);
+  if (numeric === null || knownFlag === false) return 'unknown';
+  return numeric === 0 ? 'reported_zero' : 'derived';
+}
+
+function commandRowTokenTotal(row = {}) {
+  const direct = nullableNumber(row.total_tokens ?? row.tokens);
+  if (direct !== null) return direct;
+  const tokenFields = ['input_tokens', 'output_tokens', 'cache_read_tokens', 'cache_creation_tokens'];
+  let total = 0;
+  let known = false;
+  for (const field of tokenFields) {
+    const value = nullableNumber(row[field]);
+    if (value !== null) {
+      total += value;
+      known = true;
+    }
+  }
+  return known ? total : null;
+}
+
+function commandDatasetSourceLabel(row, fallback) {
+  if (Array.isArray(row?.sources) && row.sources.length) return row.sources.join(' / ');
+  return row?.source || fallback;
+}
+
+function addCommandDatasetRowMetric(addSample, {
+  datasetId,
+  row,
+  source,
+  subjectType,
+  subjectId,
+  subjectLabel,
+  metric,
+  metricLabel,
+  value,
+  unit,
+  knownFlag = true,
+  metricRoleOverride,
+  timeBehaviorOverride,
+}) {
+  const numeric = nullableNumber(value);
+  if (numeric === null || knownFlag === false) return;
+  const safeSubjectId = commandSemanticSubjectKey(subjectId || subjectLabel, subjectType);
+  const safeSubjectLabel = commandSemanticSubjectLabel(subjectLabel || subjectId, subjectType);
+  const safeSource = commandSemanticSubjectLabel(source, 'unknown');
+  addSample({
+    value: numeric,
+    unit: unit || 'count',
+    metricRole: metricRoleOverride || 'used',
+    timeBehavior: timeBehaviorOverride || 'cumulative',
+    subjectType,
+    source: safeSource,
+    path: `dataset.${datasetId}.${subjectType}.${metric}.${safeSubjectId}`,
+    seriesKey: `dataset:${datasetId}|${subjectType}:${safeSubjectId}|metric:${metric}`,
+    label: `${safeSubjectLabel} · ${metricLabel}`,
+    metricIdentity: metric,
+    metricLabel,
+    knownness: commandRowKnownness(numeric, knownFlag),
+  });
+}
+
+function addCommandModelRowMetrics(addSample, datasetId, rows, spec) {
+  for (const row of Array.isArray(rows) ? rows : []) {
+    if (!row || typeof row !== 'object') continue;
+    const source = commandDatasetSourceLabel(row, spec.source);
+    const model = normalizeCommandModelName(source, row.model || row.model_name, row.provider || spec.provider);
+    const tokens = commandRowTokenTotal(row);
+    addCommandDatasetRowMetric(addSample, {
+      datasetId,
+      row,
+      source,
+      subjectType: 'model',
+      subjectId: model,
+      subjectLabel: model,
+      metric: 'tokens',
+      metricLabel: 'Token',
+      value: tokens,
+      unit: 'token',
+    });
+
+    if (spec.costField) {
+      addCommandDatasetRowMetric(addSample, {
+        datasetId,
+        row,
+        source,
+        subjectType: 'model',
+        subjectId: model,
+        subjectLabel: model,
+        metric: 'cost',
+        metricLabel: '成本',
+        value: row[spec.costField],
+        unit: row.cost_unit || spec.costUnit || 'usd',
+        knownFlag: row.cost_known !== false,
+      });
+    }
+
+    if (spec.quotaField) {
+      addCommandDatasetRowMetric(addSample, {
+        datasetId,
+        row,
+        source,
+        subjectType: 'model',
+        subjectId: model,
+        subjectLabel: model,
+        metric: 'quota',
+        metricLabel: '额度',
+        value: row[spec.quotaField],
+        unit: row.quota_unit || spec.quotaUnit || 'quota',
+      });
+    }
+
+    for (const countMetric of spec.countMetrics || []) {
+      addCommandDatasetRowMetric(addSample, {
+        datasetId,
+        row,
+        source,
+        subjectType: 'model',
+        subjectId: model,
+        subjectLabel: model,
+        metric: countMetric.metric,
+        metricLabel: countMetric.label,
+        value: row[countMetric.field],
+        unit: 'count',
+      });
+    }
+  }
+}
+
+function addCommandWorkspaceRowMetrics(addSample, rows) {
+  for (const row of Array.isArray(rows) ? rows : []) {
+    if (!row || typeof row !== 'object') continue;
+    const workspace = row.workspace || row.workspace_name || row.workspace_path || 'unknown';
+    const source = commandDatasetSourceLabel(row, '本地 Agent');
+    addCommandDatasetRowMetric(addSample, {
+      datasetId: 'top_projects',
+      row,
+      source,
+      subjectType: 'workspace',
+      subjectId: workspace,
+      subjectLabel: workspace,
+      metric: 'tokens',
+      metricLabel: 'Token',
+      value: row.tokens ?? commandRowTokenTotal(row),
+      unit: 'token',
+    });
+    addCommandDatasetRowMetric(addSample, {
+      datasetId: 'top_projects',
+      row,
+      source,
+      subjectType: 'workspace',
+      subjectId: workspace,
+      subjectLabel: workspace,
+      metric: 'cost',
+      metricLabel: '成本',
+      value: row.cost_usd,
+      unit: 'usd',
+      knownFlag: row.cost_known === true,
+    });
+    const recordKinds = Array.isArray(row.record_kinds) ? row.record_kinds : [];
+    const sessionOnly = recordKinds.length === 1 && recordKinds[0] === 'session';
+    const recordCount = Number(row.record_count || 0);
+    const sessionCount = Number(row.sessions || 0);
+    if (sessionOnly && recordCount === sessionCount) {
+      addCommandDatasetRowMetric(addSample, {
+        datasetId: 'top_projects',
+        row,
+        source,
+        subjectType: 'workspace',
+        subjectId: workspace,
+        subjectLabel: workspace,
+        metric: 'sessions',
+        metricLabel: '会话',
+        value: row.sessions,
+        unit: 'count',
+      });
+    } else {
+      addCommandDatasetRowMetric(addSample, {
+        datasetId: 'top_projects',
+        row,
+        source,
+        subjectType: 'workspace',
+        subjectId: workspace,
+        subjectLabel: workspace,
+        metric: 'records',
+        metricLabel: '记录',
+        value: row.record_count,
+        unit: 'count',
+      });
+      if (sessionCount > 0) {
+        addCommandDatasetRowMetric(addSample, {
+          datasetId: 'top_projects',
+          row,
+          source,
+          subjectType: 'workspace',
+          subjectId: workspace,
+          subjectLabel: workspace,
+          metric: 'sessions',
+          metricLabel: '会话',
+          value: row.sessions,
+          unit: 'count',
+        });
+      }
+    }
+    addCommandDatasetRowMetric(addSample, {
+      datasetId: 'top_projects',
+      row,
+      source,
+      subjectType: 'workspace',
+      subjectId: workspace,
+      subjectLabel: workspace,
+      metric: 'models',
+      metricLabel: '模型数',
+      value: row.model_count,
+      unit: 'count',
+    });
+  }
+}
+
+function addCommandDatasetRowSemanticSamples(addSample, data) {
+  const datasets = data?.datasets || {};
+  addCommandModelRowMetrics(addSample, 'top_models', datasets.top_models, {
+    source: 'Claude Code',
+    costField: 'cost_usd',
+    costUnit: 'usd',
+  });
+  addCommandModelRowMetrics(addSample, 'codex_model_stats', datasets.codex_model_stats, {
+    source: 'Codex',
+    countMetrics: [
+      { field: 'requests', metric: 'requests', label: '请求' },
+      { field: 'sessions', metric: 'sessions', label: '会话' },
+    ],
+  });
+  addCommandModelRowMetrics(addSample, 'cc_switch_model_stats', datasets.cc_switch_model_stats, {
+    source: 'CC Switch',
+    costField: 'cost',
+    costUnit: 'usd',
+    countMetrics: [
+      { field: 'requests', metric: 'requests', label: '请求' },
+    ],
+  });
+  addCommandModelRowMetrics(addSample, 'newapi_model_stats', datasets.newapi_model_stats, {
+    source: 'NewAPI',
+    quotaField: 'quota_used',
+    quotaUnit: 'quota',
+    countMetrics: [
+      { field: 'requests', metric: 'requests', label: '请求' },
+    ],
+  });
+  addCommandModelRowMetrics(addSample, 'sub2api_model_stats', datasets.sub2api_model_stats, {
+    source: 'Sub2API',
+    costField: 'cost',
+    costUnit: 'usd',
+    countMetrics: [
+      { field: 'requests', metric: 'requests', label: '请求' },
+    ],
+  });
+  addCommandWorkspaceRowMetrics(addSample, datasets.top_projects);
+}
+
+function buildCommandSemanticSamples(data) {
+  const samples = [];
+  const addSample = sample => {
+    const [clean] = sanitizeCommandSemanticSamples([sample]);
+    if (clean) samples.push(clean);
+  };
+
+  for (const signal of Array.isArray(data?.signals) ? data.signals : []) {
+    const semantics = normalizeSignalSemantics(signal);
+    if (semantics.knownness === 'unknown' || semantics.knownness === 'planned') continue;
+    const value = nullableNumber(signal.value);
+    if (value === null) continue;
+    const unit = String(semantics.unit || signal.unit || 'count').toLowerCase();
+    const source = signal.sourceId || signal.source_id || signal.subject || (
+      String(signal.path || '').includes('newapi') ? 'NewAPI'
+        : String(signal.path || '').includes('sub2api') ? 'Sub2API'
+          : '本地 Agent'
+    );
+    addSample({
+      value,
+      unit,
+      unitFamily: semantics.unit_family || semanticUnitFamily(unit),
+      metricRole: semantics.metric_role,
+      timeBehavior: semantics.time_behavior,
+      subjectType: semantics.subject_type,
+      source,
+      path: signal.path || signal.id,
+      seriesKey: signal.path || signal.id,
+      label: semanticTrendMetricLabel(signal.path || signal.id),
+      metricIdentity: semantics.metric_identity || semantics.metricIdentity || signal.metric || signal.metricKey || signal.path || signal.id,
+      knownness: semantics.knownness,
+    });
+  }
+
+  addCommandDatasetRowSemanticSamples(addSample, data);
+
+  const newApiModels = sumCommandModelStats(data?.datasets?.newapi_model_stats);
+  if (newApiModels.tokensKnown) {
+    addSample({
+      value: newApiModels.tokens,
+      unit: 'token',
+      unitFamily: 'token',
+      metricRole: 'used',
+      timeBehavior: 'cumulative',
+      subjectType: 'model',
+      source: 'NewAPI',
+      path: 'derived.newapi.model.tokens',
+      label: semanticTrendMetricLabel('derived.newapi.model.tokens'),
+      metricIdentity: 'tokens',
+      metricLabel: 'Token',
+      knownness: 'derived',
+    });
+  }
+  if (newApiModels.quotaKnown) {
+    addSample({
+      value: newApiModels.quota,
+      unit: data?.datasets?.newapi_model_stats?.find?.(row => row?.quota_unit)?.quota_unit || 'quota',
+      metricRole: 'used',
+      timeBehavior: 'cumulative',
+      subjectType: 'model',
+      source: 'NewAPI',
+      path: 'derived.newapi.model.quota',
+      label: semanticTrendMetricLabel('derived.newapi.model.quota'),
+      metricIdentity: 'quota',
+      metricLabel: '额度',
+      knownness: 'derived',
+    });
+  }
+  if (newApiModels.requestsKnown) {
+    addSample({
+      value: newApiModels.requests,
+      unit: 'count',
+      metricRole: 'used',
+      timeBehavior: 'cumulative',
+      subjectType: 'model',
+      source: 'NewAPI',
+      path: 'derived.newapi.model.requests',
+      label: semanticTrendMetricLabel('derived.newapi.model.requests'),
+      metricIdentity: 'requests',
+      metricLabel: '请求',
+      knownness: 'derived',
+    });
+  }
+
+  const sub2ApiModels = sumCommandModelStats(data?.datasets?.sub2api_model_stats);
+  const sub2CostUnit = data?.datasets?.sub2api_model_stats?.find?.(row => row?.cost_unit)?.cost_unit || 'usd';
+  if (sub2ApiModels.tokensKnown) {
+    addSample({
+      value: sub2ApiModels.tokens,
+      unit: 'token',
+      metricRole: 'used',
+      timeBehavior: 'cumulative',
+      subjectType: 'model',
+      source: 'Sub2API',
+      path: 'derived.sub2api.model.tokens',
+      label: semanticTrendMetricLabel('derived.sub2api.model.tokens'),
+      metricIdentity: 'tokens',
+      metricLabel: 'Token',
+      knownness: 'derived',
+    });
+  }
+  if (sub2ApiModels.costKnown) {
+    addSample({
+      value: sub2ApiModels.cost,
+      unit: sub2CostUnit,
+      metricRole: 'used',
+      timeBehavior: 'cumulative',
+      subjectType: 'model',
+      source: 'Sub2API',
+      path: 'derived.sub2api.model.cost',
+      label: semanticTrendMetricLabel('derived.sub2api.model.cost'),
+      metricIdentity: 'cost',
+      metricLabel: '成本',
+      knownness: 'derived',
+    });
+  }
+  if (sub2ApiModels.requestsKnown) {
+    addSample({
+      value: sub2ApiModels.requests,
+      unit: 'count',
+      metricRole: 'used',
+      timeBehavior: 'cumulative',
+      subjectType: 'model',
+      source: 'Sub2API',
+      path: 'derived.sub2api.model.requests',
+      label: semanticTrendMetricLabel('derived.sub2api.model.requests'),
+      metricIdentity: 'requests',
+      metricLabel: '请求',
+      knownness: 'derived',
+    });
+  }
+
+  return sanitizeCommandSemanticSamples(samples);
+}
+
+function sanitizeCommandHistory(items) {
+  const cutoff = Date.now() - COMMAND_HISTORY_WINDOW_MS;
+  return (Array.isArray(items) ? items : [])
+    .filter(p => Number.isFinite(Number(p.ts)) && Number(p.ts) >= cutoff)
+    .map(p => ({
+      ts: Number(p.ts),
+      cost: nullableNumber(p.cost),
+      tokens: nullableNumber(p.tokens),
+      projects: nullableNumber(p.projects),
+      sourcesOk: Number(p.sourcesOk || 0),
+      sourcesTotal: Number(p.sourcesTotal || 0),
+      apiQuotaAvailable: nullableNumber(p.apiQuotaAvailable),
+      apiQuotaUsed: nullableNumber(p.apiQuotaUsed),
+      apiQuotaTotal: nullableNumber(p.apiQuotaTotal),
+      apiUsagePercent: nullableNumber(p.apiUsagePercent),
+      apiQuotaUnit: typeof p.apiQuotaUnit === 'string' ? p.apiQuotaUnit : 'quota',
+      sub2ApiBalance: nullableNumber(p.sub2ApiBalance),
+      sub2ApiTodayTokens: nullableNumber(p.sub2ApiTodayTokens),
+      sub2ApiTodayCost: nullableNumber(p.sub2ApiTodayCost),
+      sub2ApiTotalCost: nullableNumber(p.sub2ApiTotalCost),
+      sub2ApiUnit: typeof p.sub2ApiUnit === 'string' ? p.sub2ApiUnit : 'usd',
+      sub2ApiBalanceUnit: typeof p.sub2ApiBalanceUnit === 'string'
+        ? p.sub2ApiBalanceUnit
+        : (typeof p.sub2ApiUnit === 'string' ? p.sub2ApiUnit : 'usd'),
+      sub2ApiCostUnit: typeof p.sub2ApiCostUnit === 'string'
+        ? p.sub2ApiCostUnit
+        : (typeof p.sub2ApiUnit === 'string' ? p.sub2ApiUnit : 'usd'),
+      sub2ApiModelCostUnit: typeof p.sub2ApiModelCostUnit === 'string'
+        ? p.sub2ApiModelCostUnit
+        : (
+            typeof p.sub2ApiCostUnit === 'string'
+              ? p.sub2ApiCostUnit
+              : (typeof p.sub2ApiUnit === 'string' ? p.sub2ApiUnit : 'usd')
+          ),
+      newApiModelTokens: nullableNumber(p.newApiModelTokens),
+      newApiModelQuota: nullableNumber(p.newApiModelQuota ?? p.newApiModelCost),
+      newApiModelRequests: nullableNumber(p.newApiModelRequests),
+      sub2ApiModelTokens: nullableNumber(p.sub2ApiModelTokens),
+      sub2ApiModelCost: nullableNumber(p.sub2ApiModelCost),
+      sub2ApiModelRequests: nullableNumber(p.sub2ApiModelRequests),
+      semanticSamples: sanitizeCommandSemanticSamples(p.semanticSamples),
+    }))
+    .slice(-MAX_COMMAND_HISTORY_PTS);
+}
+
+function compactCommandSemanticSample(sample) {
+  const safe = sanitizeCommandSemanticSamples([sample])[0];
+  if (!safe) return null;
+  return {
+    value: safe.value,
+    unit: safe.unit,
+    metricRole: safe.metricRole,
+    timeBehavior: safe.timeBehavior,
+    subjectType: safe.subjectType,
+    source: safe.source,
+    path: safe.path,
+    seriesKey: safe.seriesKey,
+    label: safe.label,
+    metricIdentity: safe.metricIdentity,
+    knownness: safe.knownness,
+  };
+}
+
+function compactCommandHistoryForStorage(items, {
+  maxPoints = MAX_COMMAND_HISTORY_PTS,
+  semanticSampleLimit = COMMAND_SEMANTIC_SAMPLE_LIMIT,
+} = {}) {
+  const safeHistory = sanitizeCommandHistory(items).slice(-Math.max(1, Number(maxPoints) || 1));
+  return safeHistory.map(point => ({
+    ...point,
+    semanticSamples: semanticSampleLimit > 0
+      ? sanitizeCommandSemanticSamples(point.semanticSamples)
+        .slice(0, Math.max(0, Number(semanticSampleLimit) || 0))
+        .map(compactCommandSemanticSample)
+        .filter(Boolean)
+      : [],
+  }));
+}
+
+function persistCommandHistoryStorage(items, storage = globalThis.localStorage) {
+  const baseHistory = sanitizeCommandHistory(items);
+  if (!storage || typeof storage.setItem !== 'function') {
+    return {
+      history: baseHistory,
+      persisted: false,
+      degraded: false,
+      reason: 'storage_unavailable',
+    };
+  }
+
+  const candidates = [
+    {
+      tag: 'full',
+      history: baseHistory,
+    },
+    {
+      tag: 'compact-144x32',
+      history: compactCommandHistoryForStorage(baseHistory, { maxPoints: 144, semanticSampleLimit: 32 }),
+    },
+    {
+      tag: 'compact-72x16',
+      history: compactCommandHistoryForStorage(baseHistory, { maxPoints: 72, semanticSampleLimit: 16 }),
+    },
+    {
+      tag: 'compact-24x8',
+      history: compactCommandHistoryForStorage(baseHistory, { maxPoints: 24, semanticSampleLimit: 8 }),
+    },
+    {
+      tag: 'compact-12x0',
+      history: compactCommandHistoryForStorage(baseHistory, { maxPoints: 12, semanticSampleLimit: 0 }),
+    },
+  ];
+
+  let lastError = null;
+  for (const candidate of candidates) {
+    try {
+      storage.setItem(COMMAND_HISTORY_KEY, JSON.stringify(candidate.history));
+      return {
+        history: candidate.history,
+        persisted: true,
+        degraded: candidate.tag !== 'full',
+        reason: candidate.tag,
+      };
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  console.warn('command history persistence skipped:', lastError);
+  return {
+    history: baseHistory,
+    persisted: false,
+    degraded: true,
+    reason: 'persist_failed',
+    error: lastError,
+  };
+}
+
+function recordCommandSnapshot(data) {
+  const signals = data?.signals || [];
+  const cost = signalNumber(signals, 'agent.usage.cost.aggregate');
+  const tokens = signalNumber(signals, 'agent.usage.tokens.total.aggregate');
+  const projects = signalNumber(signals, 'agent.usage.projects.count');
+  const apiQuotaAvailableSignal = signals.find(s => s.path === 'api.newapi.quota.available');
+  const apiQuotaUsedSignal = signals.find(s => s.path === 'api.newapi.quota.used');
+  const apiQuotaTotalSignal = signals.find(s => s.path === 'api.newapi.quota.total');
+  const apiQuotaAvailable = signalNumber(signals, 'api.newapi.quota.available');
+  const apiQuotaUsed = signalNumber(signals, 'api.newapi.quota.used');
+  const apiQuotaTotal = signalNumber(signals, 'api.newapi.quota.total');
+  const apiUsagePercent = signalNumber(signals, 'api.newapi.usage.percent');
+  const sub2ApiBalanceSignal = signals.find(s => s.path === 'api.sub2api.balance.available');
+  const sub2ApiTodayCostSignal = signals.find(s => s.path === 'api.sub2api.cost.today');
+  const sub2ApiTotalCostSignal = signals.find(s => s.path === 'api.sub2api.cost.total');
+  const sub2ApiBalance = signalNumber(signals, 'api.sub2api.balance.available');
+  const sub2ApiTodayTokens = signalNumber(signals, 'api.sub2api.tokens.today');
+  const sub2ApiTodayCost = signalNumber(signals, 'api.sub2api.cost.today');
+  const sub2ApiTotalCost = signalNumber(signals, 'api.sub2api.cost.total');
+  const newApiModels = sumCommandModelStats(data?.datasets?.newapi_model_stats);
+  const sub2ApiModels = sumCommandModelStats(data?.datasets?.sub2api_model_stats);
+  const sub2ApiModelCostRow = (Array.isArray(data?.datasets?.sub2api_model_stats) ? data.datasets.sub2api_model_stats : [])
+    .find(row => nullableNumber(row?.cost ?? row?.cost_usd) !== null && typeof row?.cost_unit === 'string');
+  const sub2ApiBalanceUnit = sub2ApiBalanceSignal?.unit || 'usd';
+  const sub2ApiCostUnit = sub2ApiTodayCostSignal?.unit || sub2ApiTotalCostSignal?.unit || 'usd';
+  const sub2ApiModelCostUnit = sub2ApiModelCostRow?.cost_unit || sub2ApiCostUnit;
+  const sources = data?.sources || [];
+  const counts = data?.source_counts || {};
+  if (cost === null && tokens === null && projects === null && sources.length === 0) return;
+
+  const generated = Date.parse(data?.generated_at || '');
+  const point = {
+    ts: Number.isFinite(generated) ? generated : Date.now(),
+    cost,
+    tokens,
+    projects,
+    sourcesOk: counts.ok || 0,
+    sourcesTotal: sources.length || 0,
+    apiQuotaAvailable,
+    apiQuotaUsed,
+    apiQuotaTotal,
+    apiUsagePercent,
+    apiQuotaUnit: apiQuotaAvailableSignal?.unit || apiQuotaUsedSignal?.unit || apiQuotaTotalSignal?.unit || 'quota',
+    sub2ApiBalance,
+    sub2ApiTodayTokens,
+    sub2ApiTodayCost,
+    sub2ApiTotalCost,
+    sub2ApiUnit: sub2ApiCostUnit,
+    sub2ApiBalanceUnit,
+    sub2ApiCostUnit,
+    sub2ApiModelCostUnit,
+    newApiModelTokens: newApiModels.tokensKnown ? newApiModels.tokens : null,
+    newApiModelQuota: newApiModels.quotaKnown ? newApiModels.quota : null,
+    newApiModelRequests: newApiModels.requestsKnown ? newApiModels.requests : null,
+    sub2ApiModelTokens: sub2ApiModels.tokensKnown ? sub2ApiModels.tokens : null,
+    sub2ApiModelCost: sub2ApiModels.costKnown ? sub2ApiModels.cost : null,
+    sub2ApiModelRequests: sub2ApiModels.requestsKnown ? sub2ApiModels.requests : null,
+    semanticSamples: buildCommandSemanticSamples(data),
+  };
+
+  const history = sanitizeCommandHistory(commandHistoryStorage);
+  const last = history.at(-1);
+  if (last && Math.abs(point.ts - last.ts) < 30_000) {
+    history[history.length - 1] = point;
+  } else {
+    history.push(point);
+  }
+  const persisted = persistCommandHistoryStorage(history);
+  commandHistoryStorage = persisted.history;
+}
+
+function buildSemanticTrendGroups(history) {
+  const groups = new Map();
+  for (const point of history) {
+    for (const sample of sanitizeCommandSemanticSamples(point.semanticSamples)) {
+      const group = groups.get(sample.groupKey) || {
+        key: sample.groupKey,
+        label: sample.groupLabel,
+        metricRole: sample.metricRole,
+        timeBehavior: sample.timeBehavior,
+        metricIdentity: sample.metricIdentity,
+        metricLabel: sample.metricLabel,
+        unit: sample.unit,
+        unitFamily: sample.unitFamily,
+        subjectType: sample.subjectType,
+        source: sample.source,
+        sources: new Set(),
+        knownness: new Set(),
+        extensionDomains: new Set(),
+        extensionLabels: new Set(),
+        presentationHints: new Set(),
+        series: new Map(),
+        latestAt: 0,
+        latestValue: null,
+      };
+      const seriesKey = `${sample.source || 'unknown'}|${sample.seriesKey}`;
+      const series = group.series.get(seriesKey) || {
+        key: seriesKey,
+        name: `${sample.source || 'unknown'} · ${sample.label || sample.seriesKey}`,
+        path: sample.path,
+        data: [],
+      };
+      series.data.push({
+        value: [point.ts, sample.value],
+        knownness: sample.knownness || 'known',
+        path: sample.path,
+        label: sample.label,
+      });
+      group.series.set(seriesKey, series);
+      group.sources.add(sample.source || 'unknown');
+      group.knownness.add(sample.knownness || 'known');
+      group.extensionDomains.add(sample.extensionDomain || 'general_observation');
+      group.extensionLabels.add(sample.extensionLabel || '通用态势观察');
+      group.presentationHints.add(sample.presentationHint || '状态数值');
+      if (point.ts >= group.latestAt) {
+        group.latestAt = point.ts;
+        group.latestValue = sample.value;
+      }
+      groups.set(sample.groupKey, group);
+    }
+  }
+  return [...groups.values()]
+    .map(group => ({
+      ...group,
+      sources: [...group.sources].sort((a, b) => String(a).localeCompare(String(b))),
+      knownness: [...group.knownness].sort((a, b) => String(a).localeCompare(String(b))),
+      extensionDomains: [...group.extensionDomains].sort((a, b) => String(a).localeCompare(String(b))),
+      extensionLabels: [...group.extensionLabels].sort((a, b) => String(a).localeCompare(String(b))),
+      presentationHints: [...group.presentationHints].sort((a, b) => String(a).localeCompare(String(b))),
+    }))
+    .filter(group => [...group.series.values()].some(series => series.data.length))
+    .sort((a, b) => semanticTrendGroupRank(a) - semanticTrendGroupRank(b) || String(a.label).localeCompare(String(b.label)));
+}
+
+function filterCommandTrendHistoryByWindow(history, windowKey) {
+  const option = COMMAND_TREND_WINDOW_OPTIONS[windowKey] || COMMAND_TREND_WINDOW_OPTIONS['6h'];
+  const safeHistory = sanitizeCommandHistory(history);
+  if (!safeHistory.length) return [];
+  const maxTs = Math.max(...safeHistory.map(point => Number(point.ts) || 0));
+  const cutoff = maxTs - option.ms;
+  return safeHistory.filter(point => Number(point.ts) >= cutoff);
+}
+
+function semanticTrendGroupMatchesDimensionFilter(group, filter = commandDimensionTrendFilter) {
+  if (!group) return false;
+  if (filter === 'all') return true;
+  if (filter === 'reserve') return ['available', 'capacity'].includes(group.metricRole);
+  if (filter === 'usage') return group.metricRole === 'used';
+  if (filter === 'ratio') return group.unitFamily === 'ratio' || group.metricRole === 'rate' || group.timeBehavior === 'rate';
+  if (filter === 'relay') {
+    return (group.extensionDomains || []).includes('agent_api_relay')
+      || (group.sources || []).some(source => /newapi|sub2api/i.test(String(source || '')));
+  }
+  if (filter === 'local') {
+    return (group.extensionDomains || []).includes('local_agent_usage')
+      || (group.sources || []).some(source => /claude|codex|cc switch|本地/i.test(String(source || '')));
+  }
+  return true;
+}
+
+function semanticTrendDerivationStats(groups = []) {
+  const countBy = pick => {
+    const map = new Map();
+    for (const group of groups) {
+      const value = pick(group) || '--';
+      map.set(value, (map.get(value) || 0) + 1);
+    }
+    return [...map.entries()]
+      .sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0])))
+      .slice(0, 5)
+      .map(([label, count]) => `${label} ${count}`)
+      .join(' / ') || '--';
+  };
+  return {
+    units: countBy(group => (group.unit || group.unitFamily || '').toUpperCase()),
+    roles: countBy(group => semanticTrendRoleLabel(group.metricRole)),
+    subjects: countBy(group => semanticTrendSubjectLabel(group.subjectType)),
+    domains: countBy(group => semanticTrendExtensionsLabel(group)),
+  };
+}
+
+function renderCommandDimensionDerivationSummary(allGroups, visibleGroups, history, matchedCount = visibleGroups.length) {
+  const box = document.getElementById('command-dimension-derivation');
+  const windowLabel = document.getElementById('command-trend-window');
+  if (windowLabel) {
+    const option = COMMAND_TREND_WINDOW_OPTIONS[commandDimensionTrendWindow] || COMMAND_TREND_WINDOW_OPTIONS['6h'];
+    windowLabel.textContent = `${option.label} · ${COMMAND_DIMENSION_TREND_FILTERS[commandDimensionTrendFilter]?.label || '全部'}`;
+  }
+  if (!box) return;
+
+  const stats = semanticTrendDerivationStats(allGroups);
+  const visibleStats = semanticTrendDerivationStats(visibleGroups);
+  const filterNote = COMMAND_DIMENSION_TREND_FILTERS[commandDimensionTrendFilter]?.note || '';
+  box.innerHTML = `
+    <div class="command-dimension-rule">
+      <span>分图内涵</span>
+      <strong>角色 + 时间行为 + 指标身份 + 单位 + 对象</strong>
+      <small>成本、余额、额度即使同为 USD 也分图；请求、会话、记录、模型数即使同为 count 也分图。</small>
+    </div>
+    <div class="command-dimension-rule">
+      <span>曲线外延</span>
+      <strong>来源 + Signal Path</strong>
+      <small>NewAPI、Sub2API、本地 Agent 作为曲线和证据，而不是默认先分来源。</small>
+    </div>
+    <div class="command-dimension-rule">
+      <span>当前派生</span>
+      <strong>${Number(visibleGroups.length).toLocaleString()} / ${Number(matchedCount).toLocaleString()} 组</strong>
+      <small>全集 ${Number(allGroups.length).toLocaleString()} 组 · ${Number(history.length).toLocaleString()} 个快照 · 覆盖优先 · ${escapeHtml(filterNote)}</small>
+    </div>
+    <div class="command-dimension-rule">
+      <span>量纲画像</span>
+      <strong>${escapeHtml(visibleStats.units)}</strong>
+      <small>全集: ${escapeHtml(stats.units)} · 角色: ${escapeHtml(visibleStats.roles)} · 对象: ${escapeHtml(visibleStats.subjects)}</small>
+    </div>
+  `;
+}
+
+function semanticTrendKnownnessLabel(knownness) {
+  const labels = {
+    known: '已知',
+    derived: '推导',
+    reported_zero: '报告为 0',
+    unknown: '未知',
+    planned: '计划接入',
+  };
+  const items = Array.isArray(knownness)
+    ? knownness
+    : knownness instanceof Set
+      ? [...knownness]
+      : [knownness].filter(Boolean);
+  return items.map(item => labels[item] || item).filter(Boolean).join(' / ') || '已知';
+}
+
+function semanticTrendSourcesLabel(group) {
+  const sources = Array.isArray(group?.sources) ? group.sources : [group?.source].filter(Boolean);
+  return sources.length ? sources.join(' / ') : '来源待识别';
+}
+
+function semanticTrendChartDomId(prefix, key) {
+  return `${prefix}-${String(key).replace(/[^a-zA-Z0-9_-]/g, '-')}`;
+}
+
+function disposeMissingTrendCharts(chartMap, groupKeys) {
+  const keep = new Set(groupKeys);
+  for (const [key, chart] of chartMap.entries()) {
+    if (keep.has(key)) continue;
+    chart?.dispose?.();
+    chartMap.delete(key);
+  }
+}
+
+function renderSemanticTrendGrid({
+  gridId,
+  noteId,
+  chartMap,
+  chartIdPrefix,
+  groups,
+  emptyText,
+  noteText,
+}) {
+  const grid = document.getElementById(gridId);
+  const note = document.getElementById(noteId);
+  if (!grid) return;
+
+  disposeMissingTrendCharts(chartMap, groups.map(group => group.key));
+  if (!groups.length) {
+    for (const chart of chartMap.values()) chart?.dispose?.();
+    chartMap.clear();
+    grid.innerHTML = `<div class="command-semantic-empty">${escapeHtml(emptyText || '等待语义采样。')}</div>`;
+    if (note) note.textContent = noteText || '语义趋势不会把 USD、Token、次数、比例混在同一轴，也不会把 unknown 当作 0。';
+    return;
+  }
+
+  for (const chart of chartMap.values()) chart?.dispose?.();
+  chartMap.clear();
+  grid.innerHTML = groups.map(group => {
+    const mode = semanticTrendViewMode(group);
+    return `
+      <section class="command-semantic-trend-card" data-semantic-trend-key="${escapeHtml(group.key)}">
+        <div class="command-semantic-trend-head">
+          <div>
+            <strong>${escapeHtml(group.label || group.groupLabel || '--')}</strong>
+            <span>${escapeHtml(semanticTrendGroupSubtitle(group))}</span>
+          </div>
+          <div class="command-semantic-trend-badges" aria-label="趋势显示模式">
+            <small>${escapeHtml((group.unit || group.unitFamily || '--').toUpperCase())}</small>
+            <small class="command-semantic-view-badge">${escapeHtml(semanticTrendViewModeLabel(mode))}</small>
+          </div>
+        </div>
+        <div class="command-semantic-trend-chart" id="${escapeHtml(semanticTrendChartDomId(chartIdPrefix, group.key))}" role="img" aria-label="${escapeHtml(group.label || group.groupLabel || '语义趋势图')}"></div>
+      </section>
+    `;
+  }).join('');
+
+  const isDark = document.documentElement.getAttribute('data-theme') !== 'light';
+  const textColor = isDark ? '#8b949e' : '#656d76';
+  const splitColor = isDark ? '#21262d' : '#eaeef2';
+  const palette = COMMAND_MODEL_COLORS;
+  for (const group of groups) {
+    const elementId = semanticTrendChartDomId(chartIdPrefix, group.key);
+    const element = document.getElementById(elementId);
+    if (!element) continue;
+    let trendChart = chartMap.get(group.key);
+    if (!trendChart || trendChart.isDisposed?.()) {
+      trendChart = echarts.init(element, null, { renderer: 'canvas' });
+      chartMap.set(group.key, trendChart);
+    }
+    const mode = semanticTrendViewMode(group);
+    const formatValue = semanticTrendValueFormatter(group);
+    const formatViewValue = semanticTrendYAxisFormatter(group, mode);
+    const extent = semanticTrendNumericExtent(group);
+    const range = extent ? extent.max - extent.min : 0;
+    const focusPadding = extent
+      ? Math.max(Math.abs(extent.max || extent.min) * 0.01, Math.abs(range) * 0.12, 1)
+      : 0;
+    const focusedMin = mode === 'focused' && extent
+      ? (extent.min >= 0 ? Math.max(0, extent.min - focusPadding) : extent.min - focusPadding)
+      : undefined;
+    const focusedMax = mode === 'focused' && extent
+      ? extent.max + focusPadding
+      : undefined;
+    const series = [...group.series.values()].map((item, idx) => ({
+      name: item.name,
+      type: 'line',
+      smooth: true,
+      symbol: item.data.length <= 12 ? 'circle' : 'none',
+      lineStyle: { color: palette[idx % palette.length], width: 2 },
+      itemStyle: { color: palette[idx % palette.length] },
+      emphasis: { focus: 'series' },
+      data: transformSemanticTrendSeriesData(item.data, mode),
+    }));
+    trendChart.setOption({
+      backgroundColor: 'transparent',
+      color: palette,
+      textStyle: { color: textColor, fontFamily: 'Cascadia Code, Consolas, monospace' },
+      grid: { left: 74, right: 24, top: 34, bottom: 28 },
+      legend: {
+        type: 'scroll',
+        top: 0,
+        left: 0,
+        right: 0,
+        textStyle: { color: textColor, fontSize: 10 },
+      },
+      tooltip: {
+        trigger: 'axis',
+        backgroundColor: isDark ? '#21262d' : '#f6f8fa',
+        borderColor: isDark ? '#30363d' : '#d0d7de',
+        textStyle: { color: isDark ? '#e6edf3' : '#1f2328', fontSize: 12 },
+        formatter: params => {
+          const t = new Date(params[0]?.value?.[0] || params[0]?.axisValue).toLocaleString('zh-CN');
+          const rows = params.map(p => {
+            const evidence = semanticTrendKnownnessLabel(p.data?.knownness || 'known');
+            const evidenceText = evidence && evidence !== '已知'
+              ? ` <span style="color:${textColor};font-size:10px">(${escapeHtml(evidence)})</span>`
+              : '';
+            const displayValue = nullableNumber(p.value?.[1] ?? p.value);
+            const rawValue = nullableNumber(p.data?.rawValue);
+            const displayText = displayValue === null ? '--' : formatViewValue(displayValue);
+            const rawText = rawValue === null ? '--' : formatValue(rawValue);
+            const rawLine = mode === 'absolute'
+              ? ` <span style="color:${textColor};font-size:10px">原始 ${escapeHtml(rawText)}</span>`
+              : `<br><span style="color:${textColor};font-size:10px">原始 ${escapeHtml(rawText)}</span>`;
+            return `${p.marker}${escapeHtml(p.seriesName)}: <b>${escapeHtml(displayText)}</b>${rawLine}${evidenceText}`;
+          });
+          const modeLabel = semanticTrendViewModeLabel(mode);
+          return `${rows.join('<br>')}<div style="color:${textColor};font-size:10px;margin-top:4px">${escapeHtml(modeLabel)} · ${t}</div>`;
+        },
+      },
+      xAxis: {
+        type: 'time',
+        axisLine: { lineStyle: { color: isDark ? '#30363d' : '#d0d7de' } },
+        axisLabel: { color: textColor, fontSize: 10 },
+        splitLine: { show: false },
+      },
+      yAxis: {
+        type: 'value',
+        name: semanticTrendYAxisName(group, mode),
+        scale: mode === 'focused',
+        min: focusedMin,
+        max: focusedMax,
+        nameTextStyle: { color: textColor, fontSize: 10 },
+        axisLabel: { color: textColor, fontSize: 10, formatter: v => formatViewValue(v) },
+        splitLine: { lineStyle: { color: splitColor } },
+      },
+      series,
+    }, { notMerge: true });
+  }
+
+  if (note) {
+    const modeNotes = [...new Set(groups.map(group => semanticTrendViewMode(group)))]
+      .map(mode => `${semanticTrendViewModeLabel(mode)}: ${semanticTrendViewModeNote(mode)}`)
+      .filter(Boolean)
+      .join('；');
+    const baseNote = noteText || `${groups.length} 个语义趋势组；每组独立 y 轴，避免不同数量级互相压扁。`;
+    note.textContent = modeNotes ? `${baseNote} 视图模式: ${modeNotes}` : baseNote;
+  }
+}
+
+function isCommandDimensionTrendGroup(group) {
+  const roleOk = ['used', 'available', 'capacity', 'rate'].includes(group.metricRole);
+  const unitOk = ['currency', 'quota', 'token', 'count', 'ratio'].includes(group.unitFamily);
+  const timeOk = !['health', 'evidence', 'rank'].includes(group.metricRole);
+  return roleOk && unitOk && timeOk;
+}
+
+function renderCommandDimensionTrend(history, context = {}) {
+  const windowedHistory = filterCommandTrendHistoryByWindow(history, commandDimensionTrendWindow);
+  const allGroups = buildSemanticTrendGroups(windowedHistory)
+    .filter(isCommandDimensionTrendGroup);
+  const matchedGroups = allGroups
+    .filter(group => semanticTrendGroupMatchesDimensionFilter(group));
+  const groups = pickRepresentativeSemanticTrendGroups(matchedGroups, COMMAND_DIMENSION_TREND_GROUP_LIMIT);
+  renderCommandDimensionDerivationSummary(allGroups, groups, windowedHistory, matchedGroups.length);
+  const units = [...new Set(groups.map(group => group.unit || group.unitFamily).filter(Boolean))].join(' / ');
+  const sources = [...new Set(groups.flatMap(group => group.sources || []))].join(' / ');
+  const windowOption = COMMAND_TREND_WINDOW_OPTIONS[commandDimensionTrendWindow] || COMMAND_TREND_WINDOW_OPTIONS['6h'];
+  const filterLabel = COMMAND_DIMENSION_TREND_FILTERS[commandDimensionTrendFilter]?.label || '全部';
+  const remote = [
+    context.hasApiQuota ? 'NewAPI' : null,
+    context.hasSub2Api ? 'Sub2API' : null,
+  ].filter(Boolean).join(' + ') || '远端额度等待可用 key';
+  const noteText = windowedHistory.length < 2
+    ? '已开始记录当前浏览器的语义快照；第二次刷新后会形成走势。分图键为角色、时间行为、指标身份、单位、对象，来源作为曲线。'
+    : matchedGroups.length
+      ? `${windowOption.label} · ${filterLabel} · ${windowedHistory.length} 个快照 · ${groups.length}/${matchedGroups.length} 个匹配语义组 · 全集 ${allGroups.length} 组 · 覆盖优先展示 · ${remote} · 单位 ${units || '--'} · 来源 ${sources || '--'}；unknown/planned 跳过，reported_zero 保留为 0，本地缓存最多 ${MAX_COMMAND_HISTORY_PTS} 个快照。`
+      : `${windowOption.label} · ${filterLabel} · ${windowedHistory.length} 个快照 · 当前筛选没有匹配语义组 · 全集 ${allGroups.length} 组；unknown/planned 不进入曲线。`;
+  renderSemanticTrendGrid({
+    gridId: 'command-dimension-trend-grid',
+    noteId: 'command-trend-note',
+    chartMap: commandDimensionTrendCharts,
+    chartIdPrefix: 'dimension-trend',
+    groups,
+    emptyText: '等待语义采样；刷新后会按角色、时间、指标身份、单位和对象自动分图。',
+    noteText,
+  });
+}
+
+function renderCommandSemanticTrend() {
+  const history = filterCommandTrendHistoryByWindow(commandHistoryStorage, commandDimensionTrendWindow);
+  const allGroups = buildSemanticTrendGroups(history);
+  const groups = pickRepresentativeSemanticTrendGroups(allGroups, COMMAND_SEMANTIC_TREND_GROUP_LIMIT);
+  const units = [...new Set(groups.map(group => group.unit || group.unitFamily).filter(Boolean))].join(' / ');
+  const windowOption = COMMAND_TREND_WINDOW_OPTIONS[commandDimensionTrendWindow] || COMMAND_TREND_WINDOW_OPTIONS['6h'];
+  renderSemanticTrendGrid({
+    gridId: 'command-semantic-trend-grid',
+    noteId: 'command-semantic-trend-note',
+    chartMap: commandSemanticTrendCharts,
+    chartIdPrefix: 'semantic-trend',
+    groups,
+    emptyText: '等待语义采样；刷新后会按角色、窗口、指标身份、单位和对象自动分图。',
+    noteText: groups.length
+      ? `${windowOption.label} · ${history.length} 个快照 · ${groups.length}/${allGroups.length} 个语义趋势组 · 覆盖优先展示 · 单位 ${units || '--'}；每组独立 y 轴，指标身份不同不共轴。`
+      : '语义趋势不会把成本/余额/额度、请求/会话/记录混在同一轴，也不会把 unknown 当作 0。',
+  });
+}
+
+function relaySourceLabelFromSample(sample) {
+  const source = String(sample?.source || '');
+  const path = String(sample?.path || '').toLowerCase();
+  if (source.toLowerCase().includes('newapi') || path.includes('newapi')) return 'NewAPI';
+  if (source.toLowerCase().includes('sub2api') || path.includes('sub2api')) return 'Sub2API';
+  return source || '中转来源';
+}
+
+function relaySourceRankFromLabel(label) {
+  if (label === 'NewAPI') return 0;
+  if (label === 'Sub2API') return 1;
+  return 9;
+}
+
+function isRelaySemanticSample(sample) {
+  const source = String(sample?.source || '').toLowerCase();
+  const path = String(sample?.path || '').toLowerCase();
+  return source.includes('newapi')
+    || source.includes('sub2api')
+    || path.includes('newapi')
+    || path.includes('sub2api');
+}
+
+function relayTrendMetricKey(sample) {
+  const path = String(sample?.path || '');
+  const pathMetric = relayMetricFromPath(path);
+  if (pathMetric) return pathMetric;
+  if (path.includes('model.tokens')) return 'model_tokens';
+  if (path.includes('model.cost')) return 'model_cost';
+  if (path.includes('model.quota')) return 'model_quota';
+  if (path.includes('model.requests')) return 'model_requests';
+  return sample?.label || path || 'metric';
+}
+
+function relayTrendGroupSpec(sample, view = commandRelayView) {
+  const relaySource = relaySourceLabelFromSample(sample);
+  const metricKey = relayTrendMetricKey(sample);
+  const metricIdentity = sample.metricIdentity || normalizeSemanticMetricIdentity(sample, sample.path || metricKey);
+  const metricLabel = relayMetricLabel(metricKey)
+    || sample.metricLabel
+    || sample.label
+    || semanticTrendMetricIdentityLabel(metricIdentity, semanticTrendMetricLabel(sample.path));
+  if (view === 'metric') {
+    const comparableMetricLabel = sample.metricLabel
+      || semanticTrendMetricIdentityLabel(metricIdentity, metricLabel);
+    return {
+      key: [
+        'relay-metric',
+        metricIdentity,
+        sample.metricRole,
+        sample.timeBehavior,
+        sample.unitFamily,
+        sample.unit,
+      ].join('|'),
+      label: `${comparableMetricLabel} · ${semanticTrendRoleLabel(sample.metricRole)} · ${semanticTrendTimeLabel(sample.timeBehavior)}`,
+      seriesKey: `${relaySource}|${sample.seriesKey || sample.path || metricKey}`,
+      seriesName: relaySource,
+      relaySource,
+      relayMetric: metricKey,
+      metricIdentity,
+    };
+  }
+  if (view === 'model') {
+    // 按模型聚合视图：忽略来源，按模型名和指标类型分组
+    const modelName = sample.model || sample.seriesKey || metricKey;
+    return {
+      key: [
+        'relay-model',
+        modelName,
+        metricIdentity,
+        sample.metricRole,
+        sample.timeBehavior,
+        sample.unitFamily,
+        sample.unit,
+      ].join('|'),
+      label: `${modelName} · ${metricLabel} · ${semanticTrendRoleLabel(sample.metricRole)} · ${semanticTrendTimeLabel(sample.timeBehavior)}`,
+      seriesKey: `${metricKey}|${modelName}`,
+      seriesName: modelName,
+      relaySource,
+      relayMetric: metricKey,
+      metricIdentity,
+    };
+  }
+  return {
+    key: [
+      'relay-source',
+      relaySource,
+      metricKey,
+      metricIdentity,
+      sample.metricRole,
+      sample.timeBehavior,
+      sample.unitFamily,
+      sample.unit,
+      sample.subjectType,
+    ].join('|'),
+    label: `${relaySource} · ${metricLabel} · ${semanticTrendRoleLabel(sample.metricRole)} · ${semanticTrendTimeLabel(sample.timeBehavior)}`,
+    seriesKey: `${metricKey}|${sample.seriesKey || sample.path || relaySource}`,
+    seriesName: metricLabel,
+    relaySource,
+    relayMetric: metricKey,
+    metricIdentity,
+  };
+}
+
+function buildRelayTrendGroups(history, view = commandRelayView) {
+  const groups = new Map();
+  for (const point of history) {
+    for (const sample of sanitizeCommandSemanticSamples(point.semanticSamples).filter(isRelaySemanticSample)) {
+      const spec = relayTrendGroupSpec(sample, view);
+      const group = groups.get(spec.key) || {
+        key: spec.key,
+        label: spec.label,
+        metricRole: sample.metricRole,
+        timeBehavior: sample.timeBehavior,
+        unit: sample.unit,
+        unitFamily: sample.unitFamily,
+        subjectType: sample.subjectType,
+        source: spec.relaySource,
+        relaySource: spec.relaySource,
+        relayMetric: spec.relayMetric,
+        metricIdentity: spec.metricIdentity || sample.metricIdentity,
+        metricLabel: sample.metricLabel || semanticTrendMetricIdentityLabel(spec.metricIdentity || sample.metricIdentity, sample.label),
+        sources: new Set(),
+        knownness: new Set(),
+        extensionDomains: new Set(),
+        extensionLabels: new Set(),
+        presentationHints: new Set(),
+        series: new Map(),
+        latestAt: 0,
+        latestValue: null,
+      };
+      const series = group.series.get(spec.seriesKey) || {
+        key: spec.seriesKey,
+        name: spec.seriesName,
+        path: sample.path,
+        data: [],
+      };
+      series.data.push({
+        value: [point.ts, sample.value],
+        knownness: sample.knownness || 'known',
+        path: sample.path,
+        label: sample.label,
+      });
+      group.series.set(spec.seriesKey, series);
+      group.sources.add(spec.relaySource);
+      group.knownness.add(sample.knownness || 'known');
+      group.extensionDomains.add(sample.extensionDomain || 'agent_api_relay');
+      group.extensionLabels.add(sample.extensionLabel || 'Agent/API 中转');
+      group.presentationHints.add(sample.presentationHint || '状态数值');
+      if (point.ts >= group.latestAt) {
+        group.latestAt = point.ts;
+        group.latestValue = sample.value;
+      }
+      groups.set(spec.key, group);
+    }
+  }
+
+  return [...groups.values()]
+    .map(group => ({
+      ...group,
+      sources: [...group.sources].sort((a, b) => relaySourceRankFromLabel(a) - relaySourceRankFromLabel(b) || String(a).localeCompare(String(b))),
+      knownness: [...group.knownness].sort((a, b) => String(a).localeCompare(String(b))),
+      extensionDomains: [...group.extensionDomains].sort((a, b) => String(a).localeCompare(String(b))),
+      extensionLabels: [...group.extensionLabels].sort((a, b) => String(a).localeCompare(String(b))),
+      presentationHints: [...group.presentationHints].sort((a, b) => String(a).localeCompare(String(b))),
+    }))
+    .filter(group => [...group.series.values()].some(series => series.data.length))
+    .sort((a, b) =>
+      relaySourceRankFromLabel(a.relaySource) - relaySourceRankFromLabel(b.relaySource)
+      || relayMetricRank(a.relayMetric) - relayMetricRank(b.relayMetric)
+      || semanticTrendGroupRank(a) - semanticTrendGroupRank(b)
+      || String(a.label).localeCompare(String(b.label))
+    );
+}
+
+function renderCommandRelayTrend(history, context = {}) {
+  const windowedHistory = filterCommandTrendHistoryByWindow(history, commandDimensionTrendWindow);
+  const allGroups = buildRelayTrendGroups(windowedHistory, commandRelayView);
+  const groups = pickRepresentativeSemanticTrendGroups(allGroups, COMMAND_RELAY_TREND_GROUP_LIMIT);
+  const viewLabel = commandRelayView === 'metric' ? '按类型看中转站' : commandRelayView === 'model' ? '按模型聚合' : '按中转站看类型';
+  const windowOption = COMMAND_TREND_WINDOW_OPTIONS[commandDimensionTrendWindow] || COMMAND_TREND_WINDOW_OPTIONS['6h'];
+  const relaySources = [
+    (context.hasApiQuota || context.hasNewApiModels) ? 'NewAPI' : null,
+    (context.hasSub2Api || context.hasSub2ApiModels) ? 'Sub2API' : null,
+  ].filter(Boolean).join(' / ') || '等待 NewAPI / Sub2API 采样';
+  const units = [...new Set(groups.map(group => group.unit || group.unitFamily).filter(Boolean))].join(' / ');
+  const noteText = groups.length
+    ? `${viewLabel} · ${windowOption.label} · ${windowedHistory.length} 个快照 · ${groups.length}/${allGroups.length} 个中转语义组 · 覆盖优先展示 · ${relaySources} · 单位 ${units || '--'}；余额、额度、成本、Token、请求按指标身份独立分组，不共轴。`
+    : `${viewLabel} · 等待 NewAPI / Sub2API 采样；采到数据后会按语义角色、时间行为、指标身份、单位和对象自动分图。`;
+  renderSemanticTrendGrid({
+    gridId: 'command-relay-trend-grid',
+    noteId: 'command-relay-trend-note',
+    chartMap: commandRelayTrendCharts,
+    chartIdPrefix: commandRelayView === 'metric' ? 'relay-metric-trend' : commandRelayView === 'model' ? 'relay-model-trend' : 'relay-source-trend',
+    groups,
+    emptyText: '等待 NewAPI / Sub2API 语义采样。',
+    noteText,
+  });
+}
+
+function renderCommandTrend() {
+  const history = sanitizeCommandHistory(commandHistoryStorage);
+  const hasApiQuota = history.some(p => p.apiQuotaAvailable !== null || p.apiQuotaUsed !== null);
+  const hasNewApiModels = history.some(p =>
+    p.newApiModelTokens !== null || p.newApiModelQuota !== null || p.newApiModelRequests !== null
+  );
+  const hasSub2Api = history.some(p =>
+    p.sub2ApiBalance !== null || p.sub2ApiTodayTokens !== null || p.sub2ApiTodayCost !== null || p.sub2ApiTotalCost !== null
+  );
+  const hasSub2ApiModels = history.some(p =>
+    p.sub2ApiModelTokens !== null || p.sub2ApiModelCost !== null || p.sub2ApiModelRequests !== null
+  );
+  renderCommandDimensionTrend(history, { hasApiQuota, hasSub2Api });
+  renderCommandRelayTrend(history, { hasApiQuota, hasNewApiModels, hasSub2Api, hasSub2ApiModels });
+  renderCommandSemanticTrend();
+}
+
+function renderCommandModelChart(modelRows) {
+  if (!commandModelChart) return;
+  const note = document.getElementById('command-model-note');
+  const sortLabel = document.getElementById('command-model-chart-sort');
+  const chartRows = commandModelSort === 'cost'
+    ? (modelRows || []).filter(row => row.costKnown && row.costComparable)
+    : (modelRows || []);
+  const sorted = sortCommandModelRows(chartRows).slice(0, 8);
+  const top = [...sorted].reverse();
+  const isDark = document.documentElement.getAttribute('data-theme') !== 'light';
+  const textColor = isDark ? '#8b949e' : '#656d76';
+  const splitColor = isDark ? '#21262d' : '#eaeef2';
+  const axisLabel = commandModelSort === 'tokens'
+    ? 'Token'
+    : commandModelSort === 'requests'
+      ? '请求'
+      : 'USD';
+  const valueOf = row => {
+    if (commandModelSort === 'tokens') return row.tokens || 0;
+    if (commandModelSort === 'requests') return row.requests || 0;
+    return row.cost || 0;
+  };
+  const valueFmt = value => {
+    if (commandModelSort === 'tokens') return fmtTokens(value);
+    if (commandModelSort === 'requests') return Number(value || 0).toLocaleString();
+    return fmtUsd(value);
+  };
+  const chartTitle = COMMAND_MODEL_SORT_LABELS[commandModelSort] || '成本优先';
+
+  if (sortLabel) sortLabel.textContent = chartTitle;
+
+  if (note) {
+    const sourceCount = new Set((modelRows || []).flatMap(row => row.sources || [])).size;
+    const comparableCostCount = (modelRows || []).filter(row => row.costKnown && row.costComparable).length;
+    note.textContent = top.length
+      ? `当前聚合快照 · ${sourceCount} 个来源 · Top ${top.length} 模型 · ${chartTitle}。`
+      : commandModelSort === 'cost'
+        ? `暂无可比较 USD 成本；可切换 Token/请求排序。当前 ${sourceCount} 个来源中 ${comparableCostCount} 个模型有可比较成本。`
+        : '暂无模型分布数据。';
+  }
+
+  commandModelChart.setOption({
+    backgroundColor: 'transparent',
+    textStyle: { color: textColor, fontFamily: 'Cascadia Code, Consolas, monospace' },
+    grid: { left: 118, right: 28, top: 12, bottom: 28 },
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'shadow' },
+      backgroundColor: isDark ? '#21262d' : '#f6f8fa',
+      borderColor: isDark ? '#30363d' : '#d0d7de',
+      textStyle: { color: isDark ? '#e6edf3' : '#1f2328', fontSize: 12 },
+      formatter: params => {
+        const model = params[0].name;
+        const source = top[params[0].dataIndex];
+        const value = valueFmt(params[0].value);
+        const tokens = source ? fmtTokens(source.tokens || 0) : '--';
+        const cost = source?.costKnown ? formatUnitAmount(source.cost, source.costUnit || 'usd') : '--';
+        const quota = source?.quotaKnown ? formatUnitAmount(source.quota, source.quotaUnit || 'quota') : '--';
+        const requests = source?.requestKnown ? Number(source.requests || 0).toLocaleString() : '--';
+        const sources = source?.sources?.join(' / ') || '--';
+        return `${escapeHtml(model)}<br>${params[0].marker}${escapeHtml(chartTitle)}: <b>${value}</b><br><span style="color:${textColor}">来源: ${escapeHtml(sources)}<br>成本: ${cost}<br>额度: ${quota}<br>Token: ${tokens}<br>请求: ${requests}</span>`;
+      },
+    },
+    xAxis: {
+      type: 'value',
+      axisLine: { show: false },
+      axisLabel: { color: textColor, fontSize: 10, formatter: v => valueFmt(v) },
+      name: axisLabel,
+      nameTextStyle: { color: textColor, fontSize: 10 },
+      splitLine: { lineStyle: { color: splitColor } },
+    },
+    yAxis: {
+      type: 'category',
+      data: top.map(m => m.model || '--'),
+      axisLine: { lineStyle: { color: isDark ? '#30363d' : '#d0d7de' } },
+      axisLabel: { color: textColor, fontSize: 10, width: 104, overflow: 'truncate' },
+    },
+    series: [{
+      type: 'bar',
+      data: top.map(m => valueOf(m)),
+      barMaxWidth: 18,
+      itemStyle: {
+        borderRadius: [0, 4, 4, 0],
+        color: p => COMMAND_MODEL_COLORS[p.dataIndex % COMMAND_MODEL_COLORS.length],
+      },
+    }],
+  }, { notMerge: true });
+}
+
+function renderCommandModelTrend(datasets) {
+  const trends = datasets?.model_trends || {};
+  const trend = trends[commandModelTrendWindow]
+    || datasets?.model_daily_trend
+    || trends['7d']
+    || trends['1d']
+    || trends['6h'];
+  document.querySelectorAll('.command-model-trend-window-btn').forEach(btn => {
+    const active = btn.dataset.modelTrendWindow === commandModelTrendWindow;
+    btn.classList.toggle('active', active);
+    btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+  });
+  renderCommandModelDailyTrend(trend);
+}
+
+function renderCommandModelDailyTrend(trend) {
+  if (!commandModelTrendChart) return;
+  const note = document.getElementById('command-model-trend-note');
+  const windowLabel = document.getElementById('command-model-trend-window');
+  const rows = Array.isArray(trend?.rows) ? trend.rows : [];
+  const buckets = Array.isArray(trend?.x)
+    ? trend.x
+    : Array.isArray(trend?.days)
+      ? trend.days
+      : [];
+  const topModels = Array.isArray(trend?.models) ? trend.models.slice(0, 6).map(m => m.model) : [];
+  const isDark = document.documentElement.getAttribute('data-theme') !== 'light';
+  const textColor = isDark ? '#8b949e' : '#656d76';
+  const splitColor = isDark ? '#21262d' : '#eaeef2';
+  const fallbackWindow = COMMAND_MODEL_TREND_LABELS[commandModelTrendWindow] || '近 7 天';
+  const trendWindow = trend?.window_label || fallbackWindow;
+  const bucketLabel = trend?.bucket_label ? `${trend.bucket_label}粒度` : '按数据源粒度';
+  const axisFormatter = value => {
+    const text = String(value || '');
+    if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(text)) return text.slice(11, 16);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text.slice(5);
+    return text;
+  };
+
+  if (windowLabel) windowLabel.textContent = trendWindow;
+  if (!rows.length || !buckets.length || !topModels.length) {
+    if (note) note.textContent = `${trendWindow}暂无可用模型趋势数据；当前来源仍以 CC Switch 请求日志为主。`;
+    commandModelTrendChart.clear();
+    return;
+  }
+
+  const rowBucket = row => row.bucket || row.date;
+  const byKey = new Map(rows.map(row => [`${rowBucket(row)}::${row.model}`, row]));
+  const showSymbol = buckets.length <= 14;
+  const series = [];
+  let hasKnownCost = false;
+  for (const [idx, model] of topModels.entries()) {
+    const color = COMMAND_MODEL_COLORS[idx % COMMAND_MODEL_COLORS.length];
+    series.push({
+      name: `${model} Token`,
+      type: 'line',
+      smooth: true,
+      symbol: showSymbol ? 'circle' : 'none',
+      xAxisIndex: 0,
+      yAxisIndex: 0,
+      lineStyle: { color, width: 2 },
+      itemStyle: { color },
+      emphasis: { focus: 'series' },
+      data: buckets.map(bucket => [bucket, byKey.get(`${bucket}::${model}`)?.tokens || 0]),
+    });
+    const costData = buckets.map(bucket => {
+      const row = byKey.get(`${bucket}::${model}`);
+      const value = nullableNumber(row?.cost);
+      if (value !== null) hasKnownCost = true;
+      return [bucket, value];
+    });
+    series.push({
+      name: `${model} 成本`,
+      type: 'line',
+      smooth: true,
+      symbol: showSymbol ? 'circle' : 'none',
+      xAxisIndex: 1,
+      yAxisIndex: 1,
+      lineStyle: { color, width: 2, type: 'dashed' },
+      itemStyle: { color },
+      emphasis: { focus: 'series' },
+      data: costData,
+    });
+  }
+
+  if (note) {
+    const totalTokens = rows.reduce((sum, row) => sum + Number(row.tokens || 0), 0);
+    const knownCostRows = rows.filter(row => nullableNumber(row.cost) !== null);
+    const totalCost = knownCostRows.reduce((sum, row) => sum + Number(row.cost || 0), 0);
+    const costText = knownCostRows.length ? fmtUsd(totalCost) : '成本未知';
+    note.textContent = `${trend?.label || '模型请求日志'} · ${trendWindow} · ${bucketLabel} · Top ${topModels.length} 模型 · ${fmtTokens(totalTokens)} · ${costText} · 上图 Token，下图成本。`;
+  }
+
+  commandModelTrendChart.setOption({
+    backgroundColor: 'transparent',
+    color: COMMAND_MODEL_COLORS,
+    textStyle: { color: textColor, fontFamily: 'Cascadia Code, Consolas, monospace' },
+    grid: [
+      { left: 64, right: 26, top: 34, height: 126 },
+      { left: 64, right: 26, top: 214, height: 96 },
+    ],
+    legend: {
+      type: 'scroll',
+      top: 0,
+      left: 0,
+      right: 0,
+      textStyle: { color: textColor, fontSize: 10 },
+      formatter: name => name.replace(/ (Token|成本)$/, ''),
+      selectedMode: true,
+    },
+    tooltip: {
+      trigger: 'axis',
+      backgroundColor: isDark ? '#21262d' : '#f6f8fa',
+      borderColor: isDark ? '#30363d' : '#d0d7de',
+      textStyle: { color: isDark ? '#e6edf3' : '#1f2328', fontSize: 12 },
+      formatter: params => {
+        const day = params[0]?.axisValue || '--';
+        const grouped = new Map();
+        for (const p of params) {
+          const model = String(p.seriesName || '').replace(/ (Token|成本)$/, '');
+          const item = grouped.get(model) || {};
+          if (String(p.seriesName).endsWith('Token')) item.tokens = p.value?.[1] ?? p.value;
+          if (String(p.seriesName).endsWith('成本')) item.cost = p.value?.[1] ?? p.value;
+          item.marker = p.marker;
+          grouped.set(model, item);
+        }
+        const lines = [...grouped.entries()].map(([model, item]) =>
+          `${item.marker}${escapeHtml(model)}: <b>${fmtTokens(item.tokens || 0)}</b> · ${nullableNumber(item.cost) === null ? '成本未知' : fmtUsd(item.cost)}`
+        );
+        return `${escapeHtml(day)}<br>${lines.join('<br>')}`;
+      },
+    },
+    xAxis: [
+      {
+        type: 'category',
+        gridIndex: 0,
+        data: buckets,
+        axisLine: { lineStyle: { color: isDark ? '#30363d' : '#d0d7de' } },
+        axisLabel: { color: textColor, fontSize: 10, formatter: axisFormatter },
+        splitLine: { show: false },
+      },
+      {
+        type: 'category',
+        gridIndex: 1,
+        data: buckets,
+        axisLine: { lineStyle: { color: isDark ? '#30363d' : '#d0d7de' } },
+        axisLabel: { color: textColor, fontSize: 10, formatter: axisFormatter },
+        splitLine: { show: false },
+      },
+    ],
+    yAxis: [
+      {
+        type: 'value',
+        gridIndex: 0,
+        name: 'Token',
+        nameTextStyle: { color: textColor, fontSize: 10 },
+        axisLabel: { color: textColor, fontSize: 10, formatter: v => fmtTokens(v) },
+        splitLine: { lineStyle: { color: splitColor } },
+      },
+      {
+        type: 'value',
+        gridIndex: 1,
+        name: 'USD',
+        nameTextStyle: { color: textColor, fontSize: 10 },
+        axisLabel: { color: textColor, fontSize: 10, formatter: v => `$${Number(v).toFixed(0)}` },
+        splitLine: { lineStyle: { color: splitColor } },
+      },
+    ],
+    series: hasKnownCost ? series : series.filter(item => !String(item.name).endsWith('成本')),
+  }, { notMerge: true });
+}
+
+function renderLocalUsage(data) {
+  const note = document.getElementById('local-usage-note');
+  const modelBody = document.getElementById('local-model-body');
+  const projectBody = document.getElementById('local-project-body');
+  if (!note || !modelBody || !projectBody) return;
+
+  if (!data || !data.configured || data.status?.state !== 'ok') {
+    document.getElementById('local-cost').textContent = '--';
+    document.getElementById('local-tokens').textContent = '--';
+    document.getElementById('local-cache').textContent = '--';
+    modelBody.innerHTML = '<tr><td colspan="6" style="color:var(--muted)">暂无本地聚合数据</td></tr>';
+    projectBody.innerHTML = '<tr><td colspan="5" style="color:var(--muted)">暂无本地聚合数据</td></tr>';
+    note.textContent = data?.status?.message || '未读取到 .claude.json 聚合字段。';
+    return;
+  }
+
+  const s = data.summary || {};
+  const input = s.input_tokens || 0;
+  const output = s.output_tokens || 0;
+  const cache = (s.cache_read_tokens || 0) + (s.cache_creation_tokens || 0);
+  document.getElementById('local-cost').textContent = fmtUsd(s.cost_usd);
+  document.getElementById('local-cost-sub').textContent = `${s.project_count || 0} 个工作区`;
+  document.getElementById('local-tokens').textContent = `${fmtTokens(input)} / ${fmtTokens(output)}`;
+  document.getElementById('local-token-sub').textContent = '输入 / 输出';
+  document.getElementById('local-cache').textContent = fmtTokens(cache);
+  document.getElementById('local-cache-sub').textContent = `${s.web_search_requests || 0} 次 Web 搜索`;
+
+  const models = data.models || [];
+  modelBody.innerHTML = models.length ? models.map(m => `
+    <tr>
+      <td>${escapeHtml(m.model || '--')}</td>
+      <td>${fmtUsd(m.cost_usd)}</td>
+      <td>${fmtTokens(m.input_tokens || 0)}</td>
+      <td>${fmtTokens(m.output_tokens || 0)}</td>
+      <td>${fmtTokens((m.cache_read_tokens || 0) + (m.cache_creation_tokens || 0))}</td>
+      <td>${m.web_search_requests || 0}</td>
+    </tr>
+  `).join('') : '<tr><td colspan="6" style="color:var(--muted)">暂无模型数据</td></tr>';
+
+  const projects = data.top_projects || [];
+  projectBody.innerHTML = projects.length ? projects.map(p => `
+    <tr>
+      <td>${escapeHtml(p.workspace || '--')}</td>
+      <td>${fmtUsd(p.cost_usd)}</td>
+      <td>${fmtTokens(p.input_tokens || 0)}</td>
+      <td>${fmtTokens(p.output_tokens || 0)}</td>
+      <td>${p.model_count || 0}</td>
+    </tr>
+  `).join('') : '<tr><td colspan="5" style="color:var(--muted)">暂无工作区数据</td></tr>';
+
+  const modified = data.status?.last_modified ? new Date(data.status.last_modified).toLocaleString('zh-CN') : '--';
+  note.textContent = `来源: ${data.source || '.claude.json'} · 文件更新时间: ${modified} · 只展示聚合字段。`;
 }
 
 // ── Render DeepSeek Detail ──────────────────────────────────────────────────

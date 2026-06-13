@@ -3,14 +3,15 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>AI Quota Monitor</title>
+  <title>AI 作战仪表盘</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230b1020'/%3E%3Cpath d='M32 10 51 21v22L32 54 13 43V21z' fill='none' stroke='%236ee7f9' stroke-width='5'/%3E%3Ccircle cx='32' cy='32' r='7' fill='%23f8fafc'/%3E%3C/svg%3E">
   <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
 
 <header>
-  <span class="title">⬡ AI Quota Monitor</span>
+  <span class="title">⬡ AI 作战仪表盘</span>
   <div class="header-right">
     <div class="countdown" id="countdown">
       <span class="badge-refreshing" id="badge"></span>
@@ -28,8 +29,375 @@
 <!-- Service tabs -->
 <div class="service-tabs" id="service-tabs"></div>
 
+<!-- ═══════ Command Dashboard Demo ═══════ -->
+<div class="service-section active" id="sec-command">
+  <div class="command-hero">
+    <div>
+      <div class="command-kicker">read-heavy · light-write · aggregate-only</div>
+      <h1>个人作战态势台</h1>
+      <p id="command-verdict-sub">正在汇总本地 Agent/API 使用态势。</p>
+    </div>
+    <div class="command-verdict">
+      <span id="command-verdict">--</span>
+      <small id="command-generated">--</small>
+    </div>
+  </div>
+
+  <div class="command-metrics">
+    <div class="consumption-card">
+      <div class="card-label">本地聚合成本</div>
+      <div class="card-value" id="command-cost">--</div>
+      <div class="card-sub">Claude Code observed</div>
+    </div>
+    <div class="consumption-card">
+      <div class="card-label">多源工作区 Token</div>
+      <div class="card-value" id="command-tokens">--</div>
+      <div class="card-sub">Claude Code + Codex</div>
+    </div>
+    <div class="consumption-card">
+      <div class="card-label">来源状态</div>
+      <div class="card-value" id="command-sources">--</div>
+      <div class="card-sub">ok / missing / disabled</div>
+    </div>
+    <div class="consumption-card">
+      <div class="card-label">NewAPI</div>
+      <div class="card-value" id="command-newapi">--</div>
+      <div class="card-sub" id="command-newapi-sub">等待配置</div>
+    </div>
+    <div class="consumption-card">
+      <div class="card-label">Sub2API</div>
+      <div class="card-value" id="command-sub2api">--</div>
+      <div class="card-sub" id="command-sub2api-sub">等待配置</div>
+    </div>
+  </div>
+
+  <div class="table-section command-panel command-chart-panel command-dimension-panel">
+    <div class="command-chart-title">
+      <div>
+        <div class="section-title">采样趋势 · 语义派生试点</div>
+        <div class="command-section-subtitle">按内涵属性分图，按外延来源生成曲线；与下方中转专区形成对照。</div>
+      </div>
+      <span id="command-trend-window">语义自动分图</span>
+    </div>
+    <div class="command-dimension-controls">
+      <div class="command-relay-toolbar command-dimension-toolbar" role="group" aria-label="采样趋势窗口">
+        <button type="button" class="command-relay-view-btn command-dimension-window-btn active" data-dimension-trend-window="6h">6h</button>
+        <button type="button" class="command-relay-view-btn command-dimension-window-btn" data-dimension-trend-window="1d">1d</button>
+        <button type="button" class="command-relay-view-btn command-dimension-window-btn" data-dimension-trend-window="7d">7d</button>
+      </div>
+      <div class="command-relay-toolbar command-dimension-toolbar command-dimension-filter-toolbar" role="group" aria-label="采样趋势类别">
+        <button type="button" class="command-relay-view-btn command-dimension-filter-btn active" data-dimension-trend-filter="all">全部</button>
+        <button type="button" class="command-relay-view-btn command-dimension-filter-btn" data-dimension-trend-filter="reserve">余量/容量</button>
+        <button type="button" class="command-relay-view-btn command-dimension-filter-btn" data-dimension-trend-filter="usage">消耗</button>
+        <button type="button" class="command-relay-view-btn command-dimension-filter-btn" data-dimension-trend-filter="relay">中转</button>
+        <button type="button" class="command-relay-view-btn command-dimension-filter-btn" data-dimension-trend-filter="local">本地 Agent</button>
+        <button type="button" class="command-relay-view-btn command-dimension-filter-btn" data-dimension-trend-filter="ratio">比例/速率</button>
+      </div>
+    </div>
+    <div id="command-dimension-derivation" class="command-dimension-derivation" aria-live="polite"></div>
+    <div id="command-dimension-trend-grid" class="command-semantic-trend-grid command-dimension-trend-grid"></div>
+    <div class="command-chart-note" id="command-trend-note">等待首次采样。</div>
+  </div>
+
+  <div class="command-layout">
+    <div class="table-section command-panel command-chart-panel">
+      <div class="command-chart-title">
+        <div class="section-title">模型消耗分布</div>
+        <span id="command-model-chart-sort">成本优先</span>
+      </div>
+      <div id="command-model-chart" class="command-chart" role="img" aria-label="模型成本分布图"></div>
+      <div class="command-chart-note" id="command-model-note">等待模型聚合数据。</div>
+    </div>
+  </div>
+
+  <div class="table-section command-panel command-relay-trend-panel">
+    <div class="command-chart-title">
+      <div class="section-title">中转专区趋势</div>
+      <span>NewAPI / Sub2API</span>
+    </div>
+    <div class="command-relay-control-row">
+      <div class="command-relay-toolbar" role="group" aria-label="中转专区视图">
+        <button type="button" class="command-relay-view-btn active" data-relay-view="source">按中转站看类型</button>
+        <button type="button" class="command-relay-view-btn" data-relay-view="metric">按类型看中转站</button>
+        <button type="button" class="command-relay-view-btn" data-relay-view="model">按模型聚合</button>
+      </div>
+      <button type="button" id="command-relay-details-toggle" class="command-relay-detail-toggle" aria-expanded="false">展开明细</button>
+    </div>
+    <div id="command-relay-summary" class="command-relay-summary" aria-live="polite"></div>
+    <div id="command-relay-trend-grid" class="command-semantic-trend-grid command-relay-trend-grid"></div>
+    <div class="command-chart-note" id="command-relay-trend-note">等待 NewAPI / Sub2API 采样。</div>
+  </div>
+
+  <div class="table-section command-panel command-wide-chart-panel">
+    <div class="command-chart-title">
+      <div class="section-title">模型 Token / 成本趋势</div>
+      <div class="command-model-trend-controls">
+        <div class="command-relay-toolbar command-model-trend-toolbar" role="group" aria-label="模型趋势窗口">
+          <button type="button" class="command-relay-view-btn command-model-trend-window-btn" data-model-trend-window="6h">6h</button>
+          <button type="button" class="command-relay-view-btn command-model-trend-window-btn" data-model-trend-window="1d">1d</button>
+          <button type="button" class="command-relay-view-btn command-model-trend-window-btn active" data-model-trend-window="7d">7d</button>
+        </div>
+        <span id="command-model-trend-window">近 7 天</span>
+      </div>
+    </div>
+    <div id="command-model-trend-chart" class="command-wide-chart" role="img" aria-label="模型 Token 与成本趋势图"></div>
+    <div class="command-chart-note" id="command-model-trend-note">等待模型趋势数据。</div>
+  </div>
+
+  <div class="table-section command-panel command-semantic-trend-panel">
+    <div class="command-chart-title">
+      <div class="section-title">语义趋势 · 独立量纲</div>
+      <span>按角色 / 时间 / 单位 / 对象自动分图</span>
+    </div>
+    <div id="command-semantic-trend-grid" class="command-semantic-trend-grid"></div>
+    <div class="command-chart-note" id="command-semantic-trend-note">等待语义采样。</div>
+  </div>
+
+  <div class="table-section command-panel command-semantic-panel">
+    <div class="section-title">语义投影 / 呈现编排</div>
+    <div id="command-semantic-summary" class="command-semantic-summary"></div>
+    <section class="command-semantic-section command-situation-shell">
+      <h3>首屏感知链</h3>
+      <div id="command-situation-path" class="command-situation-path"></div>
+    </section>
+    <div class="command-blueprint-grid">
+      <section class="command-semantic-section">
+        <h3>数据表征层 V1</h3>
+        <div id="command-data-representation" class="command-blueprint-list"></div>
+      </section>
+      <section class="command-semantic-section">
+        <h3>面板呈现层 V1</h3>
+        <div id="command-presentation-blueprint" class="command-presentation-lanes"></div>
+      </section>
+    </div>
+    <div class="command-blueprint-grid command-intent-grid">
+      <section class="command-semantic-section">
+        <h3>意图清单</h3>
+        <div id="command-intent-manifest" class="command-intent-list"></div>
+      </section>
+      <section class="command-semantic-section">
+        <h3>意图到数据映射</h3>
+        <div id="command-intent-mappings" class="command-intent-list"></div>
+      </section>
+      <section class="command-semantic-section">
+        <h3>缺失解释</h3>
+        <div id="command-missing-explanations" class="command-missing-list"></div>
+      </section>
+      <section class="command-semantic-section">
+        <h3>反馈闭环</h3>
+        <div id="command-feedback-loop" class="command-feedback-loop"></div>
+      </section>
+    </div>
+    <div class="command-semantic-grid">
+      <section class="command-semantic-section">
+        <h3>四层结构</h3>
+        <div class="command-semantic-table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>层</th>
+                <th>职责</th>
+                <th>数量</th>
+              </tr>
+            </thead>
+            <tbody id="command-semantic-layer-body"></tbody>
+          </table>
+        </div>
+      </section>
+      <section class="command-semantic-section">
+        <h3>指标语义组</h3>
+        <div class="command-semantic-table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>组</th>
+                <th>角色</th>
+                <th>时间</th>
+                <th>量纲</th>
+                <th>对象</th>
+                <th>组件</th>
+              </tr>
+            </thead>
+            <tbody id="command-semantic-group-body"></tbody>
+          </table>
+        </div>
+      </section>
+      <section class="command-semantic-section">
+        <h3>数据集分组</h3>
+        <div class="command-semantic-table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>数据集</th>
+                <th>行对象</th>
+                <th>主语义</th>
+                <th>单位</th>
+                <th>窗口/排序</th>
+              </tr>
+            </thead>
+            <tbody id="command-dataset-group-body"></tbody>
+          </table>
+        </div>
+      </section>
+      <section class="command-semantic-section">
+        <h3>Widget Registry</h3>
+        <div id="command-widget-registry" class="command-widget-registry"></div>
+      </section>
+    </div>
+    <section class="command-semantic-section command-evidence-section">
+      <h3>证据与可信度</h3>
+      <div id="command-evidence-notes" class="command-evidence-notes"></div>
+    </section>
+  </div>
+
+  <div class="command-layout">
+    <div class="table-section command-panel">
+      <div class="section-title">态势提示</div>
+      <div id="command-alerts" class="command-alerts"></div>
+    </div>
+    <div class="table-section command-panel">
+      <div class="section-title">统一 Signal 样例</div>
+      <table>
+        <thead>
+          <tr>
+            <th>Path</th>
+            <th>值</th>
+            <th>置信</th>
+          </tr>
+        </thead>
+        <tbody id="command-signal-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="table-section command-panel">
+    <div class="section-title">Source Adapter 状态</div>
+    <div class="command-table-scroll">
+      <table class="command-source-table">
+        <thead>
+          <tr>
+            <th>来源</th>
+            <th>代码能力</th>
+            <th>配置</th>
+            <th>采集</th>
+            <th>态势台</th>
+            <th>可见性</th>
+            <th>缺失/说明</th>
+          </tr>
+        </thead>
+        <tbody id="command-source-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="command-layout command-ranked-tables">
+    <div class="table-section command-panel">
+      <div class="command-table-title">
+        <div class="section-title">模型消耗 Top</div>
+        <label class="command-sort-control">
+          <span>排序</span>
+          <select id="command-model-sort">
+            <option value="cost">成本优先</option>
+            <option value="tokens">Token优先</option>
+            <option value="requests">请求优先</option>
+            <option value="source">来源分组</option>
+          </select>
+        </label>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>模型</th>
+            <th>来源消耗</th>
+            <th>Token</th>
+          </tr>
+        </thead>
+        <tbody id="command-model-body"></tbody>
+      </table>
+    </div>
+    <div class="table-section command-panel command-workspace-panel">
+      <div class="section-title">工作区消耗 Top</div>
+      <table class="command-workspace-table">
+        <colgroup>
+          <col class="workspace-col">
+          <col class="cost-col">
+          <col class="token-col">
+          <col class="record-col">
+          <col class="source-col">
+        </colgroup>
+        <thead>
+            <tr>
+              <th>工作区</th>
+              <th>成本</th>
+              <th>Token</th>
+              <th>记录</th>
+              <th>来源</th>
+            </tr>
+        </thead>
+        <tbody id="command-project-body"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════ Local Usage Section ═══════ -->
+<div class="service-section" id="sec-local">
+  <div class="consumption-summary local-usage-summary">
+    <div class="consumption-card">
+      <div class="card-label">本地聚合成本</div>
+      <div class="card-value" id="local-cost">--</div>
+      <div class="card-sub" id="local-cost-sub">Claude Code projects</div>
+    </div>
+    <div class="consumption-card">
+      <div class="card-label">输入 / 输出 Token</div>
+      <div class="card-value" id="local-tokens">--</div>
+      <div class="card-sub" id="local-token-sub">last project aggregates</div>
+    </div>
+    <div class="consumption-card">
+      <div class="card-label">缓存 Token</div>
+      <div class="card-value" id="local-cache">--</div>
+      <div class="card-sub" id="local-cache-sub">cache read + creation</div>
+    </div>
+  </div>
+
+  <div class="table-section local-usage-block">
+    <div class="section-title">模型消耗聚合</div>
+    <table>
+      <thead>
+        <tr>
+          <th>模型</th>
+          <th>成本</th>
+          <th>输入</th>
+          <th>输出</th>
+          <th>缓存</th>
+          <th>Web</th>
+        </tr>
+      </thead>
+      <tbody id="local-model-body"></tbody>
+    </table>
+  </div>
+
+  <div class="table-section local-usage-block">
+    <div class="section-title">高消耗工作区</div>
+    <table>
+      <thead>
+        <tr>
+          <th>工作区</th>
+          <th>成本</th>
+          <th>输入</th>
+          <th>输出</th>
+          <th>模型数</th>
+        </tr>
+      </thead>
+      <tbody id="local-project-body"></tbody>
+    </table>
+  </div>
+
+  <div class="local-usage-note" id="local-usage-note"></div>
+</div>
+
 <!-- ═══════ MiniMax Section ═══════ -->
-<div class="service-section active" id="sec-minimax">
+<div class="service-section" id="sec-minimax">
   <div class="filter-bar" id="filterBar"></div>
   <div id="model-list"></div>
 
