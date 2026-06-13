@@ -24,6 +24,9 @@ AgentSense 是 ExoMind 生命框架的**感知系统**，为 AI Agent 提供统�
 - [x] **图片提取** — list_images() 元数据 + extract_image() 原始字节
 - [x] **配额监控** — MiniMax/DeepSeek/Z.AI 实时额度查询 + SQLite 持久化
 - [x] **CLI** — `agentsense quota [--watch]` 终端仪表盘
+- [x] **个人作战仪表盘 demo** — 本地 Claude Code/Codex/CC Switch/NewAPI/Sub2API 聚合态势页
+- [x] **系统信息采集** — CPU、内存、磁盘、网络、电池等实时监控
+- [x] **图表语义聚合** — 跨来源模型聚合视图，支持按模型名合并不同数据源
 - [ ] EPUB 解析 — 章节读取、格式转换
 - [ ] 搜索聚合 — 30+ 平台统一搜索（抖音/小红书/知乎/B站/微信）
 
