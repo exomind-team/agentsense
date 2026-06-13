@@ -261,6 +261,79 @@ function quotaDisplayUnit(display) {
   return 'quota';
 }
 
+// ── Declarative Translation Layer ─────────────────────────────────────────────
+
+let _translationRulesCache = null;
+
+function loadTranslationRules() {
+  if (_translationRulesCache) return _translationRulesCache;
+  try {
+    const rulesPath = path.join(root, 'config', 'translation-rules.json');
+    if (fs.existsSync(rulesPath)) {
+      _translationRulesCache = JSON.parse(fs.readFileSync(rulesPath, 'utf8'));
+      return _translationRulesCache;
+    }
+  } catch { /* ignore read errors */ }
+  _translationRulesCache = { sources: {} };
+  return _translationRulesCache;
+}
+
+function translateSignal(source, rawData, model) {
+  const rules = loadTranslationRules();
+  const sourceRules = rules.sources?.[source];
+  if (!sourceRules) return [];
+
+  const signals = [];
+
+  for (const [fieldName, fieldRule] of Object.entries(sourceRules.fields || {})) {
+    const rawValue = rawData[fieldName];
+    if (rawValue === null || rawValue === undefined) continue;
+
+    let unit = fieldRule.unit;
+    if (fieldRule.unit_field && rawData[fieldRule.unit_field]) {
+      unit = normalizeApiUnit(rawData[fieldRule.unit_field]);
+    }
+
+    signals.push({
+      id: `${source}-${model || 'unknown'}-${fieldRule.target}`,
+      path: fieldRule.target,
+      domain: 'model',
+      kind: 'usage',
+      subject: model || rawData[sourceRules.modelField] || 'unknown',
+      value: Number(rawValue),
+      unit,
+      confidence: fieldRule.semantics?.knownness === 'unknown' ? 'unknown' : 'observed',
+      sourceId: source,
+      semantics: fieldRule.semantics || {},
+    });
+  }
+
+  for (const [, computedRule] of Object.entries(sourceRules.computed || {})) {
+    let total = 0;
+    let hasAny = false;
+    for (const srcField of computedRule.sumOf || []) {
+      const v = Number(rawData[srcField]);
+      if (Number.isFinite(v)) { total += v; hasAny = true; }
+    }
+    if (hasAny) {
+      signals.push({
+        id: `${source}-${model || 'unknown'}-${computedRule.target}`,
+        path: computedRule.target,
+        domain: 'model',
+        kind: 'usage',
+        subject: model || rawData[sourceRules.modelField] || 'unknown',
+        value: total,
+        unit: computedRule.unit,
+        confidence: 'observed',
+        sourceId: source,
+        semantics: computedRule.semantics || {},
+      });
+    }
+  }
+
+  return signals;
+}
+
 function semanticUnit(unit) {
   const normalized = String(unit || '').toLowerCase();
   if (['usd', 'cny', 'quota', 'credit'].includes(normalized)) return normalized;
@@ -3718,6 +3791,8 @@ export {
   sub2ApiStatus,
   summarizeClaudeProjects,
   summarizeSub2ApiUsage,
+  translateSignal,
+  loadTranslationRules,
   workspaceKey,
   workspaceLabel,
   workspacePath,

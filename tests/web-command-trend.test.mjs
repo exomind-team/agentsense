@@ -45,6 +45,8 @@ globalThis.__appTestExports = {
   recordCommandSnapshot,
   buildRelayTrendGroups,
   collectRelayMetrics,
+  translateModelDatasetRow,
+  TRANSLATION_RULES,
   formatModelSpendCell,
   mappingStatusLabel,
   renderPresentationBlueprint,
@@ -55,6 +57,10 @@ globalThis.__appTestExports = {
   renderFeedbackLoop,
   semanticTrendViewMode,
   transformSemanticTrendSeriesData,
+  smoothTrendData,
+  decimateTrendData,
+  commandSemanticTrendViewOverrides,
+  SEMANTIC_TREND_VIEW_MODES,
   __setCommandHistoryStorage(value) { commandHistoryStorage = value; },
   __getCommandHistoryStorage() { return commandHistoryStorage; },
   __setLocalStorage(value) { globalThis.localStorage = value; },
@@ -1078,5 +1084,83 @@ describe('intent-driven semantic projection rendering', () => {
     assert.match(missingBox.innerHTML, /&lt;source&gt;/);
     assert.match(missingBox.innerHTML, /&lt;token&gt;/);
     assert.match(missingBox.innerHTML, /&lt;adapter&gt;/);
+  });
+});
+
+
+describe('trend data preprocessing', () => {
+  it('smoothTrendData returns short arrays unchanged', () => {
+    const short = [{ value: [1, 10] }, { value: [2, 20] }];
+    assert.deepEqual(app.smoothTrendData(short), short);
+    assert.deepEqual(app.smoothTrendData([]), []);
+  });
+
+  it('smoothTrendData applies EMA smoothing to longer arrays', () => {
+    const data = [
+      { value: [1, 10] },
+      { value: [2, 12] },
+      { value: [3, 11] },
+      { value: [4, 13] },
+    ];
+    const smoothed = app.smoothTrendData(data, 0.5);
+    assert.equal(smoothed.length, 4);
+    // First point should be unchanged
+    assert.equal(smoothed[0].rawValue, undefined);
+    assert.deepEqual(Array.from(smoothed[0].value), [1, 10]);
+    // Second point should be smoothed: 0.5 * 12 + 0.5 * 10 = 11
+    assert.ok(Math.abs(smoothed[1].value[1] - 11) < 0.001);
+  });
+
+  it('smoothTrendData handles null values without crashing', () => {
+    const data = [
+      { value: [1, 10] },
+      { value: [2, null] },
+      { value: [3, 15] },
+    ];
+    const smoothed = app.smoothTrendData(data, 0.5);
+    assert.equal(smoothed.length, 3);
+    assert.equal(smoothed[1].value[1], null);
+  });
+
+  it('decimateTrendData returns input when target is not needed', () => {
+    const data = Array.from({ length: 10 }, (_, i) => ({ value: [i, i * 10] }));
+    assert.equal(app.decimateTrendData(data, 20).length, 10);
+    assert.equal(app.decimateTrendData(data, 0).length, 10);
+    assert.equal(app.decimateTrendData(data, 2).length, 10);
+  });
+
+  it('decimateTrendData reduces points while preserving endpoints', () => {
+    const data = Array.from({ length: 200 }, (_, i) => ({ value: [i, Math.sin(i / 10) * 100] }));
+    const decimated = app.decimateTrendData(data, 50);
+    assert.equal(decimated.length, 50);
+    // First and last points should be preserved
+    assert.deepEqual(Array.from(decimated[0].value), [0, Math.sin(0) * 100]);
+    assert.deepEqual(Array.from(decimated[decimated.length - 1].value), [199, Math.sin(199 / 10) * 100]);
+  });
+});
+
+describe('semantic view mode overrides', () => {
+  it('view mode respects user override', () => {
+    const group = {
+      key: 'test-override',
+      metricRole: 'used',
+      timeBehavior: 'cumulative',
+      unit: 'token',
+      unitFamily: 'token',
+      series: new Map([
+        ['a', { data: [{ value: [1, 100] }, { value: [2, 200] }] }],
+      ]),
+    };
+    // Default should be delta for cumulative used
+    assert.equal(app.semanticTrendViewMode(group), 'delta');
+    // Set override
+    app.commandSemanticTrendViewOverrides.set('test-override', 'absolute');
+    assert.equal(app.semanticTrendViewMode(group), 'absolute');
+    // Clean up
+    app.commandSemanticTrendViewOverrides.delete('test-override');
+  });
+
+  it('SEMANTIC_TREND_VIEW_MODES contains expected modes', () => {
+    assert.equal(JSON.stringify(app.SEMANTIC_TREND_VIEW_MODES), JSON.stringify(['absolute', 'focused', 'delta', 'normalized']));
   });
 });

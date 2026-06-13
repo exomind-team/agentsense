@@ -66,10 +66,13 @@ const COMMAND_DIMENSION_TREND_GROUP_LIMIT = 16;
 const COMMAND_RELAY_TREND_GROUP_LIMIT = 16;
 const COMMAND_SEMANTIC_TREND_GROUP_LIMIT = 16;
 const COMMAND_SEMANTIC_SAMPLE_LIMIT = 240;
+const SEMANTIC_TREND_VIEW_MODES = ['absolute', 'focused', 'delta', 'normalized'];
 
 // ── State ───────────────────────────────────────────────────────────────────
 
 let rawData = [];
+// Per-group user-overridden view mode (key -> mode string). Null means auto.
+const commandSemanticTrendViewOverrides = new Map();
 let activeFilter = null;
 let activeService = 'command';
 let activeAccountLabel = ''; // filtered by account label for multi-account
@@ -1352,68 +1355,176 @@ function normalizeCommandModelName(source, model, provider) {
   return raw || 'unknown';
 }
 
-function collectCommandModelInputRows(data) {
-  const models = data?.datasets?.top_models || [];
-  const sub2Models = data?.datasets?.sub2api_model_stats || [];
-  const newApiModels = data?.datasets?.newapi_model_stats || [];
-  const codexModels = data?.datasets?.codex_model_stats || [];
-  const ccSwitchModels = data?.datasets?.cc_switch_model_stats || [];
 
-  return [
-    ...models.map(m => {
-      const total = (m.input_tokens || 0) + (m.output_tokens || 0) + (m.cache_read_tokens || 0) + (m.cache_creation_tokens || 0);
-      const cost = finiteOrNull(m.cost_usd);
-      return {
-        source: 'Claude',
-        model: m.model,
-        cost: cost ?? null,
-        costKnown: cost !== null,
-        costUnit: 'usd',
-        tokens: total,
-        requests: null,
-      };
-    }),
-    ...codexModels.map(m => ({
-      source: 'Codex',
-      model: normalizeCommandModelName('Codex', m.model, m.provider),
-      cost: null,
-      costKnown: false,
-      tokens: m.total_tokens,
-      requests: m.sessions,
-    })),
-    ...ccSwitchModels.map(m => {
-      const cost = finiteOrNull(m.cost);
-      return {
-        source: `CC ${m.app || ''}`.trim(),
-        model: normalizeCommandModelName('CC Switch', m.model, m.provider),
-        cost: cost ?? null,
-        costKnown: cost !== null,
-        costUnit: 'usd',
-        tokens: m.total_tokens,
-        requests: m.requests,
-      };
-    }),
-    ...newApiModels.map(m => ({
-      source: 'NewAPI',
-      model: normalizeCommandModelName('NewAPI', m.model),
-      quota: m.quota_used ?? m.cost,
-      quotaUnit: m.quota_unit || 'quota',
-      tokens: m.total_tokens,
-      requests: m.requests,
-    })),
-    ...sub2Models.map(m => {
-      const cost = m.cost_known === false ? null : finiteOrNull(m.cost);
-      return {
-        source: 'Sub2API',
-        model: normalizeCommandModelName('Sub2API', m.model),
-        cost: cost ?? null,
-        costKnown: m.cost_known === false ? false : cost !== null,
-        costUnit: m.cost_unit || 'usd',
-        tokens: m.total_tokens,
-        requests: m.requests,
-      };
-    }),
-  ];
+// ── Declarative Translation Rules (frontend) ────────────────────────────────────
+// Mirror of config/translation-rules.json. To add a new data source, add an entry
+// here AND in config/translation-rules.json.
+
+const TRANSLATION_RULES = {
+  claude_code: {
+    label: 'Claude',
+    modelField: 'model',
+    fields: {
+      inputTokens:             { unit: 'token', addToTotal: true },
+      outputTokens:            { unit: 'token', addToTotal: true },
+      cacheReadInputTokens:    { unit: 'token', addToTotal: true },
+      cacheCreationInputTokens:{ unit: 'token', addToTotal: true },
+      costUSD:                 { outputField: 'cost', outputCostKnown: true, outputCostUnit: 'usd' },
+    },
+    computed: {
+      totalTokens: { sumOf: ['inputTokens', 'outputTokens', 'cacheReadInputTokens', 'cacheCreationInputTokens'], outputField: 'tokens' },
+    },
+  },
+  codex: {
+    label: 'Codex',
+    modelField: 'model',
+    providerField: 'provider',
+    modelNormalizer: (m) => normalizeCommandModelName('Codex', m.model, m.provider),
+    fields: {
+      total_tokens: { outputField: 'tokens' },
+      sessions:     { outputField: 'requests' },
+      cost:         { outputField: 'cost', outputCostKnown: false },
+    },
+  },
+  cc_switch: {
+    label: 'CC Switch',
+    modelField: 'model',
+    providerField: 'provider',
+    sourcePrefix: 'CC',
+    sourceAppField: 'app',
+    modelNormalizer: (m) => normalizeCommandModelName('CC Switch', m.model, m.provider),
+    fields: {
+      input_tokens:          { unit: 'token', addToTotal: true },
+      output_tokens:         { unit: 'token', addToTotal: true },
+      cache_read_tokens:     { unit: 'token', addToTotal: true },
+      cache_creation_tokens: { unit: 'token', addToTotal: true },
+      total_tokens:  { outputField: 'tokens' },
+      cost:          { outputField: 'cost', outputCostKnown: true, outputCostUnit: 'usd' },
+      requests:      { outputField: 'requests' },
+    },
+  },
+  newapi: {
+    label: 'NewAPI',
+    modelField: 'model',
+    modelNormalizer: (m) => normalizeCommandModelName('NewAPI', m.model),
+    fields: {
+      input_tokens:  { unit: 'token', addToTotal: true },
+      output_tokens: { unit: 'token', addToTotal: true },
+      total_tokens:  { outputField: 'tokens' },
+      quota_used:    { outputField: 'quota', outputQuotaUnitField: 'quota_unit' },
+      cost:          { outputField: 'quota', outputQuotaUnitField: 'quota_unit' },
+      requests:      { outputField: 'requests' },
+    },
+  },
+  sub2api: {
+    label: 'Sub2API',
+    modelField: 'model',
+    modelNormalizer: (m) => normalizeCommandModelName('Sub2API', m.model),
+    fields: {
+      input_tokens:  { unit: 'token', addToTotal: true },
+      output_tokens: { unit: 'token', addToTotal: true },
+      total_tokens:  { outputField: 'tokens' },
+      cost:          { outputField: 'cost', outputCostKnown: true, outputCostUnit: 'usd', costKnownField: 'cost_known', costUnitField: 'cost_unit' },
+      requests:      { outputField: 'requests' },
+    },
+  },
+};
+
+/**
+ * Config-driven translation of a single dataset row into the standard
+ * input-row format used by buildUnifiedCommandModelRows().
+ */
+function translateModelDatasetRow(sourceKey, rawRow) {
+  const rules = TRANSLATION_RULES[sourceKey];
+  if (!rules) return null;
+  const sourceLabel = rules.label;
+  const model = rules.modelNormalizer
+    ? rules.modelNormalizer(rawRow)
+    : normalizeCommandModelName(sourceLabel, rawRow[rules.modelField]);
+  const row = {
+    source: rules.sourcePrefix
+      ? (rules.sourcePrefix + ' ' + (rawRow[rules.sourceAppField] || '')).trim()
+      : sourceLabel,
+    model,
+    cost: null,
+    costKnown: false,
+    costUnit: 'usd',
+    tokens: 0,
+    requests: null,
+    quota: null,
+    quotaUnit: 'quota',
+    semantics: {},
+  };
+
+  for (const [fieldName, fieldRule] of Object.entries(rules.fields)) {
+    const rawValue = rawRow[fieldName];
+    if (rawValue === null || rawValue === undefined) continue;
+
+    if (fieldRule.addToTotal || fieldRule.outputField === 'tokens') {
+      row.tokens += Number(rawValue) || 0;
+      continue;
+    }
+    if (fieldRule.outputField === 'cost') {
+      let costKnown = fieldRule.outputCostKnown;
+      if (fieldRule.costKnownField) costKnown = rawRow[fieldRule.costKnownField] !== false;
+      const costVal = costKnown ? finiteOrNull(rawValue) : null;
+      row.cost = costVal;
+      row.costKnown = costVal !== null;
+      row.costUnit = fieldRule.costUnitField
+        ? (rawRow[fieldRule.costUnitField] || fieldRule.outputCostUnit || 'usd')
+        : (fieldRule.outputCostUnit || 'usd');
+      row.semantics.cost = { metric_role: 'used', metric_identity: 'cost', time_behavior: 'cumulative', unit_family: 'currency' };
+      continue;
+    }
+    if (fieldRule.outputField === 'requests') {
+      row.requests = finiteOrNull(rawValue);
+      row.semantics.requests = { metric_role: 'used', metric_identity: 'requests', time_behavior: 'cumulative', unit_family: 'count' };
+      continue;
+    }
+    if (fieldRule.outputField === 'quota') {
+      row.quota = finiteOrNull(rawValue);
+      row.quotaUnit = fieldRule.outputQuotaUnitField
+        ? (rawRow[fieldRule.outputQuotaUnitField] || 'quota')
+        : (fieldRule.unit || 'quota');
+      row.semantics.quota = { metric_role: 'used', metric_identity: 'quota', time_behavior: 'cumulative', unit_family: 'quota' };
+      continue;
+    }
+  }
+
+  for (const [, computedRule] of Object.entries(rules.computed || {})) {
+    if (computedRule.outputField === 'tokens') {
+      let total = 0;
+      for (const srcField of computedRule.sumOf || []) total += Number(rawRow[srcField]) || 0;
+      if (total > 0) row.tokens = total;
+    }
+  }
+
+  row.semantics.tokens = { metric_role: 'used', metric_identity: 'tokens', time_behavior: 'cumulative', unit_family: 'token' };
+  return row;
+}
+
+function collectCommandModelInputRows(data) {
+  // Config-driven translation: each source dataset is translated through
+  // translateModelDatasetRow() using TRANSLATION_RULES, replacing hardcoded
+  // per-source field mappings.
+
+  const sourceDatasetMap = {
+    top_models:            'claude_code',
+    codex_model_stats:     'codex',
+    cc_switch_model_stats: 'cc_switch',
+    newapi_model_stats:    'newapi',
+    sub2api_model_stats:   'sub2api',
+  };
+
+  const rows = [];
+  for (const [datasetId, sourceKey] of Object.entries(sourceDatasetMap)) {
+    const datasetRows = data?.datasets?.[datasetId] || [];
+    for (const rawRow of datasetRows) {
+      const translated = translateModelDatasetRow(sourceKey, rawRow);
+      if (translated) rows.push(translated);
+    }
+  }
+  return rows;
 }
 
 function buildUnifiedCommandModelRows(data) {
@@ -2792,7 +2903,57 @@ function semanticTrendMagnitudeRatio(group) {
   return min > 0 ? max / min : Infinity;
 }
 
+
+// ── Trend Data Preprocessing ────────────────────────────────────────────────
+// Applies EMA smoothing to reduce noise in trend series data.
+function smoothTrendData(data, alpha = 0.3) {
+  const points = Array.isArray(data) ? data : [];
+  if (points.length <= 3) return points;
+  const result = [];
+  let smoothed = null;
+  for (let i = 0; i < points.length; i++) {
+    const val = nullableNumber(Array.isArray(points[i]?.value) ? points[i].value[1] : points[i]?.value);
+    if (val === null) { result.push(points[i]); continue; }
+    smoothed = smoothed === null ? val : alpha * val + (1 - alpha) * smoothed;
+    result.push({ ...points[i], value: [Array.isArray(points[i]?.value) ? points[i].value[0] : points[i]?.ts, smoothed] });
+  }
+  return result;
+}
+
+// Down-samples dense data by Largest Triangle Three Buckets (LTTB) to preserve visual shape.
+function decimateTrendData(data, targetPoints) {
+  const points = Array.isArray(data) ? data : [];
+  if (!targetPoints || targetPoints <= 2 || points.length <= targetPoints) return points;
+  const result = [points[0]];
+  const bucketSize = (points.length - 2) / (targetPoints - 2);
+  let a = 0;
+  for (let i = 0; i < targetPoints - 2; i++) {
+    const rangeStart = Math.floor((i + 1) * bucketSize) + 1;
+    const rangeEnd = Math.min(Math.floor((i + 2) * bucketSize) + 1, points.length - 1);
+    const avgIdx = Math.round((i + 1.5) * bucketSize) + 1;
+    const avgClamped = Math.min(avgIdx, points.length - 1);
+    const aVal = nullableNumber(Array.isArray(points[a]?.value) ? points[a].value[1] : points[a]?.value) ?? 0;
+    const avgVal = nullableNumber(Array.isArray(points[avgClamped]?.value) ? points[avgClamped].value[1] : points[avgClamped]?.value) ?? 0;
+    let maxArea = -1;
+    let maxIdx = rangeStart;
+    for (let j = rangeStart; j <= rangeEnd; j++) {
+      const jVal = nullableNumber(Array.isArray(points[j]?.value) ? points[j].value[1] : points[j]?.value) ?? 0;
+      const area = Math.abs((aVal - avgVal) * (jVal - aVal) - (aVal - jVal) * (avgVal - aVal));
+      if (area > maxArea) { maxArea = area; maxIdx = j; }
+    }
+    result.push(points[maxIdx]);
+    a = maxIdx;
+  }
+  result.push(points[points.length - 1]);
+  return result;
+}
+
 function semanticTrendViewMode(group) {
+  // FIX 1: check per-group user override first
+  const groupKey = group?.key;
+  if (groupKey && commandSemanticTrendViewOverrides.has(groupKey)) {
+    return commandSemanticTrendViewOverrides.get(groupKey);
+  }
   const role = String(group?.metricRole || '');
   const timeBehavior = String(group?.timeBehavior || '');
   const unitFamily = String(group?.unitFamily || semanticUnitFamily(group?.unit));
@@ -2800,7 +2961,21 @@ function semanticTrendViewMode(group) {
   if (role === 'rate' || timeBehavior === 'rate' || unitFamily === 'ratio') return 'absolute';
   if (group?.metricIdentity === 'models') return 'absolute';
   if ((group?.series?.size || 0) > 1 && semanticTrendMagnitudeRatio(group) >= 100) return 'normalized';
-  if (role === 'used' && timeBehavior === 'cumulative') return 'delta';
+  if (role === 'used' && timeBehavior === 'cumulative') {
+    // FIX 3: check if delta is informative (not approximately constant increment)
+    const values = semanticTrendNumericValues(group);
+    if (values.length >= 3) {
+      const first = values[0];
+      const last = values[values.length - 1];
+      const totalDelta = Math.abs(last - first);
+      const maxVal = Math.max(...values.map(Math.abs));
+      if (maxVal > 0 && totalDelta / maxVal < 0.02) {
+        // Near-constant absolute value -- delta would just be a flat line at 0
+        return 'absolute';
+      }
+    }
+    return 'delta';
+  }
   return 'absolute';
 }
 
@@ -2968,6 +3143,26 @@ function redactCommandTrendText(value, fallback = '--') {
 }
 
 function semanticTrendGroupSubtitle(group) {
+  const mode = semanticTrendViewMode(group);
+  const modeLabel = semanticTrendViewModeLabel(mode);
+  const modeNote = semanticTrendViewModeNote(mode);
+  const contextHint = [];
+  if (mode === 'delta') {
+    contextHint.push('累计增长');
+  } else if (mode === 'focused') {
+    contextHint.push('余量/容量趋势');
+  }
+  const seriesCount = group?.series instanceof Map ? group.series.size : 0;
+  const values = semanticTrendNumericValues(group);
+  const pointCount = values.length;
+  if (pointCount > 0) {
+    const last = values[values.length - 1];
+    const first = values[0];
+    if (mode === 'delta') {
+      const totalDelta = last - first;
+      contextHint.push(`窗口增量 ${semanticTrendValueFormatter(group)(totalDelta)}`);
+    }
+  }
   return [
     semanticTrendExtensionsLabel(group),
     semanticTrendPresentationLabel(group),
@@ -2976,6 +3171,7 @@ function semanticTrendGroupSubtitle(group) {
     semanticTrendTimeLabel(group.timeBehavior),
     semanticTrendSourcesLabel(group),
     semanticTrendKnownnessLabel(group.knownness),
+    contextHint.length ? `视图: ${contextHint.join(' · ')}` : null,
   ].filter(Boolean).join(' · ');
 }
 
@@ -3891,13 +4087,31 @@ function renderSemanticTrendGrid({
           </div>
           <div class="command-semantic-trend-badges" aria-label="趋势显示模式">
             <small>${escapeHtml((group.unit || group.unitFamily || '--').toUpperCase())}</small>
-            <small class="command-semantic-view-badge">${escapeHtml(semanticTrendViewModeLabel(mode))}</small>
+            <small class="command-semantic-view-badge command-semantic-view-badge-clickable" data-group-key="${escapeHtml(group.key)}" title="点击切换视图模式" role="button" tabindex="0">${escapeHtml(semanticTrendViewModeLabel(mode))}</small>
           </div>
         </div>
         <div class="command-semantic-trend-chart" id="${escapeHtml(semanticTrendChartDomId(chartIdPrefix, group.key))}" role="img" aria-label="${escapeHtml(group.label || group.groupLabel || '语义趋势图')}"></div>
       </section>
     `;
   }).join('');
+
+  // FIX 1: bind click handlers on view mode badges
+  grid.querySelectorAll('.command-semantic-view-badge-clickable').forEach(badge => {
+    badge.addEventListener('click', () => {
+      const groupKey = badge.dataset.groupKey;
+      if (!groupKey) return;
+      const current = commandSemanticTrendViewOverrides.get(groupKey) || semanticTrendViewMode({ key: groupKey, ...groups.find(g => g.key === groupKey) });
+      const idx = SEMANTIC_TREND_VIEW_MODES.indexOf(current);
+      const next = SEMANTIC_TREND_VIEW_MODES[(idx + 1) % SEMANTIC_TREND_VIEW_MODES.length];
+      commandSemanticTrendViewOverrides.set(groupKey, next);
+      // Re-render this grid by calling the parent's render again
+      // Find which caller we are in by gridId
+      if (gridId === 'command-dimension-trend-grid') renderCommandDimensionTrend(filterCommandTrendHistoryByWindow(commandHistoryStorage, commandDimensionTrendWindow), window.__lastDimensionTrendContext || {});
+      else if (gridId === 'command-relay-trend-grid') renderCommandRelayTrend(filterCommandTrendHistoryByWindow(commandHistoryStorage, commandDimensionTrendWindow), window.__lastRelayTrendContext || {});
+      else if (gridId === 'command-semantic-trend-grid') renderCommandSemanticTrend();
+    });
+    badge.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); badge.click(); }});
+  });
 
   const isDark = document.documentElement.getAttribute('data-theme') !== 'light';
   const textColor = isDark ? '#8b949e' : '#656d76';
@@ -3926,16 +4140,24 @@ function renderSemanticTrendGrid({
     const focusedMax = mode === 'focused' && extent
       ? extent.max + focusPadding
       : undefined;
-    const series = [...group.series.values()].map((item, idx) => ({
-      name: item.name,
-      type: 'line',
-      smooth: true,
-      symbol: item.data.length <= 12 ? 'circle' : 'none',
-      lineStyle: { color: palette[idx % palette.length], width: 2 },
-      itemStyle: { color: palette[idx % palette.length] },
-      emphasis: { focus: 'series' },
-      data: transformSemanticTrendSeriesData(item.data, mode),
-    }));
+    // FIX 2: apply smooth + decimate to each series before transform
+    const DECIMATE_TARGET = 80;
+    const series = [...group.series.values()].map((item, idx) => {
+      let seriesData = item.data;
+      if (seriesData.length > DECIMATE_TARGET) seriesData = decimateTrendData(seriesData, DECIMATE_TARGET);
+      const transformed = transformSemanticTrendSeriesData(seriesData, mode);
+      const smoothed = transformed.length > 6 ? smoothTrendData(transformed, 0.35) : transformed;
+      return {
+        name: item.name,
+        type: 'line',
+        smooth: true,
+        symbol: item.data.length <= 12 ? 'circle' : 'none',
+        lineStyle: { color: palette[idx % palette.length], width: 2 },
+        itemStyle: { color: palette[idx % palette.length] },
+        emphasis: { focus: 'series' },
+        data: smoothed,
+      };
+    });
     trendChart.setOption({
       backgroundColor: 'transparent',
       color: palette,
@@ -3980,8 +4202,8 @@ function renderSemanticTrendGrid({
         splitLine: { show: false },
       },
       yAxis: {
-        type: 'value',
-        name: semanticTrendYAxisName(group, mode),
+        type: (semanticTrendMagnitudeRatio(group) > 1000 && mode === 'absolute') ? 'log' : 'value',
+        name: semanticTrendYAxisName(group, mode) + (semanticTrendMagnitudeRatio(group) > 1000 && mode === 'absolute' ? ' (对数)' : ''),
         scale: mode === 'focused',
         min: focusedMin,
         max: focusedMax,
@@ -4011,6 +4233,7 @@ function isCommandDimensionTrendGroup(group) {
 }
 
 function renderCommandDimensionTrend(history, context = {}) {
+  window.__lastDimensionTrendContext = context;
   const windowedHistory = filterCommandTrendHistoryByWindow(history, commandDimensionTrendWindow);
   const allGroups = buildSemanticTrendGroups(windowedHistory)
     .filter(isCommandDimensionTrendGroup);
@@ -4237,6 +4460,7 @@ function buildRelayTrendGroups(history, view = commandRelayView) {
 }
 
 function renderCommandRelayTrend(history, context = {}) {
+  window.__lastRelayTrendContext = context;
   const windowedHistory = filterCommandTrendHistoryByWindow(history, commandDimensionTrendWindow);
   const allGroups = buildRelayTrendGroups(windowedHistory, commandRelayView);
   const groups = pickRepresentativeSemanticTrendGroups(allGroups, COMMAND_RELAY_TREND_GROUP_LIMIT);

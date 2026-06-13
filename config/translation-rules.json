@@ -1,0 +1,353 @@
+{
+  "sources": {
+    "claude_code": {
+      "label": "Claude Code",
+      "category": "local_agent",
+      "modelField": "model",
+      "fields": {
+        "inputTokens": {
+          "target": "model.tokens.input",
+          "unit": "token",
+          "outputField": "tokens",
+          "semantics": {
+            "metric_role": "used",
+            "metric_identity": "tokens",
+            "time_behavior": "cumulative",
+            "unit_family": "token"
+          }
+        },
+        "outputTokens": {
+          "target": "model.tokens.output",
+          "unit": "token",
+          "semantics": {
+            "metric_role": "used",
+            "metric_identity": "tokens",
+            "time_behavior": "cumulative",
+            "unit_family": "token"
+          }
+        },
+        "cacheReadInputTokens": {
+          "target": "model.tokens.cache_read",
+          "unit": "token",
+          "addToTotal": true,
+          "semantics": {
+            "metric_role": "used",
+            "metric_identity": "tokens",
+            "time_behavior": "cumulative",
+            "unit_family": "token"
+          }
+        },
+        "cacheCreationInputTokens": {
+          "target": "model.tokens.cache_create",
+          "unit": "token",
+          "addToTotal": true,
+          "semantics": {
+            "metric_role": "used",
+            "metric_identity": "tokens",
+            "time_behavior": "cumulative",
+            "unit_family": "token"
+          }
+        },
+        "costUSD": {
+          "target": "model.cost.total",
+          "unit": "usd",
+          "outputField": "cost",
+          "outputCostKnown": true,
+          "outputCostUnit": "usd",
+          "semantics": {
+            "metric_role": "used",
+            "metric_identity": "cost",
+            "time_behavior": "cumulative",
+            "unit_family": "currency"
+          }
+        }
+      },
+      "computed": {
+        "totalTokens": {
+          "sumOf": [
+            "inputTokens",
+            "outputTokens",
+            "cacheReadInputTokens",
+            "cacheCreationInputTokens"
+          ],
+          "target": "model.tokens.total",
+          "unit": "token",
+          "outputField": "tokens",
+          "semantics": {
+            "metric_role": "used",
+            "metric_identity": "tokens",
+            "time_behavior": "cumulative",
+            "unit_family": "token"
+          }
+        }
+      }
+    },
+    "codex": {
+      "label": "Codex",
+      "category": "local_agent",
+      "modelField": "model",
+      "providerField": "provider",
+      "fields": {
+        "total_tokens": {
+          "target": "model.tokens.total",
+          "unit": "token",
+          "outputField": "tokens",
+          "semantics": {
+            "metric_role": "used",
+            "metric_identity": "tokens",
+            "time_behavior": "cumulative",
+            "unit_family": "token"
+          }
+        },
+        "sessions": {
+          "target": "model.sessions.total",
+          "unit": "count",
+          "outputField": "requests",
+          "semantics": {
+            "metric_role": "used",
+            "metric_identity": "sessions",
+            "time_behavior": "cumulative",
+            "unit_family": "count"
+          }
+        },
+        "cost": {
+          "target": "model.cost.total",
+          "unit": "usd",
+          "outputField": "cost",
+          "outputCostKnown": false,
+          "semantics": {
+            "metric_role": "used",
+            "metric_identity": "cost",
+            "time_behavior": "cumulative",
+            "unit_family": "currency",
+            "knownness": "unknown"
+          }
+        }
+      }
+    },
+    "cc_switch": {
+      "label": "CC Switch",
+      "category": "local_agent",
+      "modelField": "model",
+      "providerField": "provider",
+      "sourcePrefix": "CC",
+      "sourceAppField": "app",
+      "fields": {
+        "input_tokens": {
+          "target": "model.tokens.input",
+          "unit": "token",
+          "semantics": {
+            "metric_role": "used",
+            "metric_identity": "tokens",
+            "time_behavior": "cumulative",
+            "unit_family": "token"
+          }
+        },
+        "output_tokens": {
+          "target": "model.tokens.output",
+          "unit": "token",
+          "semantics": {
+            "metric_role": "used",
+            "metric_identity": "tokens",
+            "time_behavior": "cumulative",
+            "unit_family": "token"
+          }
+        },
+        "cache_read_tokens": {
+          "target": "model.tokens.cache_read",
+          "unit": "token",
+          "addToTotal": true,
+          "semantics": {
+            "metric_role": "used",
+            "metric_identity": "tokens",
+            "time_behavior": "cumulative",
+            "unit_family": "token"
+          }
+        },
+        "cache_creation_tokens": {
+          "target": "model.tokens.cache_create",
+          "unit": "token",
+          "addToTotal": true,
+          "semantics": {
+            "metric_role": "used",
+            "metric_identity": "tokens",
+            "time_behavior": "cumulative",
+            "unit_family": "token"
+          }
+        },
+        "total_tokens": {
+          "target": "model.tokens.total",
+          "unit": "token",
+          "outputField": "tokens",
+          "semantics": {
+            "metric_role": "used",
+            "metric_identity": "tokens",
+            "time_behavior": "cumulative",
+            "unit_family": "token"
+          }
+        },
+        "cost": {
+          "target": "model.cost.total",
+          "unit": "usd",
+          "outputField": "cost",
+          "outputCostKnown": true,
+          "outputCostUnit": "usd",
+          "semantics": {
+            "metric_role": "used",
+            "metric_identity": "cost",
+            "time_behavior": "cumulative",
+            "unit_family": "currency"
+          }
+        },
+        "requests": {
+          "target": "model.requests.total",
+          "unit": "count",
+          "outputField": "requests",
+          "semantics": {
+            "metric_role": "used",
+            "metric_identity": "requests",
+            "time_behavior": "cumulative",
+            "unit_family": "count"
+          }
+        }
+      }
+    },
+    "newapi": {
+      "label": "NewAPI",
+      "category": "relay",
+      "modelField": "model",
+      "fields": {
+        "input_tokens": {
+          "target": "model.tokens.input",
+          "unit": "token",
+          "semantics": {
+            "metric_role": "used",
+            "metric_identity": "tokens",
+            "time_behavior": "cumulative",
+            "unit_family": "token"
+          }
+        },
+        "output_tokens": {
+          "target": "model.tokens.output",
+          "unit": "token",
+          "semantics": {
+            "metric_role": "used",
+            "metric_identity": "tokens",
+            "time_behavior": "cumulative",
+            "unit_family": "token"
+          }
+        },
+        "total_tokens": {
+          "target": "model.tokens.total",
+          "unit": "token",
+          "outputField": "tokens",
+          "semantics": {
+            "metric_role": "used",
+            "metric_identity": "tokens",
+            "time_behavior": "cumulative",
+            "unit_family": "token"
+          }
+        },
+        "quota_used": {
+          "target": "model.quota.used",
+          "unit_field": "quota_unit",
+          "outputField": "quota",
+          "outputQuotaUnitField": "quota_unit",
+          "semantics": {
+            "metric_role": "used",
+            "metric_identity": "quota",
+            "time_behavior": "cumulative",
+            "unit_family": "quota"
+          }
+        },
+        "cost": {
+          "target": "model.quota.used",
+          "unit_field": "quota_unit",
+          "outputField": "quota",
+          "outputQuotaUnitField": "quota_unit",
+          "semantics": {
+            "metric_role": "used",
+            "metric_identity": "quota",
+            "time_behavior": "cumulative",
+            "unit_family": "quota"
+          }
+        },
+        "requests": {
+          "target": "model.requests.total",
+          "unit": "count",
+          "outputField": "requests",
+          "semantics": {
+            "metric_role": "used",
+            "metric_identity": "requests",
+            "time_behavior": "cumulative",
+            "unit_family": "count"
+          }
+        }
+      }
+    },
+    "sub2api": {
+      "label": "Sub2API",
+      "category": "relay",
+      "modelField": "model",
+      "fields": {
+        "input_tokens": {
+          "target": "model.tokens.input",
+          "unit": "token",
+          "semantics": {
+            "metric_role": "used",
+            "metric_identity": "tokens",
+            "time_behavior": "cumulative",
+            "unit_family": "token"
+          }
+        },
+        "output_tokens": {
+          "target": "model.tokens.output",
+          "unit": "token",
+          "semantics": {
+            "metric_role": "used",
+            "metric_identity": "tokens",
+            "time_behavior": "cumulative",
+            "unit_family": "token"
+          }
+        },
+        "total_tokens": {
+          "target": "model.tokens.total",
+          "unit": "token",
+          "outputField": "tokens",
+          "semantics": {
+            "metric_role": "used",
+            "metric_identity": "tokens",
+            "time_behavior": "cumulative",
+            "unit_family": "token"
+          }
+        },
+        "cost": {
+          "target": "model.cost.total",
+          "unit": "usd",
+          "outputField": "cost",
+          "outputCostKnown": true,
+          "outputCostUnit": "usd",
+          "costKnownField": "cost_known",
+          "costUnitField": "cost_unit",
+          "semantics": {
+            "metric_role": "used",
+            "metric_identity": "cost",
+            "time_behavior": "cumulative",
+            "unit_family": "currency"
+          }
+        },
+        "requests": {
+          "target": "model.requests.total",
+          "unit": "count",
+          "outputField": "requests",
+          "semantics": {
+            "metric_role": "used",
+            "metric_identity": "requests",
+            "time_behavior": "cumulative",
+            "unit_family": "count"
+          }
+        }
+      }
+    }
+  }
+}
