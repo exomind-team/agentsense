@@ -3739,15 +3739,3 @@ async function systemInfo() {
 }
 
 // 系统信息采集函数
-async function systemInfo() {
-  try {
-    const response = await fetch('http://127.0.0.1:7895/api/system/info');
-    if (!response.ok) {
-      return { configured: false, status: { state: 'error', message: `HTTP ${response.status}` } };
-    }
-    const data = await response.json();
-    return { configured: true, status: { state: 'ok' }, data };
-  } catch (error) {
-    return { configured: false, status: { state: 'error', message: error.message } };
-  }
-}

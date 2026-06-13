@@ -2654,6 +2654,10 @@ function semanticTrendMetricLabel(path, fallback = '') {
     'derived.sub2api.model.tokens': '模型 Token',
     'derived.sub2api.model.cost': '模型成本',
     'derived.sub2api.model.requests': '模型请求',
+    'system.cpu.usage': 'CPU 使用率',
+    'system.memory.usage': '内存使用率',
+    'system.disk.usage': '磁盘使用率',
+    'system.sources.ok.count': '来源可用数',
   };
   return labels[path] || fallback || path || '--';
 }

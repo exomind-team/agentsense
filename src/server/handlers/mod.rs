@@ -916,6 +916,45 @@ fn env_sub2api_source_status() -> serde_json::Value {
     })
 }
 
+/// Collect system info (CPU/memory/disk) using the sysinfo crate.
+/// Returns (cpu_usage_percent, memory_usage_percent, disk_usage_percent).
+fn collect_system_info() -> (f64, f64, f64) {
+    use sysinfo::{Disks, System};
+
+    let mut sys = System::new_all();
+    sys.refresh_all();
+
+    // CPU usage (global)
+    let cpu_usage = sys.global_cpu_info().cpu_usage() as f64;
+
+    // Memory usage
+    let total_memory = sys.total_memory();
+    let available_memory = sys.available_memory();
+    let memory_usage = if total_memory > 0 {
+        ((total_memory - available_memory) as f64 / total_memory as f64) * 100.0
+    } else {
+        0.0
+    };
+
+    // Disk usage (weighted average across disks)
+    let disks = Disks::new_with_refreshed_list();
+    let mut total_disk_space: u64 = 0;
+    let mut total_disk_used: u64 = 0;
+    for disk in disks.iter() {
+        let total = disk.total_space();
+        let available = disk.available_space();
+        total_disk_space += total;
+        total_disk_used += total - available;
+    }
+    let disk_usage = if total_disk_space > 0 {
+        (total_disk_used as f64 / total_disk_space as f64) * 100.0
+    } else {
+        0.0
+    };
+
+    (cpu_usage, memory_usage, disk_usage)
+}
+
 pub async fn api_command_demo() -> axum::Json<serde_json::Value> {
     let local = api_local_usage().await.0;
     let local_state = local
@@ -939,6 +978,8 @@ pub async fn api_command_demo() -> axum::Json<serde_json::Value> {
         + json_i64(&summary, "cache_read_tokens")
         + json_i64(&summary, "cache_creation_tokens");
     let project_count = json_i64(&summary, "project_count");
+    // Collect system info (CPU, memory, disk usage)
+    let (cpu_usage, memory_usage, disk_usage) = collect_system_info();
 
     let mut sources = Vec::new();
     sources.push(serde_json::json!({
@@ -1001,11 +1042,11 @@ pub async fn api_command_demo() -> axum::Json<serde_json::Value> {
     sources.push(serde_json::json!({
         "id": "windows-power",
         "kind": "system_api",
-        "label": "Windows 电源",
+        "label": "系统信息",
         "enabled": true,
-        "state": "planned",
-        "message": "已在统一模型预留；demo 暂不读取系统 API",
-        "capabilities": ["device_power"],
+        "state": "ok",
+        "message": format!("CPU {:.1}% Â· 内存 {:.1}% Â· 磁盘 {:.1}%", cpu_usage, memory_usage, disk_usage),
+        "capabilities": ["cpu_usage", "memory_usage", "disk_usage", "device_power"],
     }));
 
     let mut source_counts = serde_json::Map::new();
@@ -1067,6 +1108,40 @@ pub async fn api_command_demo() -> axum::Json<serde_json::Value> {
             "confidence": "derived",
             "sourceId": "command-demo",
         }),
+        serde_json::json!({
+            "id": "signal-cpu-usage",
+            "path": "system.cpu.usage",
+            "domain": "system",
+            "kind": "status",
+            "subject": "windows-power",
+            "value": cpu_usage,
+            "unit": "percent",
+            "confidence": "observed",
+            "sourceId": "windows-power",
+        }),
+        serde_json::json!({
+            "id": "signal-memory-usage",
+            "path": "system.memory.usage",
+            "domain": "system",
+            "kind": "usage",
+            "subject": "windows-power",
+            "value": memory_usage,
+            "unit": "percent",
+            "confidence": "observed",
+            "sourceId": "windows-power",
+        }),
+        serde_json::json!({
+            "id": "signal-disk-usage",
+            "path": "system.disk.usage",
+            "domain": "system",
+            "kind": "usage",
+            "subject": "windows-power",
+            "value": disk_usage,
+            "unit": "percent",
+            "confidence": "observed",
+            "sourceId": "windows-power",
+        }),
+
     ];
 
     let mut alerts = Vec::new();

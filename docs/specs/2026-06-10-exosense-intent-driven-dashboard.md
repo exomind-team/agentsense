@@ -467,3 +467,273 @@ function generatePanel(translatedSignals) {
 - 面板根据语义元数据动态生成，不预先定义固定结构
 
 这样既能完成数据转换，又不会导致过度定制化，还能支持自适应生成数据面板。
+
+## Token 趋势图表生成方案
+
+### 问题分析
+
+当前各平台数据源结构差异：
+
+| 数据源 | 字段 | 成本字段 | Token 字段 |
+|--------|------|----------|------------|
+| **NewAPI** | `model, requests, input_tokens, output_tokens, total_tokens, quota_used` | 无直接成本 | `input_tokens`, `output_tokens`, `total_tokens` |
+| **Sub2API** | `model, requests, input_tokens, output_tokens, total_tokens, cost` | `cost` (已知) | `input_tokens`, `output_tokens`, `total_tokens` |
+| **Codex** | `model_provider, model, sessions, tokens_used` | 无 | `tokens_used` |
+| **CC Switch** | `app_type, provider_id, model, requests, input_tokens, output_tokens, total_cost_usd` | `total_cost_usd` | `input_tokens`, `output_tokens` |
+| **Claude Code** | `model, costUSD, inputTokens, outputTokens` | `costUSD` | `inputTokens`, `outputTokens` |
+
+### 解决方案：声明式翻译层
+
+#### 1. 标准信号格式
+
+```javascript
+const StandardSignal = {
+  id: string,                    // 唯一标识
+  path: string,                  // 语义路径 (如 "model.tokens.input")
+  domain: 'model',               // 领域
+  kind: 'usage',                 // 类型
+  subject: string,               // 模型名
+  value: number,                 // 值
+  unit: 'token' | 'usd' | 'cny', // 单位
+  confidence: 'observed' | 'derived', // 置信度
+  sourceId: string,              // 来源ID
+  semantics: {
+    metric_role: 'used',         // 指标角色
+    metric_identity: 'tokens' | 'cost', // 指标身份
+    time_behavior: 'cumulative', // 时间行为
+    unit_family: 'token' | 'currency', // 单位族
+  }
+};
+```
+
+#### 2. 声明式翻译规则
+
+```javascript
+const translationRules = {
+  'newapi': {
+    'input_tokens': {
+      target: 'model.tokens.input',
+      unit: 'token',
+      semantics: {
+        metric_role: 'used',
+        metric_identity: 'tokens',
+        time_behavior: 'cumulative',
+        unit_family: 'token',
+      }
+    },
+    'output_tokens': {
+      target: 'model.tokens.output',
+      unit: 'token',
+      semantics: {
+        metric_role: 'used',
+        metric_identity: 'tokens',
+        time_behavior: 'cumulative',
+        unit_family: 'token',
+      }
+    },
+    'total_tokens': {
+      target: 'model.tokens.total',
+      unit: 'token',
+      semantics: {
+        metric_role: 'used',
+        metric_identity: 'tokens',
+        time_behavior: 'cumulative',
+        unit_family: 'token',
+      }
+    },
+  },
+  'sub2api': {
+    'input_tokens': {
+      target: 'model.tokens.input',
+      unit: 'token',
+      semantics: {
+        metric_role: 'used',
+        metric_identity: 'tokens',
+        time_behavior: 'cumulative',
+        unit_family: 'token',
+      }
+    },
+    'cost': {
+      target: 'model.cost.total',
+      unit: 'usd',
+      semantics: {
+        metric_role: 'used',
+        metric_identity: 'cost',
+        time_behavior: 'cumulative',
+        unit_family: 'currency',
+      }
+    },
+  },
+  'codex': {
+    'tokens_used': {
+      target: 'model.tokens.total',
+      unit: 'token',
+      semantics: {
+        metric_role: 'used',
+        metric_identity: 'tokens',
+        time_behavior: 'cumulative',
+        unit_family: 'token',
+      }
+    },
+  },
+  'cc_switch': {
+    'input_tokens': {
+      target: 'model.tokens.input',
+      unit: 'token',
+      semantics: {
+        metric_role: 'used',
+        metric_identity: 'tokens',
+        time_behavior: 'cumulative',
+        unit_family: 'token',
+      }
+    },
+    'output_tokens': {
+      target: 'model.tokens.output',
+      unit: 'token',
+      semantics: {
+        metric_role: 'used',
+        metric_identity: 'tokens',
+        time_behavior: 'cumulative',
+        unit_family: 'token',
+      }
+    },
+    'total_cost_usd': {
+      target: 'model.cost.total',
+      unit: 'usd',
+      semantics: {
+        metric_role: 'used',
+        metric_identity: 'cost',
+        time_behavior: 'cumulative',
+        unit_family: 'currency',
+      }
+    },
+  },
+  'claude_code': {
+    'inputTokens': {
+      target: 'model.tokens.input',
+      unit: 'token',
+      semantics: {
+        metric_role: 'used',
+        metric_identity: 'tokens',
+        time_behavior: 'cumulative',
+        unit_family: 'token',
+      }
+    },
+    'outputTokens': {
+      target: 'model.tokens.output',
+      unit: 'token',
+      semantics: {
+        metric_role: 'used',
+        metric_identity: 'tokens',
+        time_behavior: 'cumulative',
+        unit_family: 'token',
+      }
+    },
+    'costUSD': {
+      target: 'model.cost.total',
+      unit: 'usd',
+      semantics: {
+        metric_role: 'used',
+        metric_identity: 'cost',
+        time_behavior: 'cumulative',
+        unit_family: 'currency',
+      }
+    },
+  },
+};
+```
+
+#### 3. 通用翻译函数
+
+```javascript
+function translateSignal(source, rawData, model) {
+  const rules = translationRules[source] || {};
+  const translated = [];
+  
+  for (const [key, value] of Object.entries(rawData)) {
+    if (rules[key] && value !== null && value !== undefined) {
+      translated.push({
+        id: `${source}-${model}-${rules[key].target}`,
+        path: rules[key].target,
+        domain: 'model',
+        kind: 'usage',
+        subject: model,
+        value: Number(value),
+        unit: rules[key].unit,
+        confidence: 'observed',
+        sourceId: source,
+        semantics: rules[key].semantics,
+      });
+    }
+  }
+  
+  return translated;
+}
+```
+
+#### 4. 聚合逻辑
+
+```javascript
+function aggregateByModel(signals) {
+  const modelMap = new Map();
+  
+  for (const signal of signals) {
+    const modelKey = signal.subject.toLowerCase();
+    
+    if (!modelMap.has(modelKey)) {
+      modelMap.set(modelKey, {
+        model: signal.subject,
+        tokens: { input: 0, output: 0, total: 0 },
+        cost: { usd: 0, cny: 0 },
+        sources: new Set(),
+      });
+    }
+    
+    const modelData = modelMap.get(modelKey);
+    modelData.sources.add(signal.sourceId);
+    
+    // 根据 metric_identity 聚合
+    if (signal.semantics.metric_identity === 'tokens') {
+      if (signal.path.includes('input')) {
+        modelData.tokens.input += signal.value;
+      } else if (signal.path.includes('output')) {
+        modelData.tokens.output += signal.value;
+      } else {
+        modelData.tokens.total += signal.value;
+      }
+    } else if (signal.semantics.metric_identity === 'cost') {
+      if (signal.unit === 'usd') {
+        modelData.cost.usd += signal.value;
+      } else if (signal.unit === 'cny') {
+        modelData.cost.cny += signal.value;
+      }
+    }
+  }
+  
+  return [...modelMap.values()];
+}
+```
+
+### 完整数据流
+
+```
+原始数据 (各平台 API)
+    ↓
+翻译层 (translateSignal)
+    ↓
+标准信号 (StandardSignal[])
+    ↓
+聚合层 (aggregateByModel)
+    ↓
+聚合数据 (AggregatedModel[])
+    ↓
+图表数据 (generateTrendData)
+    ↓
+前端渲染 (renderCommandModelDailyTrend)
+```
+
+### 实现优先级
+
+- **P0（必须）**：实现声明式翻译规则配置、通用翻译函数、按模型聚合逻辑
+- **P1（重要）**：处理成本字段缺失的情况、支持多单位转换、实现时间窗口聚合
+- **P2（优化）**：实现增量更新、支持实时趋势、优化性能
