@@ -74,7 +74,14 @@ pub fn router(state: Arc<AppState>) -> axum::Router {
             "/api/config",
             get(handlers::api_config_get).put(handlers::api_config_put),
         )
-        .route("/api/refresh", get(handlers::api_refresh));
+        .route("/api/refresh", get(handlers::api_refresh))
+        // 系统信息 API
+        .route("/api/system/info", get(handlers::system_info::api_system_info))
+        .route("/api/system/cpu", get(handlers::system_info::api_system_cpu))
+        .route("/api/system/memory", get(handlers::system_info::api_system_memory))
+        .route("/api/system/disk", get(handlers::system_info::api_system_disk))
+        .route("/api/system/network", get(handlers::system_info::api_system_network))
+        .route("/api/system/battery", get(handlers::system_info::api_system_battery));
 
     #[cfg(feature = "psu")]
     let router = router

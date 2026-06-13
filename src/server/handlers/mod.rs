@@ -9,6 +9,8 @@ use super::AppState;
 #[cfg(feature = "psu")]
 pub mod psu;
 
+pub mod system_info;
+
 static INDEX_HTML: &str = include_str!("../../../web/index.html");
 static APP_JS: &str = include_str!("../../../web/app.js");
 static STYLE_CSS: &str = include_str!("../../../web/style.css");
