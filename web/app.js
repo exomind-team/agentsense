@@ -40,6 +40,7 @@ const COMMAND_MODEL_SORT_LABELS = {
   tokens: 'Token优先',
   requests: '请求优先',
   source: '来源分组',
+  model: '模型聚合',
 };
 const COMMAND_TREND_WINDOW_OPTIONS = {
   '6h': { label: '近 6 小时', ms: 6 * 60 * 60 * 1000 },
@@ -4118,6 +4119,27 @@ function relayTrendGroupSpec(sample, view = commandRelayView) {
       metricIdentity,
     };
   }
+  if (view === 'model') {
+    // 按模型聚合视图：忽略来源，按模型名和指标类型分组
+    const modelName = sample.model || sample.seriesKey || metricKey;
+    return {
+      key: [
+        'relay-model',
+        modelName,
+        metricIdentity,
+        sample.metricRole,
+        sample.timeBehavior,
+        sample.unitFamily,
+        sample.unit,
+      ].join('|'),
+      label: `${modelName} · ${metricLabel} · ${semanticTrendRoleLabel(sample.metricRole)} · ${semanticTrendTimeLabel(sample.timeBehavior)}`,
+      seriesKey: `${metricKey}|${modelName}`,
+      seriesName: modelName,
+      relaySource,
+      relayMetric: metricKey,
+      metricIdentity,
+    };
+  }
   return {
     key: [
       'relay-source',
@@ -4214,7 +4236,7 @@ function renderCommandRelayTrend(history, context = {}) {
   const windowedHistory = filterCommandTrendHistoryByWindow(history, commandDimensionTrendWindow);
   const allGroups = buildRelayTrendGroups(windowedHistory, commandRelayView);
   const groups = pickRepresentativeSemanticTrendGroups(allGroups, COMMAND_RELAY_TREND_GROUP_LIMIT);
-  const viewLabel = commandRelayView === 'metric' ? '按类型看中转站' : '按中转站看类型';
+  const viewLabel = commandRelayView === 'metric' ? '按类型看中转站' : commandRelayView === 'model' ? '按模型聚合' : '按中转站看类型';
   const windowOption = COMMAND_TREND_WINDOW_OPTIONS[commandDimensionTrendWindow] || COMMAND_TREND_WINDOW_OPTIONS['6h'];
   const relaySources = [
     (context.hasApiQuota || context.hasNewApiModels) ? 'NewAPI' : null,
@@ -4228,7 +4250,7 @@ function renderCommandRelayTrend(history, context = {}) {
     gridId: 'command-relay-trend-grid',
     noteId: 'command-relay-trend-note',
     chartMap: commandRelayTrendCharts,
-    chartIdPrefix: commandRelayView === 'metric' ? 'relay-metric-trend' : 'relay-source-trend',
+    chartIdPrefix: commandRelayView === 'metric' ? 'relay-metric-trend' : commandRelayView === 'model' ? 'relay-model-trend' : 'relay-source-trend',
     groups,
     emptyText: '等待 NewAPI / Sub2API 语义采样。',
     noteText,
