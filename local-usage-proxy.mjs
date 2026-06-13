@@ -3398,6 +3398,7 @@ async function commandDemo() {
   const modelDailyTrend = modelTrends['7d'];
   const newApi = await newApiStatus();
   const sub2Api = await sub2ApiStatus();
+  const sysInfo = await systemInfo();
   const topProjects = mergeWorkspaceProjects(usage.top_projects || [], codex.top_projects || []);
   const summary = usage.configured && usage.status?.state === 'ok' ? usage.summary : null;
   const totalTokens = summary
@@ -3434,13 +3435,16 @@ async function commandDemo() {
     newApi.source,
     sub2Api.source,
     {
-      id: 'windows-power',
+      id: 'system-info',
       kind: 'system_api',
-      label: 'Windows 电源',
-      enabled: true,
-      state: 'planned',
-      message: '已在统一模型预留；demo 暂不读取系统 API',
-      capabilities: ['device_power'],
+      label: '系统信息',
+      enabled: sysInfo.configured,
+      state: sysInfo.status.state,
+      message: sysInfo.status.state === 'ok'
+        ? `已采集 CPU、内存、磁盘、网络信息`
+        : sysInfo.status.message,
+      capabilities: ['cpu', 'memory', 'disk', 'network', 'battery'],
+      last_read_at: sysInfo.status.state === 'ok' ? new Date().toISOString() : undefined,
     },
   ];
   const codexSource = sources.find(source => source.id === 'codex-local');
@@ -3512,6 +3516,42 @@ async function commandDemo() {
     }),
     ...newApi.signals,
     ...sub2Api.signals,
+    // 系统信息信号
+    ...(sysInfo.configured && sysInfo.data ? [
+      withSignalSemantics({
+        id: 'signal-system-cpu',
+        path: 'system.cpu.usage.percent',
+        domain: 'system',
+        kind: 'usage',
+        subject: 'system-info',
+        value: sysInfo.data.cpu?.usage_percent || 0,
+        unit: 'percent',
+        confidence: 'observed',
+        sourceId: 'system-info',
+      }),
+      withSignalSemantics({
+        id: 'signal-system-memory',
+        path: 'system.memory.used.percent',
+        domain: 'system',
+        kind: 'usage',
+        subject: 'system-info',
+        value: sysInfo.data.memory?.used_percent || 0,
+        unit: 'percent',
+        confidence: 'observed',
+        sourceId: 'system-info',
+      }),
+      withSignalSemantics({
+        id: 'signal-system-uptime',
+        path: 'system.uptime.seconds',
+        domain: 'system',
+        kind: 'inventory',
+        subject: 'system-info',
+        value: sysInfo.data.uptime || 0,
+        unit: 'seconds',
+        confidence: 'observed',
+        sourceId: 'system-info',
+      }),
+    ] : []),
   ];
   const sourceRegistry = buildSourceRegistry({ sources, usage, codex, ccSwitch, newApi, sub2Api, home });
 
@@ -3683,6 +3723,20 @@ export {
   workspacePath,
   withSignalSemantics,
 };
+
+// 系统信息采集函数
+async function systemInfo() {
+  try {
+    const response = await fetch('http://127.0.0.1:7895/api/system/info');
+    if (!response.ok) {
+      return { configured: false, status: { state: 'error', message: `HTTP ${response.status}` } };
+    }
+    const data = await response.json();
+    return { configured: true, status: { state: 'ok' }, data };
+  } catch (error) {
+    return { configured: false, status: { state: 'error', message: error.message } };
+  }
+}
 
 // 系统信息采集函数
 async function systemInfo() {
