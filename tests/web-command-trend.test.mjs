@@ -721,7 +721,7 @@ describe('command history persistence', () => {
     app.__setLocalStorage(createQuotaBoundStorage(1, { alwaysThrow: true }));
 
     const data = {
-      generated_at: '2026-06-10T16:00:00.000Z',
+      generated_at: new Date(Date.now()).toISOString(),
       sources: [{ id: 'codex-main', label: 'Codex', state: 'ok' }],
       source_counts: { ok: 1 },
       signals: [
